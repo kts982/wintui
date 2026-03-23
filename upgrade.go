@@ -372,10 +372,12 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyMsg) (screen, tea.Cmd) {
 		s.batchCurrent = 0
 		s.batchOutputs = nil
 		s.batchErr = nil
-		
+		s.progress.active = false // don't use indeterminate animation for batch
+		s.progress.percent = 0
+
 		if s.batchTotal > 0 {
 			s.batchName = s.batchIDs[0]
-			return s, tea.Batch(s.spinner.Tick, tickProgress(), upgradeSingleCmd(s.ctx, s.batchIDs[0], 0))
+			return s, tea.Batch(s.spinner.Tick, upgradeSingleCmd(s.ctx, s.batchIDs[0], 0))
 		}
 		return s, nil
 
