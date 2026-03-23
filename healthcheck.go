@@ -70,11 +70,10 @@ func runHealthcheck() (healthReport, error) {
 
 	// ── Sections ───────────────────────────────────────────────
 	r.Sections = []healthSection{
-		checkShells(),
-		checkDevTools(),
-		checkPackageManagers(),
-		checkLanguageRuntimes(),
+		checkEssentials(),
 		checkSystem(),
+		checkDevTools(),
+		checkLanguageRuntimes(),
 	}
 
 	// Tally
@@ -106,110 +105,19 @@ func runHealthcheck() (healthReport, error) {
 
 // ── Check groups ───────────────────────────────────────────────────
 
-func checkShells() healthSection {
-	sec := healthSection{Title: "Shells & Terminal"}
-
-	// PowerShell 7+
-	sec.Checks = append(sec.Checks, toolCheck("pwsh", "PowerShell 7+", false,
-		"Install PowerShell 7+: winget install Microsoft.PowerShell",
-		"--version"))
-
-	// Windows PowerShell (always present)
-	sec.Checks = append(sec.Checks, toolCheckInfo("powershell", "Windows PowerShell",
-		"-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"))
-
-	// Windows Terminal
-	sec.Checks = append(sec.Checks, toolCheck("wt", "Windows Terminal", false,
-		"Install Windows Terminal: winget install Microsoft.WindowsTerminal"))
-
-	return sec
-}
-
-func checkDevTools() healthSection {
-	sec := healthSection{Title: "Developer Tools"}
-
-	sec.Checks = append(sec.Checks, toolCheck("git", "Git", false,
-		"winget install Git.Git",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("code", "VS Code", false,
-		"winget install Microsoft.VisualStudioCode",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("docker", "Docker", false,
-		"winget install Docker.DockerDesktop",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("ssh", "OpenSSH", false,
-		"Enable OpenSSH via Windows Optional Features.",
-		"-V"))
-
-	sec.Checks = append(sec.Checks, toolCheck("curl", "curl", false, "",
-		"--version"))
-
-	return sec
-}
-
-func checkPackageManagers() healthSection {
-	sec := healthSection{Title: "Package Managers"}
+func checkEssentials() healthSection {
+	sec := healthSection{Title: "Essentials"}
 
 	sec.Checks = append(sec.Checks, toolCheck("winget", "winget", false,
 		"Install App Installer from Microsoft Store.",
 		"--version"))
 
-	sec.Checks = append(sec.Checks, toolCheck("scoop", "Scoop", false,
-		"Install Scoop: irm get.scoop.sh | iex",
+	sec.Checks = append(sec.Checks, toolCheck("pwsh", "PowerShell 7+", false,
+		"winget install Microsoft.PowerShell",
 		"--version"))
 
-	sec.Checks = append(sec.Checks, toolCheck("choco", "Chocolatey", false,
-		"Install Chocolatey: https://chocolatey.org/install",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("npm", "npm", false,
-		"Comes with Node.js.",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("pnpm", "pnpm", false,
-		"corepack enable && corepack prepare pnpm@latest --activate",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("yarn", "Yarn", false,
-		"corepack enable && corepack prepare yarn@stable --activate",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("pip", "pip", false,
-		"Comes with Python.",
-		"--version"))
-
-	return sec
-}
-
-func checkLanguageRuntimes() healthSection {
-	sec := healthSection{Title: "Language Runtimes"}
-
-	sec.Checks = append(sec.Checks, toolCheck("node", "Node.js", false,
-		"winget install OpenJS.NodeJS.LTS",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("python", "Python", false,
-		"winget install Python.Python.3.13",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("go", "Go", false,
-		"winget install GoLang.Go",
-		"version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("rustc", "Rust", false,
-		"Install rustup: https://rustup.rs",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("java", "Java", false,
-		"winget install Oracle.JDK.24",
-		"--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("dotnet", "dotnet", false,
-		"winget install Microsoft.DotNet.SDK.9",
-		"--version"))
+	sec.Checks = append(sec.Checks, toolCheckInfo("powershell", "Windows PowerShell",
+		"-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"))
 
 	return sec
 }
@@ -217,19 +125,69 @@ func checkLanguageRuntimes() healthSection {
 func checkSystem() healthSection {
 	sec := healthSection{Title: "System"}
 
-	// Disk space on all fixed drives
 	for _, d := range getFixedDrives() {
 		sec.Checks = append(sec.Checks, checkDiskSpace(d))
 	}
 
-	// Windows Defender status
 	sec.Checks = append(sec.Checks, checkDefender())
-
-	// PATH length (Windows has a ~8191 char limit, long PATHs cause issues)
 	sec.Checks = append(sec.Checks, checkPathLength())
 
-	// Developer mode
-	sec.Checks = append(sec.Checks, checkDevMode())
+	return sec
+}
+
+func checkDevTools() healthSection {
+	sec := healthSection{Title: "Dev Tools"}
+
+	sec.Checks = append(sec.Checks, toolCheck("git", "Git", false,
+		"winget install Git.Git", "--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("code", "VS Code", false,
+		"winget install Microsoft.VisualStudioCode", "--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("docker", "Docker", false,
+		"winget install Docker.DockerDesktop", "--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("ssh", "OpenSSH", false,
+		"Enable OpenSSH via Windows Optional Features.", "-V"))
+
+	sec.Checks = append(sec.Checks, toolCheck("curl", "curl", false, "",
+		"--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("npm", "npm", false,
+		"Comes with Node.js.", "--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("pnpm", "pnpm", false,
+		"corepack enable && corepack prepare pnpm@latest --activate", "--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("yarn", "Yarn", false,
+		"corepack enable && corepack prepare yarn@stable --activate", "--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("pip", "pip", false,
+		"Comes with Python.", "--version"))
+
+	return sec
+}
+
+func checkLanguageRuntimes() healthSection {
+	sec := healthSection{Title: "Runtimes"}
+
+	sec.Checks = append(sec.Checks, toolCheck("node", "Node.js", false,
+		"winget install OpenJS.NodeJS.LTS", "--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("python", "Python", false,
+		"winget install Python.Python.3.13", "--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("go", "Go", false,
+		"winget install GoLang.Go", "version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("rustc", "Rust", false,
+		"Install rustup: https://rustup.rs", "--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("java", "Java", false,
+		"winget install Oracle.JDK.24", "--version"))
+
+	sec.Checks = append(sec.Checks, toolCheck("dotnet", "dotnet", false,
+		"winget install Microsoft.DotNet.SDK.9", "--version"))
 
 	return sec
 }
@@ -387,19 +345,6 @@ func checkPathLength() healthCheck {
 		Status:         status,
 		Details:        fmt.Sprintf("%d chars, %d entries", length, entries),
 		Recommendation: rec,
-	}
-}
-
-func checkDevMode() healthCheck {
-	out := cmdOutputTrim("reg", "query",
-		`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock`,
-		"/v", "AllowDevelopmentWithoutDevLicense")
-	if strings.Contains(out, "0x1") {
-		return healthCheck{Check: "Developer Mode", Status: "PASS", Details: "Enabled"}
-	}
-	return healthCheck{
-		Check: "Developer Mode", Status: "WARN", Details: "Disabled",
-		Recommendation: "Enable Developer Mode in Settings > For developers (needed for symlinks, sideloading, etc.).",
 	}
 }
 

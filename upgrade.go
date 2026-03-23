@@ -26,12 +26,11 @@ const (
 	upgradeDone
 )
 
-// upgradeProgressMsg reports per-package progress during batch upgrade.
-type upgradeProgressMsg struct {
-	current int
-	total   int
-	name    string
-	err     error
+// singleUpgradeDoneMsg reports completion of a single package upgrade during a batch.
+type singleUpgradeDoneMsg struct {
+	index  int
+	output string
+	err    error
 }
 
 type upgradeScreen struct {
@@ -48,12 +47,16 @@ type upgradeScreen struct {
 	detail       detailPanel
 	filter       listFilter
 	cancel       context.CancelFunc
+	ctx          context.Context
 	batchCurrent int
 	batchTotal   int
 	batchName    string
+	batchIDs     []string
+	batchOutputs []string
+	batchErr     error
 }
 
-var upgradeActions = []string{"Upgrade All", "Select Packages", "Preview (What-if)"}
+var upgradeActions = []string{"Upgrade All", "Select Packages"}
 
 func newUpgradeScreen() upgradeScreen {
 	sp := spinner.New()
@@ -129,6 +132,9 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 							s.selected[j] = !s.selected[j]
 							break
 						}
+					}
+					if s.cursor < len(filtered)-1 {
+						s.cursor++
 					}
 				}
 				return s, nil
@@ -218,13 +224,26 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		return s, nil
 
-	case upgradeProgressMsg:
-		s.batchCurrent = msg.current
-		s.batchTotal = msg.total
-		s.batchName = msg.name
-		if msg.total > 0 {
-			s.progress.percent = float64(msg.current) / float64(msg.total)
+	case singleUpgradeDoneMsg:
+		s.batchOutputs = append(s.batchOutputs, msg.output)
+		if msg.err != nil {
+			s.batchErr = msg.err
 		}
+		s.batchCurrent = msg.index + 1
+		if s.batchTotal > 0 {
+			s.progress.percent = float64(s.batchCurrent) / float64(s.batchTotal)
+		}
+
+		if s.batchCurrent < s.batchTotal {
+			s.batchName = s.batchIDs[s.batchCurrent]
+			return s, upgradeSingleCmd(s.ctx, s.batchIDs[s.batchCurrent], s.batchCurrent)
+		}
+
+		s.progress = s.progress.stop()
+		s.output = strings.Join(s.batchOutputs, "\n---\n")
+		s.err = s.batchErr
+		s.state = upgradeDone
+		cache.invalidate() // packages changed
 		return s, nil
 
 	case commandDoneMsg:
@@ -261,14 +280,6 @@ func (s upgradeScreen) selectAction() (screen, tea.Cmd) {
 	case 1: // Select Packages
 		s.state = upgradeSelecting
 		s.cursor = 0
-	case 2: // Preview
-		s.state = upgradeDone
-		var preview strings.Builder
-		preview.WriteString("Packages that would be upgraded:\n\n")
-		for _, pkg := range s.packages {
-			preview.WriteString(fmt.Sprintf("  %s (%s) %s → %s\n", pkg.Name, pkg.ID, pkg.Version, pkg.Available))
-		}
-		s.output = preview.String()
 	}
 	return s, nil
 }
@@ -305,6 +316,9 @@ func (s upgradeScreen) updateSelect(msg tea.KeyMsg) (screen, tea.Cmd) {
 		}
 	case " ", "x":
 		s.selected[s.cursor] = !s.selected[s.cursor]
+		if s.cursor < len(filtered)-1 {
+			s.cursor++
+		}
 	case "a":
 		allSelected := len(s.selected) == len(s.packages)
 		s.selected = make(map[int]bool)
@@ -347,15 +361,23 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyMsg) (screen, tea.Cmd) {
 
 		// Batch upgrade with per-package progress
 		var ids []string
-		var names []string
 		for i, sel := range s.selected {
 			if sel {
 				ids = append(ids, s.packages[i].ID)
-				names = append(names, s.packages[i].Name)
 			}
 		}
+		s.ctx = ctx
+		s.batchIDs = ids
 		s.batchTotal = len(ids)
-		return s, tea.Batch(s.spinner.Tick, tickProgress(), s.batchUpgrade(ctx, ids, names))
+		s.batchCurrent = 0
+		s.batchOutputs = nil
+		s.batchErr = nil
+		
+		if s.batchTotal > 0 {
+			s.batchName = s.batchIDs[0]
+			return s, tea.Batch(s.spinner.Tick, tickProgress(), upgradeSingleCmd(s.ctx, s.batchIDs[0], 0))
+		}
+		return s, nil
 
 	case "n", "N", "esc":
 		if s.action == "all" {
@@ -367,23 +389,11 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyMsg) (screen, tea.Cmd) {
 	return s, nil
 }
 
-// batchUpgrade upgrades packages one at a time, sending progress messages.
-func (s upgradeScreen) batchUpgrade(ctx context.Context, ids, names []string) tea.Cmd {
+// upgradeSingleCmd upgrades a single package and sends a completion message.
+func upgradeSingleCmd(ctx context.Context, id string, index int) tea.Cmd {
 	return func() tea.Msg {
-		var outputs []string
-		var lastErr error
-		p := tea.NewProgram(nil) // We can't send messages from here directly
-		_ = p
-		for i, id := range ids {
-			// We can't send intermediate msgs from a Cmd, so we just run sequentially
-			out, err := upgradePackageCtx(ctx, id)
-			outputs = append(outputs, out)
-			if err != nil {
-				lastErr = err
-			}
-			_ = names[i]
-		}
-		return commandDoneMsg{output: strings.Join(outputs, "\n---\n"), err: lastErr}
+		out, err := upgradePackageCtx(ctx, id)
+		return singleUpgradeDoneMsg{output: out, err: err, index: index}
 	}
 }
 
