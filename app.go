@@ -1,11 +1,13 @@
 package main
 
 import (
+	"math"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/harmonica"
 	"github.com/charmbracelet/lipgloss"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -101,14 +103,22 @@ var logoGradient = []lipgloss.Color{
 
 type logoTickMsg struct{}
 
+// logoRow holds a spring-animated color offset for one logo line.
+type logoRow struct {
+	pos float64 // current color offset (fractional index into gradient)
+	vel float64 // current velocity
+}
+
 type app struct {
-	activeTab int
-	active    screen
-	help      help.Model
-	width     int
-	height    int
-	quitting  bool
-	logoFrame int
+	activeTab  int
+	active     screen
+	help       help.Model
+	width      int
+	height     int
+	quitting   bool
+	logoRows   []logoRow
+	logoSpring harmonica.Spring
+	logoTime   float64 // accumulated time for wave target
 }
 
 func newApp() app {
@@ -117,18 +127,25 @@ func newApp() app {
 	h.Styles.ShortDesc = lipgloss.NewStyle().Foreground(dim)
 	h.Styles.ShortSeparator = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 
+	rows := make([]logoRow, len(asciiLogo))
+	for i := range rows {
+		rows[i].pos = float64(i) // start each row at a different offset
+	}
+
 	a := app{
-		activeTab: 0,
-		help:      h,
-		width:     80,
-		height:    24,
+		activeTab:  0,
+		help:       h,
+		width:      80,
+		height:     24,
+		logoRows:   rows,
+		logoSpring: harmonica.NewSpring(harmonica.FPS(15), 2.0, 0.8),
 	}
 	a.active = createScreen(tabs[0].id)
 	return a
 }
 
 func logoTick() tea.Cmd {
-	return tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(66*time.Millisecond, func(time.Time) tea.Msg { // ~15 FPS
 		return logoTickMsg{}
 	})
 }
@@ -180,7 +197,15 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case logoTickMsg:
-		a.logoFrame++
+		n := float64(len(logoGradient))
+		a.logoTime += 0.05
+		for i := range a.logoRows {
+			// Each row targets a sine-wave offset, staggered by row index
+			target := math.Mod(a.logoTime+float64(i)*1.0, n)
+			a.logoRows[i].pos, a.logoRows[i].vel = a.logoSpring.Update(
+				a.logoRows[i].pos, a.logoRows[i].vel, target,
+			)
+		}
 		return a, logoTick()
 
 	case switchScreenMsg:
@@ -247,7 +272,10 @@ func (a app) renderLogo() string {
 	n := len(logoGradient)
 	var lines []string
 	for i, line := range asciiLogo {
-		color := logoGradient[(i+a.logoFrame)%n]
+		// Convert spring position to a gradient index
+		idx := int(math.Round(a.logoRows[i].pos))
+		idx = ((idx % n) + n) % n // ensure positive modulo
+		color := logoGradient[idx]
 		styled := lipgloss.NewStyle().Foreground(color).Bold(true).Render(line)
 		lines = append(lines, "  "+styled)
 	}
