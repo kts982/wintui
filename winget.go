@@ -49,7 +49,7 @@ func runWingetCtx(ctx context.Context, args ...string) (string, error) {
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("cancelled")
 		}
-		return out, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		return out, friendlyWingetError(err, strings.TrimSpace(stderr.String()), out)
 	}
 	return out, nil
 }
@@ -168,6 +168,44 @@ func importPackagesFromFile(path string) (string, error) {
 		"--accept-package-agreements", "--ignore-unavailable")
 }
 
+// ── Error translation ──────────────────────────────────────────────
+
+// friendlyWingetError translates raw winget exit codes into human-readable messages.
+func friendlyWingetError(err error, stderr, stdout string) error {
+	msg := err.Error()
+
+	// Map known winget exit/installer codes to friendly descriptions.
+	replacements := map[string]string{
+		"0x8a15002c": "some packages failed to upgrade",
+		"0x8a15002b": "install technology differs from installed version (package manages its own updates)",
+		"0x8a150011": "package not found",
+		"0x8a15000e": "upgrade not applicable (already up to date)",
+		"0x8a150056": "package requires administrator privileges to install",
+		"0x8a150019": "package version already installed",
+		"0x80073d28": "installer requires administrator privileges (try running as admin)",
+		"0x80073cf3": "package install failed (conflicting package)",
+		"0x80073d02": "installation blocked by a running process",
+	}
+
+	for code, desc := range replacements {
+		if strings.Contains(msg, code) {
+			msg = desc
+			break
+		}
+	}
+
+	// Check stdout for admin-related errors when the top-level code is generic.
+	if strings.Contains(msg, "some packages failed") &&
+		strings.Contains(stdout, "administrator privileges") {
+		msg = "some packages require administrator privileges (try running as admin)"
+	}
+
+	if stderr != "" {
+		return fmt.Errorf("%s: %s", msg, stderr)
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 // ── Output cleaning ────────────────────────────────────────────────
 
 // cleanWingetOutput strips progress spinner chars, carriage returns,
@@ -177,6 +215,19 @@ func cleanWingetOutput(output string) string {
 	raw := strings.FieldsFunc(output, func(r rune) bool { return r == '\r' })
 	output = strings.Join(raw, "")
 
+	// Noise patterns to skip entirely
+	noisePatterns := []string{
+		"██", "▒▒",
+		"This application is licensed",
+		"Microsoft is not responsible",
+		"nor does it grant any licenses",
+		"A newer version was found, but the install technology",
+		"Successfully verified installer hash",
+		"Starting package install",
+		"Starting package uninstall",
+		"Downloading",
+	}
+
 	lines := strings.Split(output, "\n")
 	var clean []string
 	for _, line := range lines {
@@ -185,7 +236,18 @@ func cleanWingetOutput(output string) string {
 			trimmed == "-" || trimmed == "|" {
 			continue
 		}
-		if strings.Contains(trimmed, "██") || strings.Contains(trimmed, "▒▒") {
+		// Skip lines that are only dashes (separators)
+		if strings.Trim(trimmed, "-") == "" {
+			continue
+		}
+		skip := false
+		for _, p := range noisePatterns {
+			if strings.Contains(trimmed, p) {
+				skip = true
+				break
+			}
+		}
+		if skip {
 			continue
 		}
 		clean = append(clean, trimmed)

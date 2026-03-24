@@ -54,6 +54,8 @@ go install github.com/kts982/wintui@latest
 ./wintui.exe
 ```
 
+> **Tip:** Some packages (e.g. MSIX/Appx installers) require administrator privileges to upgrade. Run wintui in an elevated terminal for full functionality. The app shows a `● admin` / `● user` indicator in the tab bar and flags this in the Health Check.
+
 ## Keyboard Shortcuts
 
 | Key | Action |

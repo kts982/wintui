@@ -53,6 +53,7 @@ type upgradeScreen struct {
 	batchName    string
 	batchIDs     []string
 	batchOutputs []string
+	batchErrs    []error
 	batchErr     error
 }
 
@@ -226,6 +227,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 	case singleUpgradeDoneMsg:
 		s.batchOutputs = append(s.batchOutputs, msg.output)
+		s.batchErrs = append(s.batchErrs, msg.err) // nil for success
 		if msg.err != nil {
 			s.batchErr = msg.err
 		}
@@ -240,7 +242,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 
 		s.progress = s.progress.stop()
-		s.output = strings.Join(s.batchOutputs, "\n---\n")
+		s.output = formatBatchResults(s.batchIDs, s.batchErrs, s.batchOutputs)
 		s.err = s.batchErr
 		s.state = upgradeDone
 		cache.invalidate() // packages changed
@@ -352,18 +354,17 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyMsg) (screen, tea.Cmd) {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.cancel = cancel
 
-		if s.action == "all" {
-			return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-				out, err := upgradeAllCtx(ctx)
-				return commandDoneMsg{output: out, err: err}
-			})
-		}
-
-		// Batch upgrade with per-package progress
+		// Build package list: all packages or selected ones
 		var ids []string
-		for i, sel := range s.selected {
-			if sel {
-				ids = append(ids, s.packages[i].ID)
+		if s.action == "all" {
+			for _, p := range s.packages {
+				ids = append(ids, p.ID)
+			}
+		} else {
+			for i, sel := range s.selected {
+				if sel {
+					ids = append(ids, s.packages[i].ID)
+				}
 			}
 		}
 		s.ctx = ctx
@@ -371,6 +372,7 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyMsg) (screen, tea.Cmd) {
 		s.batchTotal = len(ids)
 		s.batchCurrent = 0
 		s.batchOutputs = nil
+		s.batchErrs = nil
 		s.batchErr = nil
 		s.progress.active = false // don't use indeterminate animation for batch
 		s.progress.percent = 0
@@ -389,6 +391,42 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyMsg) (screen, tea.Cmd) {
 		}
 	}
 	return s, nil
+}
+
+// formatBatchResults builds a per-package summary from batch upgrade results.
+func formatBatchResults(ids []string, errs []error, outputs []string) string {
+	var b strings.Builder
+	for i, id := range ids {
+		if i >= len(errs) {
+			break
+		}
+		if errs[i] == nil {
+			b.WriteString(successStyle.Render("  ✓ ") + id + "\n")
+		} else {
+			// Extract a short reason from the raw output
+			reason := errs[i].Error()
+			detail := extractFailReason(outputs[i])
+			if detail != "" {
+				reason = detail
+			}
+			b.WriteString(errorStyle.Render("  ✗ ") + id + "\n")
+			b.WriteString("    " + helpStyle.Render(reason) + "\n")
+		}
+	}
+	return b.String()
+}
+
+// extractFailReason pulls the most relevant failure line from winget output.
+func extractFailReason(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if strings.Contains(lower, "failed with exit code") ||
+			strings.Contains(lower, "installer failed") {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 // upgradeSingleCmd upgrades a single package and sends a completion message.
@@ -491,8 +529,8 @@ func (s upgradeScreen) view(width, height int) string {
 
 	case upgradeExecuting:
 		if s.batchTotal > 0 {
-			b.WriteString(fmt.Sprintf("  %s Upgrading package %d of %d...\n\n",
-				s.spinner.View(), s.batchCurrent+1, s.batchTotal))
+			b.WriteString(fmt.Sprintf("  %s Upgrading %d of %d: %s\n\n",
+				s.spinner.View(), s.batchCurrent+1, s.batchTotal, s.batchName))
 		} else {
 			b.WriteString(fmt.Sprintf("  %s Upgrading packages...\n\n", s.spinner.View()))
 		}
@@ -500,14 +538,23 @@ func (s upgradeScreen) view(width, height int) string {
 
 	case upgradeDone:
 		if s.err != nil {
-			b.WriteString("  " + warnStyle.Render("Completed with errors:") + "\n")
-			b.WriteString("  " + errorStyle.Render(s.err.Error()) + "\n\n")
+			errMsg := s.err.Error()
+			if strings.Contains(errMsg, "administrator privileges") {
+				b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n")
+				b.WriteString("  " + helpStyle.Render("Some packages require administrator privileges.") + "\n\n")
+			} else {
+				b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n\n")
+			}
 		} else {
 			b.WriteString("  " + successStyle.Render("Upgrade complete!") + "\n\n")
 		}
 		if s.output != "" {
-			cleaned := cleanWingetOutput(s.output)
-			lines := strings.Split(cleaned, "\n")
+			// Batch results are already formatted; non-batch needs cleaning
+			output := s.output
+			if s.batchTotal == 0 {
+				output = cleanWingetOutput(output)
+			}
+			lines := strings.Split(output, "\n")
 			maxLines := height - 8
 			if maxLines < 5 {
 				maxLines = 5
@@ -517,7 +564,7 @@ func (s upgradeScreen) view(width, height int) string {
 				lines = append(lines, helpStyle.Render("  ... (output truncated)"))
 			}
 			for _, line := range lines {
-				b.WriteString("  " + line + "\n")
+				b.WriteString(line + "\n")
 			}
 		}
 	}

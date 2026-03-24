@@ -108,6 +108,8 @@ func runHealthcheck() (healthReport, error) {
 func checkEssentials() healthSection {
 	sec := healthSection{Title: "Essentials"}
 
+	sec.Checks = append(sec.Checks, checkAdmin())
+
 	sec.Checks = append(sec.Checks, toolCheck("winget", "winget", false,
 		"Install App Installer from Microsoft Store.",
 		"--version"))
@@ -193,6 +195,22 @@ func checkLanguageRuntimes() healthSection {
 }
 
 // ── Individual check helpers ───────────────────────────────────────
+
+func checkAdmin() healthCheck {
+	if isElevated() {
+		return healthCheck{
+			Check:   "Privileges",
+			Status:  "PASS",
+			Details: "Administrator",
+		}
+	}
+	return healthCheck{
+		Check:          "Privileges",
+		Status:         "WARN",
+		Details:        "Standard User",
+		Recommendation: "Run wintui as Administrator for full winget functionality.",
+	}
+}
 
 func toolCheck(cmd, label string, required bool, recommendation string, versionArgs ...string) healthCheck {
 	path, err := exec.LookPath(cmd)

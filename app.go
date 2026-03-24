@@ -251,8 +251,14 @@ func (a app) renderTabBar() string {
 	sep := tabSepStyle.Render(" │ ")
 	bar := "  " + strings.Join(parts, sep)
 
-	// Hints on the right
-	hints := helpStyle.Render("tab cycle • q quit")
+	// Admin status + hints on the right
+	var adminBadge string
+	if isElevated() {
+		adminBadge = lipgloss.NewStyle().Foreground(success).Render("● admin") + "  "
+	} else {
+		adminBadge = lipgloss.NewStyle().Foreground(warning).Render("● user") + "  "
+	}
+	hints := adminBadge + helpStyle.Render("tab cycle • q quit")
 	padLen := a.width - lipgloss.Width(bar) - lipgloss.Width(hints) - 2
 	if padLen > 0 {
 		bar += strings.Repeat(" ", padLen) + hints
