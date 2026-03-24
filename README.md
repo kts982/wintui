@@ -3,10 +3,12 @@
 A terminal user interface for **winget** (Windows Package Manager), built with Go and the [Charmbracelet](https://charm.sh) TUI libraries.
 
 ```
-██╗    ██╗██╗███╗   ██╗████████╗██╗   ██╗██╗
-██║ █╗ ██║██║██╔██╗ ██║   ██║   ██║   ██║██║
-╚███╔███╔╝██║██║ ╚████║   ██║   ╚██████╔╝██║
- ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝
+██╗    ██╗ ██╗ ███╗   ██╗ ████████╗ ██╗   ██╗ ██╗
+██║    ██║ ██║ ████╗  ██║ ╚══██╔══╝ ██║   ██║ ██║
+██║ █╗ ██║ ██║ ██╔██╗ ██║    ██║    ██║   ██║ ██║
+██║███╗██║ ██║ ██║╚██╗██║    ██║    ██║   ██║ ██║
+╚███╔███╔╝ ██║ ██║ ╚████║    ██║    ╚██████╔╝ ██║
+ ╚══╝╚══╝  ╚═╝ ╚═╝  ╚═══╝    ╚═╝     ╚═════╝  ╚═╝
 ```
 
 ## Features
@@ -24,8 +26,8 @@ A terminal user interface for **winget** (Windows Package Manager), built with G
 
 **UX**
 - Tab-based navigation (click, number keys `1-6`, or `Tab`/`Shift+Tab` to cycle)
-- Type-to-filter with `/` on package lists
-- Mouse support (tab clicks, table navigation)
+- Fuzzy filter with `/` on package lists
+- Mouse support (tab clicks, table navigation, scroll)
 - Gradient progress bars (pink → mint) on all loading/executing states
 - Package cache with 2-minute TTL (`r` to force refresh)
 - Cancellable operations (`Esc` during loading)
@@ -90,8 +92,9 @@ Settings are stored in `%APPDATA%\wintui\settings.json` and configurable from th
 ## Built With
 
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) — TUI framework
-- [Bubbles](https://github.com/charmbracelet/bubbles) — TUI components (table, spinner, progress, textinput, help)
+- [Bubbles](https://github.com/charmbracelet/bubbles) — TUI components (table, spinner, progress, textinput, viewport, help)
 - [Lip Gloss](https://github.com/charmbracelet/lipgloss) — Terminal styling
+- [Harmonica](https://github.com/charmbracelet/harmonica) — Spring-physics animations
 
 ## License
 
