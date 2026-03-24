@@ -127,7 +127,8 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			case "i", "d":
 				if len(s.packages) > 0 {
 					var cmd tea.Cmd
-					s.detail, cmd = s.detail.show(s.packages[s.cursor].ID)
+					pkg := s.packages[s.cursor]
+					s.detail, cmd = s.detail.show(pkg.ID, pkg.Source)
 					return s, cmd
 				}
 			case "enter":
@@ -145,11 +146,11 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				pkg := s.packages[s.cursor]
 				s.state = installExecuting
 				s.progress, _ = s.progress.start()
-				
+
 				s.installOutChan, s.installErrChan = installPackageStream(pkg.ID)
 				s.outLines = nil
 				s.vp.SetContent("")
-				
+
 				return s, tea.Batch(
 					s.spinner.Tick,
 					tickProgress(),
@@ -279,6 +280,9 @@ func (s installScreen) view(width, height int) string {
 				style = itemActiveStyle
 			}
 			label := fmt.Sprintf("%s  (%s)  %s", pkg.Name, pkg.ID, pkg.Version)
+			if pkg.Source != "" {
+				label += fmt.Sprintf("  [%s]", pkg.Source)
+			}
 			fmt.Fprintf(&b, "  %s%s\n", cursor, style.Render(label))
 		}
 
@@ -301,6 +305,9 @@ func (s installScreen) view(width, height int) string {
 	case installDone:
 		if s.err != nil {
 			b.WriteString("  " + errorStyle.Render("Error: "+s.err.Error()) + "\n")
+			if requiresElevation(s.err, s.output) {
+				b.WriteString("  " + helpStyle.Render(elevationRetryHint()) + "\n")
+			}
 		} else if s.output != "" && len(s.packages) == 0 {
 			b.WriteString("  " + warnStyle.Render(s.output) + "\n")
 		} else {

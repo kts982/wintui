@@ -32,19 +32,19 @@ var keyUninstall = key.NewBinding(
 )
 
 type packagesScreen struct {
-	state      packagesState
-	table      table.Model
-	spinner    spinner.Model
-	progress   progressBar
-	packages   []Package
-	selected   map[int]bool // selected by filtered index
-	count      int
-	err        error
-	detail     detailPanel
-	exportMsg  string
-	statusMsg  string
-	filter     listFilter
-	cancel     context.CancelFunc
+	state     packagesState
+	table     table.Model
+	spinner   spinner.Model
+	progress  progressBar
+	packages  []Package
+	selected  map[int]bool // selected by filtered index
+	count     int
+	err       error
+	detail    detailPanel
+	exportMsg string
+	statusMsg string
+	filter    listFilter
+	cancel    context.CancelFunc
 }
 
 func newPackagesScreen() packagesScreen {
@@ -150,7 +150,8 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				row := s.table.Cursor()
 				if row >= 0 && row < len(filtered) {
 					var cmd tea.Cmd
-					s.detail, cmd = s.detail.show(filtered[row].ID)
+					pkg := filtered[row]
+					s.detail, cmd = s.detail.show(pkg.ID, pkg.Source)
 					return s, cmd
 				}
 			case "e":
@@ -241,7 +242,11 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		cache.invalidate()
 		count := s.selectedCount()
 		if msg.err != nil {
-			s.statusMsg = errorStyle.Render("Uninstall error: " + msg.err.Error())
+			if requiresElevation(msg.err, msg.output) {
+				s.statusMsg = errorStyle.Render("Uninstall blocked: administrator privileges required. " + elevationRetryHint())
+			} else {
+				s.statusMsg = errorStyle.Render("Uninstall error: " + msg.err.Error())
+			}
 		} else {
 			s.statusMsg = successStyle.Render(fmt.Sprintf("%d package(s) uninstalled!", count))
 		}

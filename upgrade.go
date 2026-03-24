@@ -179,7 +179,8 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					idx = 0
 				}
 				var cmd tea.Cmd
-				s.detail, cmd = s.detail.show(s.packages[idx].ID)
+				pkg := s.packages[idx]
+				s.detail, cmd = s.detail.show(pkg.ID, pkg.Source)
 				return s, cmd
 			}
 		}
@@ -405,8 +406,11 @@ func formatBatchResults(ids []string, errs []error, outputs []string) string {
 		} else {
 			// Extract a short reason from the raw output
 			reason := errs[i].Error()
+			if requiresElevation(errs[i], outputs[i]) {
+				reason = "requires administrator privileges; retry from an elevated terminal"
+			}
 			detail := extractFailReason(outputs[i])
-			if detail != "" {
+			if detail != "" && !requiresElevation(errs[i], outputs[i]) {
 				reason = detail
 			}
 			b.WriteString(errorStyle.Render("  ✗ ") + id + "\n")
@@ -414,6 +418,19 @@ func formatBatchResults(ids []string, errs []error, outputs []string) string {
 		}
 	}
 	return b.String()
+}
+
+func batchRequiresElevation(errs []error, outputs []string) bool {
+	for i, err := range errs {
+		output := ""
+		if i < len(outputs) {
+			output = outputs[i]
+		}
+		if requiresElevation(err, output) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractFailReason pulls the most relevant failure line from winget output.
@@ -538,10 +555,10 @@ func (s upgradeScreen) view(width, height int) string {
 
 	case upgradeDone:
 		if s.err != nil {
-			errMsg := s.err.Error()
-			if strings.Contains(errMsg, "administrator privileges") {
+			if requiresElevation(s.err, s.output) || batchRequiresElevation(s.batchErrs, s.batchOutputs) {
 				b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n")
-				b.WriteString("  " + helpStyle.Render("Some packages require administrator privileges.") + "\n\n")
+				b.WriteString("  " + helpStyle.Render("Some packages require administrator privileges.") + "\n")
+				b.WriteString("  " + helpStyle.Render(elevationRetryHint()) + "\n\n")
 			} else {
 				b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n\n")
 			}

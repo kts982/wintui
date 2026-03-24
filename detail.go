@@ -20,9 +20,9 @@ type packageDetailMsg struct {
 }
 
 // fetchDetail returns a Cmd that fetches package details async.
-func fetchDetail(id string) tea.Cmd {
+func fetchDetail(id, source string) tea.Cmd {
 	return func() tea.Msg {
-		d, err := showPackage(id)
+		d, err := showPackage(id, source)
 		return packageDetailMsg{detail: d, err: err}
 	}
 }
@@ -57,11 +57,11 @@ func newDetailPanel() detailPanel {
 }
 
 // show starts loading details for a package.
-func (p detailPanel) show(pkgID string) (detailPanel, tea.Cmd) {
+func (p detailPanel) show(pkgID, source string) (detailPanel, tea.Cmd) {
 	p.state = detailLoading
 	p.scroll = 0
 	p.err = nil
-	return p, tea.Batch(p.spinner.Tick, fetchDetail(pkgID))
+	return p, tea.Batch(p.spinner.Tick, fetchDetail(pkgID, source))
 }
 
 // visible returns true if the panel is showing.
@@ -139,7 +139,7 @@ func (p detailPanel) view(width, height int) string {
 		return panelStyle.Render(inner)
 
 	case detailError:
-		inner := errorStyle.Render("  Error: " + p.err.Error()) + "\n\n" +
+		inner := errorStyle.Render("  Error: "+p.err.Error()) + "\n\n" +
 			helpStyle.Render("  esc close")
 		return panelStyle.Render(inner)
 
@@ -164,6 +164,7 @@ func (p detailPanel) view(width, height int) string {
 		}
 
 		addField("Version", d.Version)
+		addField("Source", d.Source)
 		addField("Publisher", d.Publisher)
 		addField("License", d.License)
 		addField("Moniker", d.Moniker)

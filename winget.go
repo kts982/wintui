@@ -39,9 +39,22 @@ func runWinget(args ...string) (string, error) {
 
 // runWingetCtx runs a winget command with a cancellable context.
 func runWingetCtx(ctx context.Context, args ...string) (string, error) {
+	return runWingetWithModeCtx(ctx, true, args...)
+}
+
+// runWingetActionCtx runs mutating winget commands. These should allow
+// installer/UI elevation behavior when required by the package.
+func runWingetActionCtx(ctx context.Context, args ...string) (string, error) {
+	return runWingetWithModeCtx(ctx, false, args...)
+}
+
+func runWingetWithModeCtx(ctx context.Context, nonInteractive bool, args ...string) (string, error) {
 	allArgs := make([]string, 0, len(args)+2)
 	allArgs = append(allArgs, args...)
-	allArgs = append(allArgs, "--disable-interactivity", "--accept-source-agreements")
+	if nonInteractive {
+		allArgs = append(allArgs, "--disable-interactivity")
+	}
+	allArgs = append(allArgs, "--accept-source-agreements")
 	cmd := exec.CommandContext(ctx, "winget", allArgs...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -85,22 +98,11 @@ func getInstalledCtx(ctx context.Context) ([]Package, error) {
 	if appSettings.IncludeUnknown {
 		args = append(args, "--include-unknown")
 	}
-	if appSettings.Source != "" {
-		args = append(args, "--source", appSettings.Source)
-	}
 	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	pkgs := parseWingetTable(out)
-	if appSettings.Source != "" {
-		for i := range pkgs {
-			// `winget list --source ...` omits the Source column, so keep the UI
-			// consistent by applying the configured source to parsed rows.
-			pkgs[i].Source = appSettings.Source
-		}
-	}
-	return pkgs, nil
+	return parseWingetTable(out), nil
 }
 
 func searchPackages(query string) ([]Package, error) {
@@ -127,7 +129,7 @@ func upgradeAllCtx(ctx context.Context) (string, error) {
 	args := []string{"upgrade", "--all", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
 	args = append(args, appSettings.BuildListArgs()...)
-	return runWingetCtx(ctx, args...)
+	return runWingetActionCtx(ctx, args...)
 }
 
 func upgradePackage(id string) (string, error) {
@@ -138,7 +140,7 @@ func upgradePackageCtx(ctx context.Context, id string) (string, error) {
 	args := []string{"upgrade", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
 	args = append(args, appSettings.BuildListArgs()...)
-	return runWingetCtx(ctx, args...)
+	return runWingetActionCtx(ctx, args...)
 }
 
 func installPackage(id string) (string, error) {
@@ -149,7 +151,7 @@ func installPackageCtx(ctx context.Context, id string) (string, error) {
 	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
 	args = append(args, appSettings.BuildListArgs()...)
-	return runWingetCtx(ctx, args...)
+	return runWingetActionCtx(ctx, args...)
 }
 
 func uninstallPackage(id string) (string, error) {
@@ -160,19 +162,30 @@ func uninstallPackageCtx(ctx context.Context, id string) (string, error) {
 	args := []string{"uninstall", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildUninstallArgs()...)
 	args = append(args, appSettings.BuildListArgs()...)
-	return runWingetCtx(ctx, args...)
+	return runWingetActionCtx(ctx, args...)
 }
 
-func showPackage(id string) (PackageDetail, error) {
-	return showPackageCtx(context.Background(), id)
+func showPackage(id, source string) (PackageDetail, error) {
+	return showPackageCtx(context.Background(), id, source)
 }
 
-func showPackageCtx(ctx context.Context, id string) (PackageDetail, error) {
-	out, err := runWingetCtx(ctx, "show", "--id", id, "--exact", "--source", "winget")
+func showPackageCtx(ctx context.Context, id, source string) (PackageDetail, error) {
+	args := []string{"show", "--id", id, "--exact"}
+	if source == "winget" || source == "msstore" {
+		args = append(args, "--source", source)
+	}
+	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
 		return PackageDetail{}, err
 	}
-	return parseWingetShow(out), nil
+	detail := parseWingetShow(out)
+	if detail.ID == "" {
+		detail.ID = id
+	}
+	if detail.Source == "" {
+		detail.Source = source
+	}
+	return detail, nil
 }
 
 // ── Export / Import ────────────────────────────────────────────────
@@ -183,7 +196,7 @@ func exportPackagesToFile(path string) (string, error) {
 }
 
 func importPackagesFromFile(path string) (string, error) {
-	return runWinget("import", "--import-file", path,
+	return runWingetActionCtx(context.Background(), "import", "--import-file", path,
 		"--accept-package-agreements", "--ignore-unavailable")
 }
 
@@ -224,6 +237,33 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 		return fmt.Errorf("%s: %s", msg, stderr)
 	}
 	return fmt.Errorf("%s", msg)
+}
+
+// requiresElevation reports whether a winget error/output indicates the action
+// needs an elevated terminal rather than a different package failure.
+func requiresElevation(err error, output string) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error() + "\n" + output)
+	patterns := []string{
+		"administrator privileges",
+		"run as admin",
+		"requires elevation",
+		"must be run as administrator",
+		"0x8a150056",
+		"0x80073d28",
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func elevationRetryHint() string {
+	return "Run WinTUI in an elevated terminal and retry."
 }
 
 // ── Output cleaning ────────────────────────────────────────────────
@@ -281,6 +321,7 @@ func cleanWingetOutput(output string) string {
 type PackageDetail struct {
 	Name          string
 	ID            string
+	Source        string
 	Version       string
 	Publisher     string
 	PublisherURL  string
@@ -478,7 +519,7 @@ func extractPackage(line string, cols []colPos) Package {
 
 // -- Streaming command execution ------------------------------------
 
-func runWingetStreamCtx(ctx context.Context, args ...string) (<-chan string, <-chan error) {
+func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string) (<-chan string, <-chan error) {
 	outChan := make(chan string)
 	errChan := make(chan error, 1)
 
@@ -488,7 +529,10 @@ func runWingetStreamCtx(ctx context.Context, args ...string) (<-chan string, <-c
 
 		allArgs := make([]string, 0, len(args)+2)
 		allArgs = append(allArgs, args...)
-		allArgs = append(allArgs, "--disable-interactivity", "--accept-source-agreements")
+		if nonInteractive {
+			allArgs = append(allArgs, "--disable-interactivity")
+		}
+		allArgs = append(allArgs, "--accept-source-agreements")
 		cmd := exec.CommandContext(ctx, "winget", allArgs...)
 
 		stdout, err := cmd.StdoutPipe()
@@ -518,5 +562,5 @@ func installPackageStream(id string) (<-chan string, <-chan error) {
 	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
 	args = append(args, appSettings.BuildListArgs()...)
-	return runWingetStreamCtx(context.Background(), args...)
+	return runWingetStreamCtx(context.Background(), false, args...)
 }

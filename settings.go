@@ -11,9 +11,9 @@ import (
 )
 
 type settingsScreen struct {
-	cursor  int
-	saved   bool
-	errMsg  string
+	cursor int
+	saved  bool
+	errMsg string
 }
 
 func newSettingsScreen() settingsScreen {
@@ -86,6 +86,7 @@ func (s *settingsScreen) cycleForward() {
 		appSettings.setValue(def.key, def.choices[idx])
 	}
 	s.saved = false
+	cache.invalidate()
 }
 
 func (s *settingsScreen) cycleBackward() {
@@ -109,6 +110,7 @@ func (s *settingsScreen) cycleBackward() {
 		appSettings.setValue(def.key, def.choices[idx])
 	}
 	s.saved = false
+	cache.invalidate()
 }
 
 func (s settingsScreen) view(width, height int) string {

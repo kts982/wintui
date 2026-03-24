@@ -11,7 +11,7 @@ type Settings struct {
 	// Install/Upgrade scope: "user", "machine", or "" (winget default)
 	Scope string `json:"scope"`
 
-	// Install mode: "silent" (default), "interactive", or "" (winget default)
+	// Install mode: "", "silent", or "interactive"
 	InstallMode string `json:"install_mode"`
 
 	// Force: skip non-security related issues
@@ -40,7 +40,7 @@ type Settings struct {
 func DefaultSettings() Settings {
 	return Settings{
 		Scope:       "",
-		InstallMode: "silent",
+		InstallMode: "",
 		Source:      "winget",
 	}
 }
@@ -149,31 +149,31 @@ type settingDef struct {
 
 var settingDefs = []settingDef{
 	{
-		key:   "scope",
-		label: "Install Scope",
-		desc:  "Where packages are installed",
-		stype: settingChoice,
+		key:     "scope",
+		label:   "Install Scope",
+		desc:    "Where packages are installed",
+		stype:   settingChoice,
 		choices: []string{"", "user", "machine"},
 	},
 	{
-		key:   "install_mode",
-		label: "Install Mode",
-		desc:  "How installers run",
-		stype: settingChoice,
-		choices: []string{"silent", "interactive", ""},
+		key:     "install_mode",
+		label:   "Install Mode",
+		desc:    "How installers run",
+		stype:   settingChoice,
+		choices: []string{"", "silent", "interactive"},
 	},
 	{
-		key:   "architecture",
-		label: "Architecture",
-		desc:  "Preferred CPU architecture",
-		stype: settingChoice,
+		key:     "architecture",
+		label:   "Architecture",
+		desc:    "Preferred CPU architecture",
+		stype:   settingChoice,
 		choices: []string{"", "x64", "x86", "arm64"},
 	},
 	{
-		key:   "source",
-		label: "Default Source",
-		desc:  "Package repository to use",
-		stype: settingChoice,
+		key:     "source",
+		label:   "Default Source",
+		desc:    "Package repository to use",
+		stype:   settingChoice,
 		choices: []string{"winget", "msstore", ""},
 	},
 	{

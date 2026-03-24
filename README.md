@@ -80,7 +80,7 @@ go install github.com/kts982/wintui@latest
 Settings are stored in `%APPDATA%\wintui\settings.json` and configurable from the Settings tab:
 
 - **Install Scope** — user / machine / auto
-- **Install Mode** — silent / interactive
+- **Install Mode** — auto / silent / interactive
 - **Architecture** — x64 / x86 / arm64 / auto
 - **Default Source** — winget / msstore / all
 - **Force** — skip non-security issues
