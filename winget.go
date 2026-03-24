@@ -15,7 +15,7 @@ type Package struct {
 	ID        string
 	Version   string
 	Available string
-	Source     string
+	Source    string
 }
 
 // FilterValue satisfies the bubbles list.Item interface (used for filtering).
@@ -81,16 +81,26 @@ func getInstalled() ([]Package, error) {
 }
 
 func getInstalledCtx(ctx context.Context) ([]Package, error) {
-	// Don't pass --source here: it removes the Source/Available columns from output.
 	args := []string{"list", "--count", "1000"}
 	if appSettings.IncludeUnknown {
 		args = append(args, "--include-unknown")
+	}
+	if appSettings.Source != "" {
+		args = append(args, "--source", appSettings.Source)
 	}
 	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return parseWingetTable(out), nil
+	pkgs := parseWingetTable(out)
+	if appSettings.Source != "" {
+		for i := range pkgs {
+			// `winget list --source ...` omits the Source column, so keep the UI
+			// consistent by applying the configured source to parsed rows.
+			pkgs[i].Source = appSettings.Source
+		}
+	}
+	return pkgs, nil
 }
 
 func searchPackages(query string) ([]Package, error) {
@@ -125,7 +135,7 @@ func upgradePackage(id string) (string, error) {
 }
 
 func upgradePackageCtx(ctx context.Context, id string) (string, error) {
-	args := []string{"upgrade", "--id", id, "--accept-package-agreements"}
+	args := []string{"upgrade", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
 	args = append(args, appSettings.BuildListArgs()...)
 	return runWingetCtx(ctx, args...)
@@ -136,7 +146,7 @@ func installPackage(id string) (string, error) {
 }
 
 func installPackageCtx(ctx context.Context, id string) (string, error) {
-	args := []string{"install", "--id", id, "--accept-package-agreements"}
+	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
 	args = append(args, appSettings.BuildListArgs()...)
 	return runWingetCtx(ctx, args...)
@@ -147,7 +157,7 @@ func uninstallPackage(id string) (string, error) {
 }
 
 func uninstallPackageCtx(ctx context.Context, id string) (string, error) {
-	args := []string{"uninstall", "--id", id, "--accept-package-agreements"}
+	args := []string{"uninstall", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildUninstallArgs()...)
 	args = append(args, appSettings.BuildListArgs()...)
 	return runWingetCtx(ctx, args...)
@@ -158,7 +168,7 @@ func showPackage(id string) (PackageDetail, error) {
 }
 
 func showPackageCtx(ctx context.Context, id string) (PackageDetail, error) {
-	out, err := runWingetCtx(ctx, "show", "--id", id, "--source", "winget")
+	out, err := runWingetCtx(ctx, "show", "--id", id, "--exact", "--source", "winget")
 	if err != nil && len(out) == 0 {
 		return PackageDetail{}, err
 	}
@@ -487,7 +497,7 @@ func runWingetStreamCtx(ctx context.Context, args ...string) (<-chan string, <-c
 			return
 		}
 		cmd.Stderr = cmd.Stdout
-		
+
 		if err := cmd.Start(); err != nil {
 			errChan <- err
 			return
@@ -497,7 +507,7 @@ func runWingetStreamCtx(ctx context.Context, args ...string) (<-chan string, <-c
 		for scanner.Scan() {
 			outChan <- scanner.Text()
 		}
-		
+
 		errChan <- cmd.Wait()
 	}()
 
@@ -505,9 +515,8 @@ func runWingetStreamCtx(ctx context.Context, args ...string) (<-chan string, <-c
 }
 
 func installPackageStream(id string) (<-chan string, <-chan error) {
-	args := []string{"install", "--id", id, "--accept-package-agreements"}
+	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
 	args = append(args, appSettings.BuildListArgs()...)
 	return runWingetStreamCtx(context.Background(), args...)
 }
-
