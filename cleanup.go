@@ -92,7 +92,7 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			case "enter", "d":
 				s.state = cleanupConfirm
 			case "esc", "q":
-				return s, goToMenu
+				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 
 		case cleanupConfirm:
@@ -118,7 +118,7 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 		case cleanupDone, cleanupEmpty:
 			if msg.String() == "enter" || msg.String() == "esc" {
-				return s, goToMenu
+				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 		}
 
@@ -164,7 +164,7 @@ func (s cleanupScreen) view(width, height int) string {
 
 	switch s.state {
 	case cleanupLoading:
-		b.WriteString(fmt.Sprintf("  %s Scanning temp directory...\n\n", s.spinner.View()))
+		fmt.Fprintf(&b, "  %s Scanning temp directory...\n\n", s.spinner.View())
 		b.WriteString("  " + s.progress.view() + "\n")
 
 	case cleanupEmpty:
@@ -191,7 +191,7 @@ func (s cleanupScreen) view(width, height int) string {
 				style = itemActiveStyle
 			}
 			name := filepath.Base(s.files[i])
-			b.WriteString(fmt.Sprintf("  %s%s\n", cursor, style.Render(name)))
+			fmt.Fprintf(&b, "  %s%s\n", cursor, style.Render(name))
 		}
 
 	case cleanupConfirm:
@@ -200,7 +200,7 @@ func (s cleanupScreen) view(width, height int) string {
 		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
 
 	case cleanupExecuting:
-		b.WriteString(fmt.Sprintf("  %s Cleaning up...\n\n", s.spinner.View()))
+		fmt.Fprintf(&b, "  %s Cleaning up...\n\n", s.spinner.View())
 		b.WriteString("  " + s.progress.view() + "\n")
 
 	case cleanupDone:

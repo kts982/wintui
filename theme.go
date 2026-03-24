@@ -14,27 +14,6 @@ var (
 	warning   = lipgloss.Color("220") // yellow
 )
 
-// ── Header ─────────────────────────────────────────────────────────
-
-var (
-	logoStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("0")).
-			Background(accent).
-			Padding(0, 1)
-
-	headerTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(accent).
-				MarginLeft(1)
-
-	headerBarStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(accent).
-			Padding(0, 1).
-			MarginBottom(1)
-)
-
 // ── Menu / list items ──────────────────────────────────────────────
 
 var (

@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,15 +26,19 @@ const (
 )
 
 type installScreen struct {
-	state    installState
-	input    textinput.Model
-	spinner  spinner.Model
-	progress progressBar
-	packages []Package
-	cursor   int
-	output   string
-	err      error
-	detail   detailPanel
+	state          installState
+	input          textinput.Model
+	spinner        spinner.Model
+	progress       progressBar
+	packages       []Package
+	cursor         int
+	output         string
+	err            error
+	detail         detailPanel
+	vp             viewport.Model
+	outLines       []string
+	installOutChan <-chan string
+	installErrChan <-chan error
 }
 
 func newInstallScreen() installScreen {
@@ -48,12 +53,26 @@ func newInstallScreen() installScreen {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
 
+	vp := viewport.New(0, 10)
+	vp.Style = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(accent)
+
 	return installScreen{
 		state:    installInput,
 		input:    ti,
 		spinner:  sp,
 		progress: newProgressBar(50),
 		detail:   newDetailPanel(),
+		vp:       vp,
+	}
+}
+
+func awaitStream(outChan <-chan string, errChan <-chan error) tea.Cmd {
+	return func() tea.Msg {
+		line, ok := <-outChan
+		if !ok {
+			return streamDoneMsg{err: <-errChan}
+		}
+		return streamMsg(line)
 	}
 }
 
@@ -89,7 +108,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					return packagesLoadedMsg{packages: pkgs, err: err}
 				})
 			case "esc":
-				return s, goToMenu
+				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 			var cmd tea.Cmd
 			s.input, cmd = s.input.Update(msg)
@@ -126,10 +145,16 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				pkg := s.packages[s.cursor]
 				s.state = installExecuting
 				s.progress, _ = s.progress.start()
-				return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-					out, err := installPackage(pkg.ID)
-					return commandDoneMsg{output: out, err: err}
-				})
+				
+				s.installOutChan, s.installErrChan = installPackageStream(pkg.ID)
+				s.outLines = nil
+				s.vp.SetContent("")
+				
+				return s, tea.Batch(
+					s.spinner.Tick,
+					tickProgress(),
+					awaitStream(s.installOutChan, s.installErrChan),
+				)
 			case "n", "N", "esc":
 				s.state = installResults
 			}
@@ -143,7 +168,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				return s, textinput.Blink
 			}
 			if msg.String() == "enter" || msg.String() == "esc" {
-				return s, goToMenu
+				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 		}
 
@@ -177,6 +202,20 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.progress = s.progress.stop()
 		s.output = msg.output
 		s.err = msg.err
+		s.state = installDone
+		cache.invalidate()
+		return s, nil
+
+	case streamMsg:
+		s.outLines = append(s.outLines, string(msg))
+		s.vp.SetContent(strings.Join(s.outLines, "\n"))
+		s.vp.GotoBottom()
+		return s, awaitStream(s.installOutChan, s.installErrChan)
+
+	case streamDoneMsg:
+		s.progress = s.progress.stop()
+		s.err = msg.err
+		s.output = strings.Join(s.outLines, "\n")
 		s.state = installDone
 		cache.invalidate()
 		return s, nil
@@ -220,7 +259,7 @@ func (s installScreen) view(width, height int) string {
 		b.WriteString("  " + s.input.View() + "\n\n")
 
 	case installSearching:
-		b.WriteString(fmt.Sprintf("  %s Searching...\n\n", s.spinner.View()))
+		fmt.Fprintf(&b, "  %s Searching...\n\n", s.spinner.View())
 		b.WriteString("  " + s.progress.view() + "\n")
 
 	case installResults:
@@ -240,7 +279,7 @@ func (s installScreen) view(width, height int) string {
 				style = itemActiveStyle
 			}
 			label := fmt.Sprintf("%s  (%s)  %s", pkg.Name, pkg.ID, pkg.Version)
-			b.WriteString(fmt.Sprintf("  %s%s\n", cursor, style.Render(label)))
+			fmt.Fprintf(&b, "  %s%s\n", cursor, style.Render(label))
 		}
 
 	case installConfirm:
@@ -250,8 +289,14 @@ func (s installScreen) view(width, height int) string {
 		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
 
 	case installExecuting:
-		b.WriteString(fmt.Sprintf("  %s Installing...\n\n", s.spinner.View()))
-		b.WriteString("  " + s.progress.view() + "\n")
+		fmt.Fprintf(&b, "  %s Installing...\n\n", s.spinner.View())
+		b.WriteString("  " + s.progress.view() + "\n\n")
+		s.vp.Width = width - 8
+		s.vp.Height = height - 12
+		if s.vp.Height < 5 {
+			s.vp.Height = 5
+		}
+		b.WriteString("  " + s.vp.View() + "\n")
 
 	case installDone:
 		if s.err != nil {

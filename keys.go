@@ -25,10 +25,6 @@ var (
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "cancel"),
 	)
-	keyQuit = key.NewBinding(
-		key.WithKeys("q"),
-		key.WithHelp("q", "quit"),
-	)
 	keyRefresh = key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "refresh"),
@@ -40,10 +36,6 @@ var (
 	keyDetails = key.NewBinding(
 		key.WithKeys("i", "d"),
 		key.WithHelp("i", "details"),
-	)
-	keyTabCycle = key.NewBinding(
-		key.WithKeys("tab"),
-		key.WithHelp("tab", "next tab"),
 	)
 	keyToggle = key.NewBinding(
 		key.WithKeys(" ", "x"),
@@ -61,10 +53,6 @@ var (
 		key.WithKeys("e"),
 		key.WithHelp("e", "export"),
 	)
-	keyOpenURL = key.NewBinding(
-		key.WithKeys("o"),
-		key.WithHelp("o", "open homepage"),
-	)
 	keySave = key.NewBinding(
 		key.WithKeys("s"),
 		key.WithHelp("s", "save"),
@@ -78,8 +66,8 @@ var (
 		key.WithHelp("←→", "cycle"),
 	)
 	keyTabs = key.NewBinding(
-		key.WithKeys("1", "2", "3", "4", "5", "6", "7"),
-		key.WithHelp("1-7", "tabs"),
+		key.WithKeys("1", "2", "3", "4", "5", "6"),
+		key.WithHelp("1-6", "tabs"),
 	)
 	keyScroll = key.NewBinding(
 		key.WithKeys("up", "down"),

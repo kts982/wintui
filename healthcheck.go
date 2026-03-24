@@ -443,11 +443,11 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			case "down", "j":
 				s.scroll++
 			case "esc", "q", "enter":
-				return s, goToMenu
+				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 		case hcError:
 			if msg.String() == "esc" || msg.String() == "enter" || msg.String() == "q" {
-				return s, goToMenu
+				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 		}
 
@@ -475,7 +475,7 @@ func (s healthcheckScreen) view(width, height int) string {
 
 	switch s.state {
 	case hcLoading:
-		b.WriteString(fmt.Sprintf("  %s Running checks...\n", s.spinner.View()))
+		fmt.Fprintf(&b, "  %s Running checks...\n", s.spinner.View())
 
 	case hcError:
 		b.WriteString("  " + errorStyle.Render("Error: "+s.err.Error()) + "\n")
@@ -490,7 +490,7 @@ func (s healthcheckScreen) view(width, height int) string {
 		if r.Uptime != "" {
 			uptime = helpStyle.Render(" · up " + r.Uptime)
 		}
-		b.WriteString(fmt.Sprintf("  %s  %s%s\n\n", overall, info, uptime))
+		fmt.Fprintf(&b, "  %s  %s%s\n\n", overall, info, uptime)
 
 		// Counts
 		b.WriteString(fmt.Sprintf("  %s %d    %s %d    %s %d    Total: %d\n\n",

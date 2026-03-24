@@ -192,7 +192,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s.updateConfirm(msg)
 		case upgradeDone, upgradeEmpty:
 			if msg.String() == "enter" {
-				return s, goToMenu
+				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 		}
 
@@ -449,7 +449,7 @@ func (s upgradeScreen) view(width, height int) string {
 
 	switch s.state {
 	case upgradeLoading:
-		b.WriteString(fmt.Sprintf("  %s Scanning for updates...\n\n", s.spinner.View()))
+		fmt.Fprintf(&b, "  %s Scanning for updates...\n\n", s.spinner.View())
 		b.WriteString("  " + s.progress.view() + "\n")
 
 	case upgradeEmpty:
@@ -469,7 +469,7 @@ func (s upgradeScreen) view(width, height int) string {
 				cursor = cursorStr
 				style = itemActiveStyle
 			}
-			b.WriteString(fmt.Sprintf("  %s%s\n", cursor, style.Render(action)))
+			fmt.Fprintf(&b, "  %s%s\n", cursor, style.Render(action))
 		}
 
 	case upgradeSelecting:
@@ -503,7 +503,7 @@ func (s upgradeScreen) view(width, height int) string {
 			}
 			check := checkbox(origIdx >= 0 && s.selected[origIdx])
 			label := fmt.Sprintf("%s  (%s)  %s → %s", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
-			b.WriteString(fmt.Sprintf("  %s%s %s\n", cursor, check, style.Render(label)))
+			fmt.Fprintf(&b, "  %s%s %s\n", cursor, check, style.Render(label))
 		}
 		selected := 0
 		for _, v := range s.selected {
@@ -511,11 +511,11 @@ func (s upgradeScreen) view(width, height int) string {
 				selected++
 			}
 		}
-		b.WriteString(fmt.Sprintf("\n  %s\n", infoStyle.Render(fmt.Sprintf("%d selected", selected))))
+		fmt.Fprintf(&b, "\n  %s\n", infoStyle.Render(fmt.Sprintf("%d selected", selected)))
 
 	case upgradeConfirming:
 		if s.action == "all" {
-			b.WriteString(fmt.Sprintf("  Upgrade all %d package(s)?\n\n", len(s.packages)))
+			fmt.Fprintf(&b, "  Upgrade all %d package(s)?\n\n", len(s.packages))
 		} else {
 			count := 0
 			for _, v := range s.selected {
@@ -523,7 +523,7 @@ func (s upgradeScreen) view(width, height int) string {
 					count++
 				}
 			}
-			b.WriteString(fmt.Sprintf("  Upgrade %d selected package(s)?\n\n", count))
+			fmt.Fprintf(&b, "  Upgrade %d selected package(s)?\n\n", count)
 		}
 		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
 
@@ -532,7 +532,7 @@ func (s upgradeScreen) view(width, height int) string {
 			b.WriteString(fmt.Sprintf("  %s Upgrading %d of %d: %s\n\n",
 				s.spinner.View(), s.batchCurrent+1, s.batchTotal, s.batchName))
 		} else {
-			b.WriteString(fmt.Sprintf("  %s Upgrading packages...\n\n", s.spinner.View()))
+			fmt.Fprintf(&b, "  %s Upgrading packages...\n\n", s.spinner.View())
 		}
 		b.WriteString("  " + s.progress.view() + "\n")
 

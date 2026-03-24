@@ -63,6 +63,3 @@ func (c *packageCache) invalidate() {
 	c.installed = nil
 	c.upgradeable = nil
 }
-
-// refreshMsg tells a screen to reload data, bypassing cache.
-type refreshMsg struct{}

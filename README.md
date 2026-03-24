@@ -13,9 +13,8 @@ A terminal user interface for **winget** (Windows Package Manager), built with G
 
 **Package Management**
 - **Upgrade** — scan for updates, upgrade all or select individual packages, what-if preview
-- **Search** — search the winget repository with results in an interactive table
 - **Installed** — browse all installed packages, select and uninstall with `[X]` checkboxes
-- **Install** — search and install new packages with confirmation
+- **Install** — search and install new packages with live streaming output
 - **Package Details** — view publisher, description, license, release notes, homepage (press `i`)
 
 **System Utilities**
@@ -24,7 +23,7 @@ A terminal user interface for **winget** (Windows Package Manager), built with G
 - **Settings** — persistent config for winget options (scope, architecture, silent/interactive, force, purge, etc.)
 
 **UX**
-- Tab-based navigation (click, number keys `1-7`, or `Tab`/`Shift+Tab` to cycle)
+- Tab-based navigation (click, number keys `1-6`, or `Tab`/`Shift+Tab` to cycle)
 - Type-to-filter with `/` on package lists
 - Mouse support (tab clicks, table navigation)
 - Gradient progress bars (pink → mint) on all loading/executing states
@@ -60,7 +59,7 @@ go install github.com/kts982/wintui@latest
 
 | Key | Action |
 |---|---|
-| `1-7` | Switch tabs |
+| `1-6` | Switch tabs |
 | `Tab` / `Shift+Tab` | Cycle tabs |
 | `↑↓` / `j/k` | Navigate |
 | `Space` | Toggle selection |

@@ -1,10 +1,9 @@
 package main
 
 import (
-	"strings"
-
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/sahilm/fuzzy"
 )
 
 // listFilter provides type-to-filter for package lists.
@@ -50,26 +49,19 @@ func (f listFilter) apply() listFilter {
 	return f
 }
 
-// matches returns true if the package matches the filter.
-func (f listFilter) matches(p Package) bool {
-	if f.query == "" {
-		return true
-	}
-	q := strings.ToLower(f.query)
-	return strings.Contains(strings.ToLower(p.Name), q) ||
-		strings.Contains(strings.ToLower(p.ID), q)
-}
-
 // filterPackages returns only matching packages.
 func (f listFilter) filterPackages(pkgs []Package) []Package {
 	if f.query == "" {
 		return pkgs
 	}
-	var out []Package
+	var names []string
 	for _, p := range pkgs {
-		if f.matches(p) {
-			out = append(out, p)
-		}
+		names = append(names, p.Name+" "+p.ID)
+	}
+	matches := fuzzy.Find(f.query, names)
+	var out []Package
+	for _, m := range matches {
+		out = append(out, pkgs[m.Index])
 	}
 	return out
 }

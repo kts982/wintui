@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -38,7 +39,9 @@ func runWinget(args ...string) (string, error) {
 
 // runWingetCtx runs a winget command with a cancellable context.
 func runWingetCtx(ctx context.Context, args ...string) (string, error) {
-	allArgs := append(args, "--disable-interactivity", "--accept-source-agreements")
+	allArgs := make([]string, 0, len(args)+2)
+	allArgs = append(allArgs, args...)
+	allArgs = append(allArgs, "--disable-interactivity", "--accept-source-agreements")
 	cmd := exec.CommandContext(ctx, "winget", allArgs...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -61,8 +64,11 @@ func getUpgradeable() ([]Package, error) {
 }
 
 func getUpgradeableCtx(ctx context.Context) ([]Package, error) {
+	// Don't pass --source here: it removes the Available column from output.
 	args := []string{"upgrade"}
-	args = append(args, appSettings.BuildListArgs()...)
+	if appSettings.IncludeUnknown {
+		args = append(args, "--include-unknown")
+	}
 	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
 		return nil, err
@@ -75,8 +81,11 @@ func getInstalled() ([]Package, error) {
 }
 
 func getInstalledCtx(ctx context.Context) ([]Package, error) {
+	// Don't pass --source here: it removes the Source/Available columns from output.
 	args := []string{"list", "--count", "1000"}
-	args = append(args, appSettings.BuildListArgs()...)
+	if appSettings.IncludeUnknown {
+		args = append(args, "--include-unknown")
+	}
 	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
 		return nil, err
@@ -176,12 +185,13 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 
 	// Map known winget exit/installer codes to friendly descriptions.
 	replacements := map[string]string{
-		"0x8a15002c": "some packages failed to upgrade",
-		"0x8a15002b": "install technology differs from installed version (package manages its own updates)",
-		"0x8a150011": "package not found",
+		"0x8a150002": "package not found or no applicable installer",
 		"0x8a15000e": "upgrade not applicable (already up to date)",
-		"0x8a150056": "package requires administrator privileges to install",
+		"0x8a150011": "package not found",
 		"0x8a150019": "package version already installed",
+		"0x8a15002b": "install technology differs from installed version (package manages its own updates)",
+		"0x8a15002c": "some packages failed to upgrade",
+		"0x8a150056": "package requires administrator privileges to install",
 		"0x80073d28": "installer requires administrator privileges (try running as admin)",
 		"0x80073cf3": "package install failed (conflicting package)",
 		"0x80073d02": "installation blocked by a running process",
@@ -414,6 +424,10 @@ func parseWingetTable(output string) []Package {
 }
 
 func extractPackage(line string, cols []colPos) Package {
+	// Normalize multi-byte ellipsis (…, 3 bytes) to single-byte so
+	// byte-indexed column positions from the header stay aligned.
+	line = strings.ReplaceAll(line, "\u2026", ".")
+
 	field := func(c int) string {
 		start := cols[c].start
 		if start >= len(line) {
@@ -442,9 +456,58 @@ func extractPackage(line string, cols []colPos) Package {
 		case "Available":
 			pkg.Available = val
 		case "Source":
-			pkg.Source = val
+			// Only accept known source values; garbage from misaligned rows is ignored.
+			if val == "winget" || val == "msstore" {
+				pkg.Source = val
+			}
 		}
 		_ = i
 	}
 	return pkg
 }
+
+// -- Streaming command execution ------------------------------------
+
+func runWingetStreamCtx(ctx context.Context, args ...string) (<-chan string, <-chan error) {
+	outChan := make(chan string)
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer close(outChan)
+		defer close(errChan)
+
+		allArgs := make([]string, 0, len(args)+2)
+		allArgs = append(allArgs, args...)
+		allArgs = append(allArgs, "--disable-interactivity", "--accept-source-agreements")
+		cmd := exec.CommandContext(ctx, "winget", allArgs...)
+
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			errChan <- err
+			return
+		}
+		cmd.Stderr = cmd.Stdout
+		
+		if err := cmd.Start(); err != nil {
+			errChan <- err
+			return
+		}
+
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			outChan <- scanner.Text()
+		}
+		
+		errChan <- cmd.Wait()
+	}()
+
+	return outChan, errChan
+}
+
+func installPackageStream(id string) (<-chan string, <-chan error) {
+	args := []string{"install", "--id", id, "--accept-package-agreements"}
+	args = append(args, appSettings.BuildInstallArgs()...)
+	args = append(args, appSettings.BuildListArgs()...)
+	return runWingetStreamCtx(context.Background(), args...)
+}
+

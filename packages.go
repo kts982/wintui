@@ -118,7 +118,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 		// Refresh
 		if msg.String() == "r" && (s.state == packagesReady || s.state == packagesEmpty || s.state == packagesDone) {
-			return s, s.reload()
+			return s.reload()
 		}
 
 		// Cancel
@@ -177,7 +177,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 		case packagesEmpty, packagesDone:
 			if msg.String() == "enter" || msg.String() == "esc" {
-				return s, s.reload()
+				return s.reload()
 			}
 
 		case packagesConfirmUninstall:
@@ -206,10 +206,19 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 
 	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && s.state == packagesReady {
-			var cmd tea.Cmd
-			s.table, cmd = s.table.Update(msg)
-			return s, cmd
+		if s.state == packagesReady {
+			switch {
+			case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
+				var cmd tea.Cmd
+				s.table, cmd = s.table.Update(msg)
+				return s, cmd
+			case msg.Button == tea.MouseButtonWheelUp:
+				s.table.MoveUp(3)
+				return s, nil
+			case msg.Button == tea.MouseButtonWheelDown:
+				s.table.MoveDown(3)
+				return s, nil
+			}
 		}
 
 	case packagesLoadedMsg:
@@ -275,6 +284,38 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
+// packageSummary builds the info line: "219 installed (62 winget, 3 msstore, 154 other)"
+func packageSummary(pkgs []Package) string {
+	total := len(pkgs)
+	winget, msstore := 0, 0
+	for _, p := range pkgs {
+		switch p.Source {
+		case "winget":
+			winget++
+		case "msstore":
+			msstore++
+		}
+	}
+
+	other := total - winget - msstore
+	if winget == 0 && msstore == 0 {
+		return fmt.Sprintf("%d package(s) installed.", total)
+	}
+
+	var parts []string
+	if winget > 0 {
+		parts = append(parts, fmt.Sprintf("%d winget", winget))
+	}
+	if msstore > 0 {
+		parts = append(parts, fmt.Sprintf("%d msstore", msstore))
+	}
+	if other > 0 {
+		parts = append(parts, fmt.Sprintf("%d other", other))
+	}
+
+	return fmt.Sprintf("%d installed (%s)", total, strings.Join(parts, ", "))
+}
+
 func (s packagesScreen) filteredPkgs() []Package {
 	return s.filter.filterPackages(s.packages)
 }
@@ -284,9 +325,17 @@ func (s *packagesScreen) rebuildTable() {
 	s.table = buildSelectableTable(filtered, s.selected, 120, 30)
 }
 
-func (s packagesScreen) reload() tea.Cmd {
+func (s packagesScreen) reload() (packagesScreen, tea.Cmd) {
 	cache.invalidate()
-	return func() tea.Msg { return switchScreenMsg(screenPackages) }
+	s.state = packagesLoading
+	s.progress, _ = s.progress.start()
+	return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
+		pkgs, err := getInstalled()
+		if err == nil {
+			cache.setInstalled(pkgs)
+		}
+		return packagesLoadedMsg{packages: pkgs, err: err}
+	})
 }
 
 func (s packagesScreen) selectedCount() int {
@@ -334,7 +383,7 @@ func (s packagesScreen) view(width, height int) string {
 
 	switch s.state {
 	case packagesLoading:
-		b.WriteString(fmt.Sprintf("  %s Loading installed packages...\n\n", s.spinner.View()))
+		fmt.Fprintf(&b, "  %s Loading installed packages...\n\n", s.spinner.View())
 		b.WriteString("  " + s.progress.view() + "\n")
 
 	case packagesEmpty:
@@ -346,8 +395,7 @@ func (s packagesScreen) view(width, height int) string {
 
 	case packagesReady:
 		filtered := s.filteredPkgs()
-		b.WriteString(fmt.Sprintf("  %s\n",
-			infoStyle.Render(fmt.Sprintf("%d package(s) installed.", s.count))))
+		b.WriteString("  " + infoStyle.Render(packageSummary(s.packages)) + "\n")
 
 		filterView := s.filter.view()
 		if filterView != "" {
@@ -385,14 +433,14 @@ func (s packagesScreen) view(width, height int) string {
 
 	case packagesConfirmUninstall:
 		names := s.selectedNames()
-		b.WriteString(fmt.Sprintf("  Uninstall %d package(s)?\n\n", len(names)))
+		fmt.Fprintf(&b, "  Uninstall %d package(s)?\n\n", len(names))
 		for _, name := range names {
 			b.WriteString("  " + errorStyle.Render("  "+name) + "\n")
 		}
 		b.WriteString("\n  " + warnStyle.Render("Press y to confirm, n to cancel"))
 
 	case packagesUninstalling:
-		b.WriteString(fmt.Sprintf("  %s Uninstalling...\n\n", s.spinner.View()))
+		fmt.Fprintf(&b, "  %s Uninstalling...\n\n", s.spinner.View())
 		b.WriteString("  " + s.progress.view() + "\n")
 
 	case packagesDone:
@@ -402,6 +450,111 @@ func (s packagesScreen) view(width, height int) string {
 	}
 
 	return b.String()
+}
+
+// ── Table builders ─────────────────────────────────────────────────
+
+// upgradeableIDs returns a set of package IDs that have updates available.
+func upgradeableIDs() map[string]bool {
+	pkgs, ok := cache.getUpgradeable()
+	if !ok {
+		return nil
+	}
+	ids := make(map[string]bool, len(pkgs))
+	for _, p := range pkgs {
+		ids[p.ID] = true
+	}
+	return ids
+}
+
+// buildSelectableTable creates a table with a checkbox column.
+// selected maps row index → bool.
+// Responsively adds Source and update indicator columns when width allows.
+func buildSelectableTable(pkgs []Package, selected map[int]bool, width, height int) table.Model {
+	usable := width - 8
+	if usable < 40 {
+		usable = 40
+	}
+
+	upgrades := upgradeableIDs()
+	checkW := 5
+	updW := 3 // "↑" indicator column
+
+	// Determine which optional columns fit
+	showSource := usable >= 90
+	showUpdate := upgrades != nil && usable >= 60
+
+	// Reserve space for fixed columns
+	reserved := checkW
+	if showUpdate {
+		reserved += updW
+	}
+	srcW := 0
+	if showSource {
+		srcW = 9
+		reserved += srcW
+	}
+
+	remaining := usable - reserved
+	nameW := remaining * 30 / 100
+	idW := remaining * 40 / 100
+	verW := remaining - nameW - idW
+
+	var columns []table.Column
+	columns = append(columns, table.Column{Title: "     ", Width: checkW})
+	if showUpdate {
+		columns = append(columns, table.Column{Title: " ↑", Width: updW})
+	}
+	columns = append(columns,
+		table.Column{Title: "Name", Width: nameW},
+		table.Column{Title: "ID", Width: idW},
+		table.Column{Title: "Version", Width: verW},
+	)
+	if showSource {
+		columns = append(columns, table.Column{Title: "Source", Width: srcW})
+	}
+
+	rows := make([]table.Row, len(pkgs))
+	for i, p := range pkgs {
+		check := " [ ] "
+		if selected[i] {
+			check = " [X] "
+		}
+		var row table.Row
+		row = append(row, check)
+		if showUpdate {
+			if upgrades[p.ID] {
+				row = append(row, " ↑")
+			} else {
+				row = append(row, "  ")
+			}
+		}
+		row = append(row, p.Name, p.ID, p.Version)
+		if showSource {
+			row = append(row, p.Source)
+		}
+		rows[i] = row
+	}
+
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithFocused(true),
+		table.WithHeight(height),
+	)
+	st := table.DefaultStyles()
+	st.Header = st.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(accent).
+		BorderBottom(true).
+		Bold(true).
+		Foreground(secondary)
+	st.Selected = st.Selected.
+		Foreground(lipgloss.Color("229")).
+		Background(accent).
+		Bold(false)
+	t.SetStyles(st)
+	return t
 }
 
 func (s packagesScreen) helpKeys() []key.Binding {

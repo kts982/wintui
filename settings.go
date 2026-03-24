@@ -129,7 +129,7 @@ func (s settingsScreen) view(width, height int) string {
 		label := labelStyle.Render(fmt.Sprintf("%-24s", def.label))
 		desc := itemDescStyle.Render(def.desc)
 
-		b.WriteString(fmt.Sprintf("  %s%s %s  %s\n", cursor, label, valDisplay, desc))
+		fmt.Fprintf(&b, "  %s%s %s  %s\n", cursor, label, valDisplay, desc)
 	}
 
 	b.WriteString("\n")

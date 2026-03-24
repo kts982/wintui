@@ -18,8 +18,6 @@ const (
 	screenMenu screenID = iota // kept for compat, maps to tab 0
 	screenUpgrade
 	screenInstall
-	screenSearch
-	screenUninstall
 	screenPackages
 	screenCleanup
 	screenHealthcheck
@@ -35,7 +33,6 @@ type tabDef struct {
 
 var tabs = []tabDef{
 	{"Upgrade", screenUpgrade},
-	{"Search", screenSearch},
 	{"Installed", screenPackages},
 	{"Install", screenInstall},
 	{"Cleanup", screenCleanup},
@@ -55,6 +52,12 @@ type packagesLoadedMsg struct {
 type commandDoneMsg struct {
 	output string
 	err    error
+}
+
+type streamMsg string
+
+type streamDoneMsg struct {
+	err error
 }
 
 type filesScannedMsg struct {
@@ -285,8 +288,6 @@ func (a app) screenHasTextInput() bool {
 	switch s := a.active.(type) {
 	case installScreen:
 		return s.state == installInput
-	case searchScreen:
-		return s.state == searchInput
 	default:
 		return false
 	}
@@ -300,8 +301,6 @@ func createScreen(id screenID) screen {
 		return newUpgradeScreen()
 	case screenInstall:
 		return newInstallScreen()
-	case screenSearch:
-		return newSearchScreen()
 	case screenPackages:
 		return newPackagesScreen()
 	case screenCleanup:
@@ -313,8 +312,4 @@ func createScreen(id screenID) screen {
 	default:
 		return newUpgradeScreen()
 	}
-}
-
-func goToMenu() tea.Msg {
-	return switchScreenMsg(screenUpgrade)
 }
