@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
@@ -77,20 +78,28 @@ type screen interface {
 // ── ASCII art header ───────────────────────────────────────────────
 
 var asciiLogo = []string{
-	`██╗    ██╗██╗███╗   ██╗████████╗██╗   ██╗██╗`,
-	`██║ █╗ ██║██║██╔██╗ ██║   ██║   ██║   ██║██║`,
-	`╚███╔███╔╝██║██║ ╚████║   ██║   ╚██████╔╝██║`,
-	` ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝`,
+	`██╗    ██╗ ██╗ ███╗   ██╗ ████████╗ ██╗   ██╗ ██╗`,
+	`██║    ██║ ██║ ████╗  ██║ ╚══██╔══╝ ██║   ██║ ██║`,
+	`██║ █╗ ██║ ██║ ██╔██╗ ██║    ██║    ██║   ██║ ██║`,
+	`██║███╗██║ ██║ ██║╚██╗██║    ██║    ██║   ██║ ██║`,
+	`╚███╔███╔╝ ██║ ██║ ╚████║    ██║    ╚██████╔╝ ██║`,
+	` ╚══╝╚══╝  ╚═╝ ╚═╝  ╚═══╝    ╚═╝     ╚═════╝  ╚═╝`,
 }
 
-var logoColors = []lipgloss.Color{
+var logoGradient = []lipgloss.Color{
 	lipgloss.Color("212"), // bright pink
-	lipgloss.Color("206"), // pink
+	lipgloss.Color("211"), // pink
+	lipgloss.Color("206"), // salmon
 	lipgloss.Color("170"), // magenta
+	lipgloss.Color("134"), // purple
 	lipgloss.Color("99"),  // lavender
+	lipgloss.Color("105"), // light purple
+	lipgloss.Color("141"), // periwinkle
 }
 
 // ── App model ──────────────────────────────────────────────────────
+
+type logoTickMsg struct{}
 
 type app struct {
 	activeTab int
@@ -99,6 +108,7 @@ type app struct {
 	width     int
 	height    int
 	quitting  bool
+	logoFrame int
 }
 
 func newApp() app {
@@ -117,8 +127,14 @@ func newApp() app {
 	return a
 }
 
+func logoTick() tea.Cmd {
+	return tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg {
+		return logoTickMsg{}
+	})
+}
+
 func (a app) Init() tea.Cmd {
-	return a.active.init()
+	return tea.Batch(a.active.init(), logoTick())
 }
 
 func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -155,13 +171,17 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			// Check if click is on the tab bar row
-			tabRow := lipgloss.Height(renderLogo(a.width)) // row right after logo
+			tabRow := lipgloss.Height(a.renderLogo()) // row right after logo
 			if msg.Y == tabRow {
 				if idx := a.tabHitTest(msg.X); idx >= 0 {
 					return a.switchTab(idx)
 				}
 			}
 		}
+
+	case logoTickMsg:
+		a.logoFrame++
+		return a, logoTick()
 
 	case switchScreenMsg:
 		for i, t := range tabs {
@@ -192,7 +212,7 @@ func (a app) View() string {
 		return ""
 	}
 
-	logo := renderLogo(a.width)
+	logo := a.renderLogo()
 	tabBar := a.renderTabBar()
 
 	// Build help bar from screen keybindings
@@ -223,10 +243,11 @@ func (a app) View() string {
 
 // ── Logo rendering ─────────────────────────────────────────────────
 
-func renderLogo(width int) string {
+func (a app) renderLogo() string {
+	n := len(logoGradient)
 	var lines []string
 	for i, line := range asciiLogo {
-		color := logoColors[i%len(logoColors)]
+		color := logoGradient[(i+a.logoFrame)%n]
 		styled := lipgloss.NewStyle().Foreground(color).Bold(true).Render(line)
 		lines = append(lines, "  "+styled)
 	}
@@ -254,18 +275,14 @@ func (a app) renderTabBar() string {
 	sep := tabSepStyle.Render(" │ ")
 	bar := "  " + strings.Join(parts, sep)
 
-	// Admin status + hints on the right
+	// Admin badge + hints right after tabs
 	var adminBadge string
 	if isElevated() {
-		adminBadge = lipgloss.NewStyle().Foreground(success).Render("● admin") + "  "
+		adminBadge = lipgloss.NewStyle().Foreground(success).Render("● admin")
 	} else {
-		adminBadge = lipgloss.NewStyle().Foreground(warning).Render("● user") + "  "
+		adminBadge = lipgloss.NewStyle().Foreground(warning).Render("● user")
 	}
-	hints := adminBadge + helpStyle.Render("tab cycle • q quit")
-	padLen := a.width - lipgloss.Width(bar) - lipgloss.Width(hints) - 2
-	if padLen > 0 {
-		bar += strings.Repeat(" ", padLen) + hints
-	}
+	bar += "    " + adminBadge + helpStyle.Render("  tab cycle • q quit")
 
 	return bar + "\n"
 }
