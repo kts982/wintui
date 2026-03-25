@@ -15,9 +15,10 @@ A terminal user interface for **winget** (Windows Package Manager), built with G
 
 **Package Management**
 - **Upgrade** — scan for updates, upgrade all or select individual packages, what-if preview
-- **Installed** — browse all installed packages, select and uninstall with `[X]` checkboxes
-- **Install** — search and install new packages with live streaming output
+- **Installed** — browse installed packages across `winget`, `msstore`, and system entries, select and uninstall with `[X]` checkboxes
+- **Install** — search and install new packages with live streaming output and source-aware results
 - **Package Details** — view publisher, description, license, release notes, homepage (press `i`)
+- **Export / Restore** — export installed packages to JSON and restore from Desktop exports with review before install
 
 **System Utilities**
 - **Health Check** — native Go checks for shells, dev tools, runtimes, package managers, disk space, Windows Defender, developer mode
@@ -26,12 +27,13 @@ A terminal user interface for **winget** (Windows Package Manager), built with G
 
 **UX**
 - Tab-based navigation (click, number keys `1-6`, or `Tab`/`Shift+Tab` to cycle)
+- Per-tab screen state is preserved across tab switches
 - Fuzzy filter with `/` on package lists
 - Mouse support (tab clicks, table navigation, scroll)
 - Gradient progress bars (pink → mint) on all loading/executing states
 - Package cache with 2-minute TTL (`r` to force refresh)
 - Cancellable operations (`Esc` during loading)
-- Export installed packages to JSON (`e`)
+- Export installed packages to JSON (`e`) and restore from export (`m`)
 - Dynamic context-aware help bar
 - `q` to quit
 
@@ -72,6 +74,7 @@ go install github.com/kts982/wintui@latest
 | `r` | Refresh data |
 | `Ctrl+e` | Retry current action elevated (when offered) |
 | `e` | Export packages (Installed tab) |
+| `m` | Import packages from export JSON (Installed tab) |
 | `u` | Uninstall selected (Installed tab) |
 | `Esc` | Cancel / back |
 | `q` | Quit |
@@ -84,6 +87,7 @@ Settings are stored in `%APPDATA%\wintui\settings.json` and configurable from th
 - **Install Mode** — auto / silent / interactive
 - **Architecture** — x64 / x86 / arm64 / auto
 - **Default Source** — winget / msstore / auto
+- `Default Source` controls install/search preference; the Installed tab reflects the real installed state
 - **Force** — skip non-security issues
 - **Allow Reboot** — permit reboots during install
 - **Skip Dependencies** — don't process dependencies
