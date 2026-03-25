@@ -68,6 +68,11 @@ type filesScannedMsg struct {
 	err   error
 }
 
+type screenCmdMsg struct {
+	target screenID
+	msg    tea.Msg
+}
+
 // ── Screen interface ───────────────────────────────────────────────
 
 type screen interface {
@@ -111,7 +116,7 @@ type logoRow struct {
 
 type app struct {
 	activeTab  int
-	active     screen
+	screens    map[screenID]screen
 	help       help.Model
 	width      int
 	height     int
@@ -134,6 +139,7 @@ func newApp(retryReq *retryRequest) app {
 
 	a := app{
 		activeTab:  0,
+		screens:    make(map[screenID]screen),
 		help:       h,
 		width:      80,
 		height:     24,
@@ -144,16 +150,16 @@ func newApp(retryReq *retryRequest) app {
 		a.activeTab = tabForRetry(*retryReq)
 		switch retryReq.Op {
 		case retryOpInstall:
-			a.active = newInstallScreenWithRetry(*retryReq)
+			a.screens[tabs[a.activeTab].id] = newInstallScreenWithRetry(*retryReq)
 		case retryOpUpgrade:
-			a.active = newUpgradeScreenWithRetry(*retryReq)
+			a.screens[tabs[a.activeTab].id] = newUpgradeScreenWithRetry(*retryReq)
 		case retryOpUninstall:
-			a.active = newPackagesScreenWithRetry(*retryReq)
+			a.screens[tabs[a.activeTab].id] = newPackagesScreenWithRetry(*retryReq)
 		default:
-			a.active = createScreen(tabs[0].id)
+			a.screens[tabs[a.activeTab].id] = createScreen(tabs[a.activeTab].id)
 		}
 	} else {
-		a.active = createScreen(tabs[0].id)
+		a.screens[tabs[0].id] = createScreen(tabs[0].id)
 	}
 	return a
 }
@@ -165,7 +171,7 @@ func logoTick() tea.Cmd {
 }
 
 func (a app) Init() tea.Cmd {
-	return tea.Batch(a.active.init(), logoTick())
+	return tea.Batch(a.wrapScreenCmd(a.currentScreenID(), a.activeScreen().init()), logoTick())
 }
 
 func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -222,19 +228,20 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, logoTick()
 
-	case switchScreenMsg:
-		for i, t := range tabs {
-			if t.id == screenID(msg) {
-				return a.switchTab(i)
-			}
+	case screenCmdMsg:
+		if msg.msg == nil {
+			return a, nil
 		}
-		a.active = createScreen(screenID(msg))
-		return a, a.active.init()
+		if switchMsg, ok := msg.msg.(switchScreenMsg); ok {
+			return a.handleSwitchScreen(switchMsg)
+		}
+		return a.updateScreen(msg.target, msg.msg)
+
+	case switchScreenMsg:
+		return a.handleSwitchScreen(msg)
 	}
 
-	var cmd tea.Cmd
-	a.active, cmd = a.active.update(msg)
-	return a, cmd
+	return a.updateScreen(a.currentScreenID(), msg)
 }
 
 func (a app) switchTab(idx int) (app, tea.Cmd) {
@@ -242,8 +249,13 @@ func (a app) switchTab(idx int) (app, tea.Cmd) {
 		return a, nil
 	}
 	a.activeTab = idx
-	a.active = createScreen(tabs[idx].id)
-	return a, a.active.init()
+	id := tabs[idx].id
+	if _, ok := a.screens[id]; ok {
+		return a, nil
+	}
+	s := createScreen(id)
+	a.screens[id] = s
+	return a, a.wrapScreenCmd(id, s.init())
 }
 
 func (a app) View() string {
@@ -256,7 +268,7 @@ func (a app) View() string {
 
 	// Build help bar from screen keybindings
 	a.help.Width = a.width - 4
-	helpBar := "  " + a.help.ShortHelpView(a.active.helpKeys())
+	helpBar := "  " + a.help.ShortHelpView(a.activeScreen().helpKeys())
 
 	chrome := logo + tabBar + "\n"
 	chromeHeight := lipgloss.Height(chrome)
@@ -266,7 +278,7 @@ func (a app) View() string {
 		contentHeight = 1
 	}
 
-	content := a.active.view(a.width, contentHeight)
+	content := a.activeScreen().view(a.width, contentHeight)
 
 	// Assemble: chrome + content + help at bottom
 	rendered := chrome + content + "\n" + helpBar
@@ -344,11 +356,79 @@ func (a app) tabHitTest(x int) int {
 
 // screenHasTextInput returns true if the active screen has a text input field.
 func (a app) screenHasTextInput() bool {
-	switch s := a.active.(type) {
+	switch s := a.activeScreen().(type) {
 	case installScreen:
 		return s.state == installInput
 	default:
 		return false
+	}
+}
+
+func (a app) currentScreenID() screenID {
+	return tabs[a.activeTab].id
+}
+
+func (a app) activeScreen() screen {
+	return a.screens[a.currentScreenID()]
+}
+
+func (a app) handleSwitchScreen(msg switchScreenMsg) (app, tea.Cmd) {
+	for i, t := range tabs {
+		if t.id == screenID(msg) {
+			return a.switchTab(i)
+		}
+	}
+
+	id := screenID(msg)
+	if _, ok := a.screens[id]; ok {
+		return a, nil
+	}
+	s := createScreen(id)
+	a.screens[id] = s
+	return a, a.wrapScreenCmd(id, s.init())
+}
+
+func (a app) updateScreen(id screenID, msg tea.Msg) (app, tea.Cmd) {
+	s, ok := a.screens[id]
+	if !ok {
+		s = createScreen(id)
+		a.screens[id] = s
+	}
+
+	next, cmd := s.update(msg)
+	a.screens[id] = next
+	return a, a.wrapScreenCmd(id, cmd)
+}
+
+func (a app) wrapScreenCmd(id screenID, cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+
+	return func() tea.Msg {
+		msg := cmd()
+		switch msg := msg.(type) {
+		case nil:
+			return nil
+		case tea.BatchMsg:
+			wrapped := make(tea.BatchMsg, 0, len(msg))
+			for _, sub := range msg {
+				if sub == nil {
+					continue
+				}
+				wrapped = append(wrapped, a.wrapScreenCmd(id, sub))
+			}
+			if len(wrapped) == 0 {
+				return nil
+			}
+			return wrapped
+		case screenCmdMsg:
+			return msg
+		case switchScreenMsg:
+			return msg
+		default:
+			return screenCmdMsg{target: id, msg: msg}
+		}
 	}
 }
 
