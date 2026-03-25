@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
@@ -159,37 +160,61 @@ func loadImportFile(path string, installed []Package) ([]importPkg, error) {
 	if err := json.Unmarshal(data, &pkgs); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
-	// Build a set of installed package IDs for quick lookup
-	installedIDs := make(map[string]bool, len(installed))
-	for _, p := range installed {
-		installedIDs[strings.ToLower(p.ID)] = true
-	}
 	for i := range pkgs {
-		pkgs[i].Installed = installedIDs[strings.ToLower(pkgs[i].ID)]
 		pkgs[i].NonCanonical = isNonCanonical(pkgs[i].ID)
+		pkgs[i].Installed = importPackageInstalled(pkgs[i], installed)
 	}
 	return pkgs, nil
 }
 
-// isNonCanonical returns true if the ID is a raw system identity
-// (MSIX path, GUID, package family name) rather than a canonical winget ID.
-func isNonCanonical(id string) bool {
-	// MSIX paths
-	if strings.HasPrefix(id, "MSIX\\") || strings.HasPrefix(id, "MSIX/") {
-		return true
+func importPackageInstalled(pkg importPkg, installed []Package) bool {
+	canonicalPkg := Package{
+		Name:    pkg.Name,
+		ID:      pkg.ID,
+		Version: pkg.Version,
+		Source:  resolveImportSource(pkg),
 	}
-	// GUIDs: {xxxxxxxx-xxxx-...}
-	if strings.HasPrefix(id, "{") && strings.HasSuffix(id, "}") {
-		return true
-	}
-	// Package family names: Name_hash (13+ char suffix after last underscore)
-	if idx := strings.LastIndex(id, "_"); idx > 0 {
-		suffix := id[idx+1:]
-		if len(suffix) >= 13 {
+	for _, existing := range installed {
+		if strings.EqualFold(existing.ID, pkg.ID) {
+			return true
+		}
+		if !strings.EqualFold(strings.TrimSpace(existing.Name), strings.TrimSpace(pkg.Name)) {
+			continue
+		}
+		if isNonCanonical(existing.ID) && shouldHideNonCanonicalDuplicate(existing, canonicalPkg) {
 			return true
 		}
 	}
 	return false
+}
+
+func resolveImportSource(pkg importPkg) string {
+	if pkg.Source == "winget" || pkg.Source == "msstore" {
+		return pkg.Source
+	}
+	if isNonCanonical(pkg.ID) {
+		return ""
+	}
+	if looksLikeStoreProductID(pkg.ID) {
+		return "msstore"
+	}
+	if strings.Contains(pkg.ID, ".") {
+		return "winget"
+	}
+	return ""
+}
+
+func looksLikeStoreProductID(id string) bool {
+	id = strings.TrimSpace(id)
+	if len(id) < 12 || len(id) > 16 {
+		return false
+	}
+	for _, r := range id {
+		if !unicode.IsDigit(r) && !unicode.IsUpper(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // ── Update ─────────────────────────────────────────────────────────
@@ -288,7 +313,7 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 				for i, sel := range m.selected {
 					if sel && i < len(m.packages) {
 						ids = append(ids, m.packages[i].ID)
-						sources = append(sources, m.packages[i].Source)
+						sources = append(sources, resolveImportSource(m.packages[i]))
 					}
 				}
 				m.batchIDs = ids

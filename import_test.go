@@ -7,44 +7,6 @@ import (
 	"testing"
 )
 
-func TestIsNonCanonical(t *testing.T) {
-	tests := []struct {
-		id   string
-		want bool
-	}{
-		// Canonical winget IDs
-		{"Mozilla.Firefox", false},
-		{"Microsoft.VisualStudioCode", false},
-		{"Git.Git", false},
-		{"Notepad++.Notepad++", false},
-
-		// MSIX paths
-		{"MSIX\\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe", true},
-		{"MSIX/Something.Else_abc123", true},
-
-		// GUIDs
-		{"{6F320B93-EE3C-4826-85E0-ADF79F8D4C61}", true},
-		{"{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}", true},
-
-		// Package family names (underscore + 13+ char hash)
-		{"Microsoft.WindowsTerminal_8wekyb3d8bbwe", true},
-		{"AppName_1234567890abc", true},
-
-		// Short suffix after underscore (not a family name)
-		{"Some_App", false},
-		{"My_Tool_v2", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.id, func(t *testing.T) {
-			got := isNonCanonical(tt.id)
-			if got != tt.want {
-				t.Errorf("isNonCanonical(%q) = %v, want %v", tt.id, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestLoadImportFile(t *testing.T) {
 	// Create a temporary export file
 	dir := t.TempDir()
@@ -118,6 +80,43 @@ func TestLoadImportFile(t *testing.T) {
 	}
 }
 
+func TestLoadImportFileDetectsCanonicalPackageInstalledAsRawIdentity(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wintui_packages_test.json")
+
+	packages := []struct {
+		Name    string `json:"name"`
+		ID      string `json:"id"`
+		Version string `json:"version"`
+		Source  string `json:"source,omitempty"`
+	}{
+		{"Notepad++", "Notepad++.Notepad++", "8.6.4", "winget"},
+	}
+
+	data, err := json.MarshalIndent(packages, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	installed := []Package{
+		{Name: "Notepad++", ID: "MSIX\\NotepadPlusPlus_1.0.0.0_neutral__gabc1234", Version: "1.0.0.0"},
+	}
+
+	pkgs, err := loadImportFile(path, installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("expected 1 package, got %d", len(pkgs))
+	}
+	if !pkgs[0].Installed {
+		t.Fatal("expected canonical package to be marked installed when a raw identity duplicate is present")
+	}
+}
+
 func TestLoadImportFileBackwardCompatible(t *testing.T) {
 	// Test loading an old export file without source field
 	dir := t.TempDir()
@@ -145,5 +144,47 @@ func TestLoadImportFileBackwardCompatible(t *testing.T) {
 	}
 	if pkgs[0].Name != "Firefox" {
 		t.Errorf("expected Firefox, got %q", pkgs[0].Name)
+	}
+}
+
+func TestResolveImportSource(t *testing.T) {
+	tests := []struct {
+		name string
+		pkg  importPkg
+		want string
+	}{
+		{
+			name: "explicit winget source",
+			pkg:  importPkg{ID: "Mozilla.Firefox", Source: "winget"},
+			want: "winget",
+		},
+		{
+			name: "explicit msstore source",
+			pkg:  importPkg{ID: "9NBLGGH5R558", Source: "msstore"},
+			want: "msstore",
+		},
+		{
+			name: "old canonical winget export defaults to winget",
+			pkg:  importPkg{ID: "Mozilla.Firefox"},
+			want: "winget",
+		},
+		{
+			name: "old store export infers msstore from product id",
+			pkg:  importPkg{ID: "9NBLGGH5R558"},
+			want: "msstore",
+		},
+		{
+			name: "raw identity stays source-less",
+			pkg:  importPkg{ID: "MSIX\\Some.Package_hash1234567890"},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveImportSource(tt.pkg); got != tt.want {
+				t.Fatalf("resolveImportSource(%+v) = %q, want %q", tt.pkg, got, tt.want)
+			}
+		})
 	}
 }
