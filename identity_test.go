@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestIsNonCanonical(t *testing.T) {
 	tests := []struct {
@@ -115,6 +118,18 @@ func TestDeduplicatePackagesNoCanonicalsKept(t *testing.T) {
 	}
 }
 
+func TestDeduplicatePackagesKeepsDistinctSameNameEntries(t *testing.T) {
+	pkgs := []Package{
+		{Name: "Contoso Tools", ID: "Contoso.Tools", Version: "5.0", Source: "winget"},
+		{Name: "Contoso Tools", ID: "{11111111-2222-3333-4444-555555555555}", Version: "2.4.1"},
+	}
+
+	result := deduplicatePackages(pkgs)
+	if len(result) != 2 {
+		t.Fatalf("expected distinct same-name entries to be kept, got %d package(s)", len(result))
+	}
+}
+
 func TestDeduplicatePackagesPreservesOrder(t *testing.T) {
 	pkgs := []Package{
 		{Name: "Z App", ID: "Z.App", Version: "1.0", Source: "winget"},
@@ -143,29 +158,16 @@ func TestPackageSummaryWithSystem(t *testing.T) {
 	summary := packageSummary(pkgs)
 
 	// Should include "system" category
-	if !contains(summary, "2 winget") {
+	if !strings.Contains(summary, "2 winget") {
 		t.Errorf("summary missing winget count: %s", summary)
 	}
-	if !contains(summary, "1 msstore") {
+	if !strings.Contains(summary, "1 msstore") {
 		t.Errorf("summary missing msstore count: %s", summary)
 	}
-	if !contains(summary, "1 system") {
+	if !strings.Contains(summary, "1 system") {
 		t.Errorf("summary missing system count: %s", summary)
 	}
-	if !contains(summary, "1 other") {
+	if !strings.Contains(summary, "1 other") {
 		t.Errorf("summary missing other count: %s", summary)
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsStr(s, sub))
-}
-
-func containsStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

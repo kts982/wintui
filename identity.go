@@ -38,13 +38,15 @@ func identityKind(p Package) string {
 }
 
 // deduplicatePackages removes raw system identity entries when a canonical
-// entry with the same name already exists. Order is preserved.
+// entry with the same name and a plausibly matching version already exists.
+// Order is preserved.
 func deduplicatePackages(pkgs []Package) []Package {
-	// First pass: find names that have at least one canonical entry.
-	hasCanonical := make(map[string]bool)
+	// First pass: collect canonical entries keyed by normalized name.
+	canonicalByName := make(map[string][]Package)
 	for _, p := range pkgs {
 		if !isNonCanonical(p.ID) || p.Source == "winget" || p.Source == "msstore" {
-			hasCanonical[strings.ToLower(strings.TrimSpace(p.Name))] = true
+			key := strings.ToLower(strings.TrimSpace(p.Name))
+			canonicalByName[key] = append(canonicalByName[key], p)
 		}
 	}
 
@@ -52,10 +54,31 @@ func deduplicatePackages(pkgs []Package) []Package {
 	result := make([]Package, 0, len(pkgs))
 	for _, p := range pkgs {
 		key := strings.ToLower(strings.TrimSpace(p.Name))
-		if isNonCanonical(p.ID) && p.Source == "" && hasCanonical[key] {
-			continue
+		if isNonCanonical(p.ID) && p.Source == "" {
+			for _, canonical := range canonicalByName[key] {
+				if shouldHideNonCanonicalDuplicate(p, canonical) {
+					goto skipPackage
+				}
+			}
 		}
 		result = append(result, p)
+	skipPackage:
 	}
 	return result
+}
+
+func shouldHideNonCanonicalDuplicate(systemPkg, canonicalPkg Package) bool {
+	systemVersion := strings.ToLower(strings.TrimSpace(systemPkg.Version))
+	canonicalVersion := strings.ToLower(strings.TrimSpace(canonicalPkg.Version))
+
+	if systemVersion == canonicalVersion && systemVersion != "" {
+		return true
+	}
+
+	switch systemVersion {
+	case "", "unknown", "1.0.0.0":
+		return true
+	}
+
+	return false
 }
