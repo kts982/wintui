@@ -278,8 +278,8 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.state = packagesEmpty
 			return s, nil
 		}
-		s.packages = msg.packages
-		s.count = len(msg.packages)
+		s.packages = deduplicatePackages(msg.packages)
+		s.count = len(s.packages)
 		s.selected = make(map[int]bool)
 		filtered := s.filter.filterPackages(s.packages)
 		s.table = buildSelectableTable(filtered, s.selected, 120, 30)
@@ -343,21 +343,23 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-// packageSummary builds the info line: "219 installed (62 winget, 3 msstore, 154 other)"
+// packageSummary builds the info line: "219 installed (62 winget, 3 msstore, 5 system, 149 other)"
 func packageSummary(pkgs []Package) string {
 	total := len(pkgs)
-	winget, msstore := 0, 0
+	winget, msstore, system := 0, 0, 0
 	for _, p := range pkgs {
-		switch p.Source {
+		switch identityKind(p) {
 		case "winget":
 			winget++
 		case "msstore":
 			msstore++
+		case "system":
+			system++
 		}
 	}
 
-	other := total - winget - msstore
-	if winget == 0 && msstore == 0 {
+	other := total - winget - msstore - system
+	if winget == 0 && msstore == 0 && system == 0 {
 		return fmt.Sprintf("%d package(s) installed.", total)
 	}
 
@@ -367,6 +369,9 @@ func packageSummary(pkgs []Package) string {
 	}
 	if msstore > 0 {
 		parts = append(parts, fmt.Sprintf("%d msstore", msstore))
+	}
+	if system > 0 {
+		parts = append(parts, fmt.Sprintf("%d system", system))
 	}
 	if other > 0 {
 		parts = append(parts, fmt.Sprintf("%d other", other))
@@ -591,7 +596,7 @@ func buildSelectableTable(pkgs []Package, selected map[int]bool, width, height i
 		}
 		row = append(row, p.Name, p.ID, p.Version)
 		if showSource {
-			row = append(row, p.Source)
+			row = append(row, identityKind(p))
 		}
 		rows[i] = row
 	}
