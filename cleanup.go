@@ -49,7 +49,6 @@ func newCleanupScreen() cleanupScreen {
 }
 
 func (s cleanupScreen) init() tea.Cmd {
-	s.progress, _ = s.progress.start()
 	return tea.Batch(s.spinner.Tick, tickProgress(), scanTempFiles)
 }
 

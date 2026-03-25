@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$repo_root/scripts/check.ps1" -Mode pre-commit

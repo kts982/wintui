@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install staticcheck
+        shell: pwsh
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          echo "$((go env GOPATH))\\bin" >> $env:GITHUB_PATH
+
+      - name: Run validation checks
+        shell: pwsh
+        run: .\scripts\check.ps1 -Mode full

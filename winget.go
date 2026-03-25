@@ -32,11 +32,6 @@ func (p Package) Description() string {
 
 // ── winget command execution ───────────────────────────────────────
 
-// runWinget runs a winget command with shared base flags.
-func runWinget(args ...string) (string, error) {
-	return runWingetCtx(context.Background(), args...)
-}
-
 // runWingetCtx runs a winget command with a cancellable context.
 func runWingetCtx(ctx context.Context, args ...string) (string, error) {
 	return runWingetWithModeCtx(ctx, true, args...)
@@ -121,25 +116,6 @@ func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
 
 // ── High-level action operations (mutating, need package agreements) ─
 
-func upgradeAll() (string, error) {
-	return upgradeAllCtx(context.Background())
-}
-
-func upgradeAllCtx(ctx context.Context) (string, error) {
-	args := []string{"upgrade", "--all", "--accept-package-agreements"}
-	args = append(args, appSettings.BuildInstallArgs()...)
-	args = append(args, appSettings.BuildListArgs()...)
-	return runWingetActionCtx(ctx, args...)
-}
-
-func upgradePackage(id string) (string, error) {
-	return upgradePackageCtx(context.Background(), id)
-}
-
-func upgradePackageCtx(ctx context.Context, id string) (string, error) {
-	return upgradePackageSourceCtx(ctx, id, "")
-}
-
 func upgradePackageSourceCtx(ctx context.Context, id, source string) (string, error) {
 	args := []string{"upgrade", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
@@ -147,27 +123,11 @@ func upgradePackageSourceCtx(ctx context.Context, id, source string) (string, er
 	return runWingetActionCtx(ctx, args...)
 }
 
-func installPackage(id string) (string, error) {
-	return installPackageCtx(context.Background(), id)
-}
-
-func installPackageCtx(ctx context.Context, id string) (string, error) {
-	return installPackageSourceCtx(ctx, id, "")
-}
-
 func installPackageSourceCtx(ctx context.Context, id, source string) (string, error) {
 	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
 	args = appendActionSourceArgs(args, source)
 	return runWingetActionCtx(ctx, args...)
-}
-
-func uninstallPackage(id string) (string, error) {
-	return uninstallPackageCtx(context.Background(), id)
-}
-
-func uninstallPackageCtx(ctx context.Context, id string) (string, error) {
-	return uninstallPackageSourceCtx(ctx, id, "")
 }
 
 func uninstallPackageSourceCtx(ctx context.Context, id, source string) (string, error) {
@@ -198,18 +158,6 @@ func showPackageCtx(ctx context.Context, id, source string) (PackageDetail, erro
 		detail.Source = source
 	}
 	return detail, nil
-}
-
-// ── Export / Import ────────────────────────────────────────────────
-
-func exportPackagesToFile(path string) (string, error) {
-	return runWinget("export", "--output", path, "--include-versions",
-		"--source", "winget")
-}
-
-func importPackagesFromFile(path string) (string, error) {
-	return runWingetActionCtx(context.Background(), "import", "--import-file", path,
-		"--accept-package-agreements", "--ignore-unavailable")
 }
 
 // ── Error translation ──────────────────────────────────────────────

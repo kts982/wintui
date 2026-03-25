@@ -37,7 +37,7 @@ A terminal user interface for **winget** (Windows Package Manager), built with G
 
 ## Install
 
-**Requirements:** Go 1.22+, Windows 10/11 with winget installed.
+**Requirements:** Go 1.24.2+, Windows 10/11 with winget installed.
 
 ```bash
 # Clone and build
@@ -90,6 +90,31 @@ Settings are stored in `%APPDATA%\wintui\settings.json` and configurable from th
 - **Purge on Uninstall** — delete all package files
 - **Include Unknown** — show packages with unknown versions
 
+## Development
+
+Run the full local validation suite before pushing:
+
+```powershell
+.\scripts\check.ps1 -Mode full
+```
+
+This checks:
+- `gofmt`
+- `go test ./...`
+- `go vet ./...`
+- `staticcheck ./...`
+- `go build .`
+
+Optional Git hooks are included in `.githooks/pre-commit` and `.githooks/pre-push`. To enable them:
+
+```powershell
+git config core.hooksPath .githooks
+```
+
+Recommended workflow:
+- `pre-commit` stays fast and only checks formatting on staged Go files
+- `pre-push` runs the full validation suite
+
 ## Built With
 
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) — TUI framework
@@ -100,3 +125,4 @@ Settings are stored in `%APPDATA%\wintui\settings.json` and configurable from th
 ## License
 
 MIT
+

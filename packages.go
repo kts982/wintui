@@ -387,17 +387,6 @@ func (s packagesScreen) selectedCount() int {
 	return count
 }
 
-func (s packagesScreen) selectedIDs() []string {
-	filtered := s.filteredPkgs()
-	var ids []string
-	for i, sel := range s.selected {
-		if sel && i < len(filtered) {
-			ids = append(ids, filtered[i].ID)
-		}
-	}
-	return ids
-}
-
 func (s packagesScreen) selectedNames() []string {
 	selected := s.selectedPackages()
 	var names []string
