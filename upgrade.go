@@ -52,9 +52,12 @@ type upgradeScreen struct {
 	batchTotal   int
 	batchName    string
 	batchIDs     []string
+	batchSources []string
 	batchOutputs []string
 	batchErrs    []error
 	batchErr     error
+	launchRetry  *retryRequest
+	retryAction  *retryRequest
 }
 
 var upgradeActions = []string{"Upgrade All", "Select Packages"}
@@ -73,7 +76,25 @@ func newUpgradeScreen() upgradeScreen {
 	}
 }
 
+func newUpgradeScreenWithRetry(req retryRequest) upgradeScreen {
+	s := newUpgradeScreen()
+	s.state = upgradeExecuting
+	s.batchIDs = []string{req.ID}
+	s.batchSources = []string{req.Source}
+	s.batchTotal = 1
+	s.batchName = req.ID
+	s.launchRetry = &req
+	return s
+}
+
 func (s upgradeScreen) init() tea.Cmd {
+	if s.launchRetry != nil {
+		req := *s.launchRetry
+		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
+			out, err := upgradePackageSourceCtx(context.Background(), req.ID, req.Source)
+			return singleUpgradeDoneMsg{output: out, err: err, index: 0}
+		})
+	}
 	// Check cache first
 	if pkgs, ok := cache.getUpgradeable(); ok {
 		return func() tea.Msg {
@@ -161,6 +182,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		// Refresh with r
 		if msg.String() == "r" && (s.state == upgradeChooseAction || s.state == upgradeEmpty || s.state == upgradeDone) {
 			cache.invalidate()
+			s.retryAction = nil
 			s.state = upgradeLoading
 			s.progress, _ = s.progress.start()
 			return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
@@ -192,6 +214,13 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case upgradeConfirming:
 			return s.updateConfirm(msg)
 		case upgradeDone, upgradeEmpty:
+			if msg.String() == "ctrl+e" && s.retryAction != nil && !isElevated() {
+				if err := relaunchElevatedRetry(*s.retryAction); err != nil {
+					s.err = fmt.Errorf("failed to relaunch elevated: %w", err)
+					return s, nil
+				}
+				return s, tea.Quit
+			}
 			if msg.String() == "enter" {
 				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
@@ -217,6 +246,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 	case packagesLoadedMsg:
 		s.progress = s.progress.stop()
+		s.retryAction = nil
 		s.packages = msg.packages
 		s.err = msg.err
 		if msg.err != nil || len(msg.packages) == 0 {
@@ -239,13 +269,21 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 		if s.batchCurrent < s.batchTotal {
 			s.batchName = s.batchIDs[s.batchCurrent]
-			return s, upgradeSingleCmd(s.ctx, s.batchIDs[s.batchCurrent], s.batchCurrent)
+			return s, upgradeSingleCmd(s.ctx, s.batchIDs[s.batchCurrent], s.batchSources[s.batchCurrent], s.batchCurrent)
 		}
 
 		s.progress = s.progress.stop()
 		s.output = formatBatchResults(s.batchIDs, s.batchErrs, s.batchOutputs)
 		s.err = s.batchErr
 		s.state = upgradeDone
+		s.retryAction = nil
+		if s.batchTotal == 1 && s.batchErr != nil && requiresElevation(s.batchErr, s.output) && !isElevated() {
+			source := ""
+			if len(s.batchSources) > 0 {
+				source = s.batchSources[0]
+			}
+			s.retryAction = &retryRequest{Op: retryOpUpgrade, ID: s.batchIDs[0], Source: source}
+		}
 		cache.invalidate() // packages changed
 		return s, nil
 
@@ -351,25 +389,30 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyMsg) (screen, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
 		s.state = upgradeExecuting
+		s.retryAction = nil
 		s.progress, _ = s.progress.start()
 		ctx, cancel := context.WithCancel(context.Background())
 		s.cancel = cancel
 
 		// Build package list: all packages or selected ones
 		var ids []string
+		var sources []string
 		if s.action == "all" {
 			for _, p := range s.packages {
 				ids = append(ids, p.ID)
+				sources = append(sources, p.Source)
 			}
 		} else {
 			for i, sel := range s.selected {
 				if sel {
 					ids = append(ids, s.packages[i].ID)
+					sources = append(sources, s.packages[i].Source)
 				}
 			}
 		}
 		s.ctx = ctx
 		s.batchIDs = ids
+		s.batchSources = sources
 		s.batchTotal = len(ids)
 		s.batchCurrent = 0
 		s.batchOutputs = nil
@@ -380,7 +423,7 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyMsg) (screen, tea.Cmd) {
 
 		if s.batchTotal > 0 {
 			s.batchName = s.batchIDs[0]
-			return s, tea.Batch(s.spinner.Tick, upgradeSingleCmd(s.ctx, s.batchIDs[0], 0))
+			return s, tea.Batch(s.spinner.Tick, upgradeSingleCmd(s.ctx, s.batchIDs[0], s.batchSources[0], 0))
 		}
 		return s, nil
 
@@ -447,9 +490,9 @@ func extractFailReason(output string) string {
 }
 
 // upgradeSingleCmd upgrades a single package and sends a completion message.
-func upgradeSingleCmd(ctx context.Context, id string, index int) tea.Cmd {
+func upgradeSingleCmd(ctx context.Context, id, source string, index int) tea.Cmd {
 	return func() tea.Msg {
-		out, err := upgradePackageCtx(ctx, id)
+		out, err := upgradePackageSourceCtx(ctx, id, source)
 		return singleUpgradeDoneMsg{output: out, err: err, index: index}
 	}
 }
@@ -594,6 +637,9 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 	case upgradeLoading, upgradeExecuting:
 		return []key.Binding{keyEscCancel}
 	case upgradeEmpty, upgradeDone:
+		if s.retryAction != nil && !isElevated() {
+			return []key.Binding{keyRetryElevated, keyRefresh, keyTabs}
+		}
 		return []key.Binding{keyRefresh, keyTabs}
 	case upgradeChooseAction:
 		return []key.Binding{keyUp, keyDown, keyEnter, keyRefresh}

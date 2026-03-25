@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -39,6 +40,8 @@ type installScreen struct {
 	outLines       []string
 	installOutChan <-chan string
 	installErrChan <-chan error
+	launchRetry    *retryRequest
+	retryAction    *retryRequest
 }
 
 func newInstallScreen() installScreen {
@@ -66,6 +69,13 @@ func newInstallScreen() installScreen {
 	}
 }
 
+func newInstallScreenWithRetry(req retryRequest) installScreen {
+	s := newInstallScreen()
+	s.state = installExecuting
+	s.launchRetry = &req
+	return s
+}
+
 func awaitStream(outChan <-chan string, errChan <-chan error) tea.Cmd {
 	return func() tea.Msg {
 		line, ok := <-outChan
@@ -77,6 +87,13 @@ func awaitStream(outChan <-chan string, errChan <-chan error) tea.Cmd {
 }
 
 func (s installScreen) init() tea.Cmd {
+	if s.launchRetry != nil {
+		req := *s.launchRetry
+		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
+			out, err := installPackageSourceCtx(context.Background(), req.ID, req.Source)
+			return commandDoneMsg{output: out, err: err}
+		})
+	}
 	return textinput.Blink
 }
 
@@ -102,6 +119,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					return s, nil
 				}
 				s.state = installSearching
+				s.retryAction = nil
 				s.progress, _ = s.progress.start()
 				return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
 					pkgs, err := searchPackages(query)
@@ -145,9 +163,10 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			case "y", "Y":
 				pkg := s.packages[s.cursor]
 				s.state = installExecuting
+				s.retryAction = nil
 				s.progress, _ = s.progress.start()
 
-				s.installOutChan, s.installErrChan = installPackageStream(pkg.ID)
+				s.installOutChan, s.installErrChan = installPackageStream(pkg.ID, pkg.Source)
 				s.outLines = nil
 				s.vp.SetContent("")
 
@@ -161,9 +180,17 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 
 		case installDone:
+			if msg.String() == "ctrl+e" && s.retryAction != nil && !isElevated() {
+				if err := relaunchElevatedRetry(*s.retryAction); err != nil {
+					s.err = fmt.Errorf("failed to relaunch elevated: %w", err)
+					return s, nil
+				}
+				return s, tea.Quit
+			}
 			if msg.String() == "r" {
 				cache.invalidate()
 				s.state = installInput
+				s.retryAction = nil
 				s.input.SetValue("")
 				s.input.Focus()
 				return s, textinput.Blink
@@ -186,6 +213,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 	case packagesLoadedMsg:
 		s.progress = s.progress.stop()
+		s.retryAction = nil
 		s.packages = msg.packages
 		s.err = msg.err
 		if msg.err != nil || len(msg.packages) == 0 {
@@ -204,6 +232,13 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.output = msg.output
 		s.err = msg.err
 		s.state = installDone
+		s.retryAction = nil
+		if msg.err != nil && requiresElevation(msg.err, msg.output) && !isElevated() && s.launchRetry == nil {
+			if len(s.packages) > 0 && s.cursor >= 0 && s.cursor < len(s.packages) {
+				pkg := s.packages[s.cursor]
+				s.retryAction = &retryRequest{Op: retryOpInstall, ID: pkg.ID, Source: pkg.Source}
+			}
+		}
 		cache.invalidate()
 		return s, nil
 
@@ -218,6 +253,11 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.err = msg.err
 		s.output = strings.Join(s.outLines, "\n")
 		s.state = installDone
+		s.retryAction = nil
+		if msg.err != nil && requiresElevation(msg.err, s.output) && !isElevated() && len(s.packages) > 0 && s.cursor >= 0 && s.cursor < len(s.packages) {
+			pkg := s.packages[s.cursor]
+			s.retryAction = &retryRequest{Op: retryOpInstall, ID: pkg.ID, Source: pkg.Source}
+		}
 		cache.invalidate()
 		return s, nil
 
@@ -329,6 +369,9 @@ func (s installScreen) helpKeys() []key.Binding {
 	case installConfirm:
 		return []key.Binding{keyConfirmY}
 	case installDone:
+		if s.retryAction != nil && !isElevated() {
+			return []key.Binding{keyRetryElevated, keyRefresh, keyTabs}
+		}
 		return []key.Binding{keyRefresh, keyTabs}
 	}
 	return []key.Binding{keyTabs}

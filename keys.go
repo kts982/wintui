@@ -53,6 +53,10 @@ var (
 		key.WithKeys("e"),
 		key.WithHelp("e", "export"),
 	)
+	keyRetryElevated = key.NewBinding(
+		key.WithKeys("ctrl+e"),
+		key.WithHelp("ctrl+e", "retry elevated"),
+	)
 	keySave = key.NewBinding(
 		key.WithKeys("s"),
 		key.WithHelp("s", "save"),

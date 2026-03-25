@@ -137,9 +137,13 @@ func upgradePackage(id string) (string, error) {
 }
 
 func upgradePackageCtx(ctx context.Context, id string) (string, error) {
+	return upgradePackageSourceCtx(ctx, id, "")
+}
+
+func upgradePackageSourceCtx(ctx context.Context, id, source string) (string, error) {
 	args := []string{"upgrade", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
-	args = append(args, appSettings.BuildListArgs()...)
+	args = appendActionSourceArgs(args, source)
 	return runWingetActionCtx(ctx, args...)
 }
 
@@ -148,9 +152,13 @@ func installPackage(id string) (string, error) {
 }
 
 func installPackageCtx(ctx context.Context, id string) (string, error) {
+	return installPackageSourceCtx(ctx, id, "")
+}
+
+func installPackageSourceCtx(ctx context.Context, id, source string) (string, error) {
 	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
-	args = append(args, appSettings.BuildListArgs()...)
+	args = appendActionSourceArgs(args, source)
 	return runWingetActionCtx(ctx, args...)
 }
 
@@ -159,9 +167,13 @@ func uninstallPackage(id string) (string, error) {
 }
 
 func uninstallPackageCtx(ctx context.Context, id string) (string, error) {
+	return uninstallPackageSourceCtx(ctx, id, "")
+}
+
+func uninstallPackageSourceCtx(ctx context.Context, id, source string) (string, error) {
 	args := []string{"uninstall", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildUninstallArgs()...)
-	args = append(args, appSettings.BuildListArgs()...)
+	args = appendActionSourceArgs(args, source)
 	return runWingetActionCtx(ctx, args...)
 }
 
@@ -263,7 +275,14 @@ func requiresElevation(err error, output string) bool {
 }
 
 func elevationRetryHint() string {
-	return "Run WinTUI in an elevated terminal and retry."
+	return "Press Ctrl+e to relaunch elevated, or run WinTUI in an elevated terminal and retry."
+}
+
+func appendActionSourceArgs(args []string, source string) []string {
+	if source == "winget" || source == "msstore" {
+		return append(args, "--source", source)
+	}
+	return append(args, appSettings.BuildListArgs()...)
 }
 
 // ── Output cleaning ────────────────────────────────────────────────
@@ -558,9 +577,9 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 	return outChan, errChan
 }
 
-func installPackageStream(id string) (<-chan string, <-chan error) {
+func installPackageStream(id, source string) (<-chan string, <-chan error) {
 	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
-	args = append(args, appSettings.BuildListArgs()...)
+	args = appendActionSourceArgs(args, source)
 	return runWingetStreamCtx(context.Background(), false, args...)
 }

@@ -55,7 +55,7 @@ go install github.com/kts982/wintui@latest
 ./wintui.exe
 ```
 
-> **Tip:** Some packages (e.g. MSIX/Appx installers) require administrator privileges to upgrade. Run wintui in an elevated terminal for full functionality. The app shows a `● admin` / `● user` indicator in the tab bar and flags this in the Health Check.
+> **Tip:** Some packages (e.g. MSIX/Appx installers) require administrator privileges to upgrade. Run wintui in an elevated terminal for full functionality, or press `Ctrl+e` when WinTUI offers an elevated retry. The app shows a `● admin` / `● user` indicator in the tab bar and flags this in the Health Check.
 
 ## Keyboard Shortcuts
 
@@ -70,6 +70,7 @@ go install github.com/kts982/wintui@latest
 | `i` | Package details |
 | `o` | Open homepage (in detail view) |
 | `r` | Refresh data |
+| `Ctrl+e` | Retry current action elevated (when offered) |
 | `e` | Export packages (Installed tab) |
 | `u` | Uninstall selected (Installed tab) |
 | `Esc` | Cancel / back |
@@ -82,7 +83,7 @@ Settings are stored in `%APPDATA%\wintui\settings.json` and configurable from th
 - **Install Scope** — user / machine / auto
 - **Install Mode** — auto / silent / interactive
 - **Architecture** — x64 / x86 / arm64 / auto
-- **Default Source** — winget / msstore / all
+- **Default Source** — winget / msstore / auto
 - **Force** — skip non-security issues
 - **Allow Reboot** — permit reboots during install
 - **Skip Dependencies** — don't process dependencies

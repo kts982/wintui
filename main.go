@@ -15,8 +15,13 @@ var (
 )
 
 func main() {
-	// Print version if --version flag is passed
-	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+	showVersion, retryReq, err := parseStartupArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if showVersion {
 		fmt.Printf("wintui %s (%s) built %s\n", version, commit, date)
 		return
 	}
@@ -25,7 +30,7 @@ func main() {
 	appSettings = LoadSettings()
 
 	p := tea.NewProgram(
-		newApp(),
+		newApp(retryReq),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)

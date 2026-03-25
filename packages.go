@@ -32,19 +32,22 @@ var keyUninstall = key.NewBinding(
 )
 
 type packagesScreen struct {
-	state     packagesState
-	table     table.Model
-	spinner   spinner.Model
-	progress  progressBar
-	packages  []Package
-	selected  map[int]bool // selected by filtered index
-	count     int
-	err       error
-	detail    detailPanel
-	exportMsg string
-	statusMsg string
-	filter    listFilter
-	cancel    context.CancelFunc
+	state         packagesState
+	table         table.Model
+	spinner       spinner.Model
+	progress      progressBar
+	packages      []Package
+	selected      map[int]bool // selected by filtered index
+	count         int
+	err           error
+	detail        detailPanel
+	exportMsg     string
+	statusMsg     string
+	filter        listFilter
+	cancel        context.CancelFunc
+	launchRetry   *retryRequest
+	retryAction   *retryRequest
+	attemptAction *retryRequest
 }
 
 func newPackagesScreen() packagesScreen {
@@ -61,7 +64,21 @@ func newPackagesScreen() packagesScreen {
 	}
 }
 
+func newPackagesScreenWithRetry(req retryRequest) packagesScreen {
+	s := newPackagesScreen()
+	s.state = packagesUninstalling
+	s.launchRetry = &req
+	return s
+}
+
 func (s packagesScreen) init() tea.Cmd {
+	if s.launchRetry != nil {
+		req := *s.launchRetry
+		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
+			out, err := uninstallPackageSourceCtx(context.Background(), req.ID, req.Source)
+			return commandDoneMsg{output: out, err: err}
+		})
+	}
 	if pkgs, ok := cache.getInstalled(); ok {
 		return func() tea.Msg {
 			return packagesLoadedMsg{packages: pkgs}
@@ -135,6 +152,14 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		switch s.state {
 		case packagesReady:
 			switch msg.String() {
+			case "ctrl+e":
+				if s.retryAction != nil && !isElevated() {
+					if err := relaunchElevatedRetry(*s.retryAction); err != nil {
+						s.statusMsg = errorStyle.Render("Failed to relaunch elevated: " + err.Error())
+						return s, nil
+					}
+					return s, tea.Quit
+				}
 			case "/":
 				s.filter = s.filter.activate()
 				return s, textinput.Blink
@@ -188,12 +213,16 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.progress, _ = s.progress.start()
 				ctx, cancel := context.WithCancel(context.Background())
 				s.cancel = cancel
-				ids := s.selectedIDs()
+				selected := s.selectedPackages()
+				s.attemptAction = nil
+				if len(selected) == 1 {
+					s.attemptAction = &retryRequest{Op: retryOpUninstall, ID: selected[0].ID, Source: selected[0].Source}
+				}
 				return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
 					var outputs []string
 					var lastErr error
-					for _, id := range ids {
-						out, err := uninstallPackageCtx(ctx, id)
+					for _, pkg := range selected {
+						out, err := uninstallPackageSourceCtx(ctx, pkg.ID, pkg.Source)
 						outputs = append(outputs, out)
 						if err != nil {
 							lastErr = err
@@ -241,9 +270,13 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.progress = s.progress.stop()
 		cache.invalidate()
 		count := s.selectedCount()
+		s.retryAction = nil
 		if msg.err != nil {
 			if requiresElevation(msg.err, msg.output) {
 				s.statusMsg = errorStyle.Render("Uninstall blocked: administrator privileges required. " + elevationRetryHint())
+				if s.attemptAction != nil && !isElevated() {
+					s.retryAction = s.attemptAction
+				}
 			} else {
 				s.statusMsg = errorStyle.Render("Uninstall error: " + msg.err.Error())
 			}
@@ -251,6 +284,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.statusMsg = successStyle.Render(fmt.Sprintf("%d package(s) uninstalled!", count))
 		}
 		s.selected = make(map[int]bool)
+		s.attemptAction = nil
 		// Reload the list
 		s.state = packagesLoading
 		return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
@@ -365,14 +399,23 @@ func (s packagesScreen) selectedIDs() []string {
 }
 
 func (s packagesScreen) selectedNames() []string {
-	filtered := s.filteredPkgs()
+	selected := s.selectedPackages()
 	var names []string
-	for i, sel := range s.selected {
-		if sel && i < len(filtered) {
-			names = append(names, filtered[i].Name)
-		}
+	for _, pkg := range selected {
+		names = append(names, pkg.Name)
 	}
 	return names
+}
+
+func (s packagesScreen) selectedPackages() []Package {
+	filtered := s.filteredPkgs()
+	var pkgs []Package
+	for i, sel := range s.selected {
+		if sel && i < len(filtered) {
+			pkgs = append(pkgs, filtered[i])
+		}
+	}
+	return pkgs
 }
 
 // ── View ───────────────────────────────────────────────────────────
@@ -573,6 +616,9 @@ func (s packagesScreen) helpKeys() []key.Binding {
 			return []key.Binding{keyUp, keyDown, keyEnter, keyEsc}
 		}
 		bindings := []key.Binding{keyUp, keyDown, keyFilter, keyToggle, keyDetails, keyExport, keyRefresh}
+		if s.retryAction != nil && !isElevated() {
+			bindings = append(bindings, keyRetryElevated)
+		}
 		if s.selectedCount() > 0 {
 			bindings = append(bindings, keyUninstall)
 		}

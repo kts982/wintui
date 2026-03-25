@@ -121,7 +121,7 @@ type app struct {
 	logoTime   float64 // accumulated time for wave target
 }
 
-func newApp() app {
+func newApp(retryReq *retryRequest) app {
 	h := help.New()
 	h.Styles.ShortKey = lipgloss.NewStyle().Foreground(accent)
 	h.Styles.ShortDesc = lipgloss.NewStyle().Foreground(dim)
@@ -140,7 +140,21 @@ func newApp() app {
 		logoRows:   rows,
 		logoSpring: harmonica.NewSpring(harmonica.FPS(15), 2.0, 0.8),
 	}
-	a.active = createScreen(tabs[0].id)
+	if retryReq != nil {
+		a.activeTab = tabForRetry(*retryReq)
+		switch retryReq.Op {
+		case retryOpInstall:
+			a.active = newInstallScreenWithRetry(*retryReq)
+		case retryOpUpgrade:
+			a.active = newUpgradeScreenWithRetry(*retryReq)
+		case retryOpUninstall:
+			a.active = newPackagesScreenWithRetry(*retryReq)
+		default:
+			a.active = createScreen(tabs[0].id)
+		}
+	} else {
+		a.active = createScreen(tabs[0].id)
+	}
 	return a
 }
 
