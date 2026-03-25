@@ -41,6 +41,7 @@ type packagesScreen struct {
 	count         int
 	err           error
 	detail        detailPanel
+	importFlow    importModel
 	exportMsg     string
 	statusMsg     string
 	filter        listFilter
@@ -55,12 +56,13 @@ func newPackagesScreen() packagesScreen {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
 	return packagesScreen{
-		state:    packagesLoading,
-		selected: make(map[int]bool),
-		spinner:  sp,
-		progress: newProgressBar(50),
-		detail:   newDetailPanel(),
-		filter:   newListFilter(),
+		state:      packagesLoading,
+		selected:   make(map[int]bool),
+		spinner:    sp,
+		progress:   newProgressBar(50),
+		detail:     newDetailPanel(),
+		importFlow: newImportModel(),
+		filter:     newListFilter(),
 	}
 }
 
@@ -100,6 +102,20 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		var handled bool
 		s.detail, cmd, handled = s.detail.update(msg)
 		if handled {
+			return s, cmd
+		}
+	}
+
+	// Import flow overlay
+	if s.importFlow.active {
+		var cmd tea.Cmd
+		var handled bool
+		s.importFlow, cmd, handled = s.importFlow.update(msg, s.packages)
+		if handled {
+			if !s.importFlow.active && s.importFlow.batchTotal > 0 {
+				// Import completed with installations — reload
+				return s.reload()
+			}
 			return s, cmd
 		}
 	}
@@ -181,6 +197,10 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 			case "e":
 				return s, exportPackages(s.packages)
+			case "m":
+				var cmd tea.Cmd
+				s.importFlow, cmd = s.importFlow.start(s.packages)
+				return s, cmd
 			case " ", "x":
 				row := s.table.Cursor()
 				if row >= 0 {
@@ -415,6 +435,9 @@ func (s packagesScreen) selectedPackages() []Package {
 // ── View ───────────────────────────────────────────────────────────
 
 func (s packagesScreen) view(width, height int) string {
+	if s.importFlow.active {
+		return s.importFlow.view(width, height)
+	}
 	if s.detail.visible() {
 		return "  " + sectionTitleStyle.Render("Installed Packages") + "\n\n" +
 			s.detail.view(width, height-2)
@@ -600,6 +623,9 @@ func buildSelectableTable(pkgs []Package, selected map[int]bool, width, height i
 }
 
 func (s packagesScreen) helpKeys() []key.Binding {
+	if s.importFlow.active {
+		return s.importFlow.helpKeys()
+	}
 	switch s.state {
 	case packagesLoading, packagesUninstalling:
 		return []key.Binding{keyEscCancel}
@@ -609,7 +635,7 @@ func (s packagesScreen) helpKeys() []key.Binding {
 		if s.filter.active {
 			return []key.Binding{keyUp, keyDown, keyEnter, keyEsc}
 		}
-		bindings := []key.Binding{keyUp, keyDown, keyFilter, keyToggle, keyDetails, keyExport, keyRefresh}
+		bindings := []key.Binding{keyUp, keyDown, keyFilter, keyToggle, keyDetails, keyExport, keyImport, keyRefresh}
 		if s.retryAction != nil && !isElevated() {
 			bindings = append(bindings, keyRetryElevated)
 		}
