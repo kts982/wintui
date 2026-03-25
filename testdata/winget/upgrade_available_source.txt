@@ -1,0 +1,7 @@
+Name                           Id                                    Version      Available    Source
+----------------------------------------------------------------------------------------------------
+Microsoft PowerToys            Microsoft.PowerToys                    0.77.1       0.78.0       winget
+Claude                         Anthropic.Claude                      0.8.2        0.8.3        winget
+Store App                      9WZDNCRFJ3PT                          Unknown      5.0.0        msstore
+3 upgrades available.
+

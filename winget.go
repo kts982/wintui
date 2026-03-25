@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
@@ -251,6 +252,7 @@ func cleanWingetOutput(output string) string {
 		"A newer version was found, but the install technology",
 		"Successfully verified installer hash",
 		"Starting package install",
+		"Starting package upgrade",
 		"Starting package uninstall",
 		"Downloading",
 	}
@@ -411,7 +413,7 @@ func parseWingetTable(output string) []Package {
 
 	// Detect column start positions from the header.
 	header := lines[sepIdx-1]
-	colNames := []string{"Name", "Id", "Version", "Available", "Source"}
+	colNames := []string{"Name", "Id", "Moniker", "Version", "Available", "Match", "Source"}
 	var cols []colPos
 	for _, name := range colNames {
 		idx := strings.Index(header, name)
@@ -419,6 +421,9 @@ func parseWingetTable(output string) []Package {
 			cols = append(cols, colPos{name, idx})
 		}
 	}
+	sort.Slice(cols, func(i, j int) bool {
+		return cols[i].start < cols[j].start
+	})
 	if len(cols) < 3 {
 		return nil
 	}

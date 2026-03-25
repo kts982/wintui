@@ -1,0 +1,18 @@
+Found Mozilla Firefox [Mozilla.Firefox]
+Version: 138.0.1
+Publisher: Mozilla
+Publisher Url: https://www.mozilla.org
+Description: Fast, private browsing for everyone.
+Homepage: https://www.mozilla.org/firefox/
+License: MPL-2.0
+Release Notes:
+  Fixed a startup crash on some systems.
+  Improved browser performance and memory usage.
+Release Date: 2026-03-20
+Tags:
+  browser
+  firefox
+Installer Type: wix
+Installer Url: https://download.mozilla.org/?product=firefox-latest
+Moniker: firefox
+

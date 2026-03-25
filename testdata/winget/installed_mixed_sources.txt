@@ -1,0 +1,8 @@
+Name                           Id                                                    Version       Source
+--------------------------------------------------------------------------------------------------------
+Notepad++                      Notepad++.Notepad++                                   8.6.4         winget
+Notepad++                      MSIX\NotepadPlusPlus_1.0.0.0_neutral__gabc1234…       1.0.0.0
+Microsoft To Do                9NBLGGH5R558                                           Unknown       msstore
+Contoso Legacy Tool            {11111111-2222-3333-4444-555555555555}                2.4.1
+4 package(s) installed.
+

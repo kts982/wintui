@@ -1,0 +1,7 @@
+Downloading https://example.invalid/installer.exe
+██████████████████████████████  100%
+Successfully verified installer hash
+Starting package upgrade...
+Installer failed with exit code: 1603
+See log: C:\Temp\winget.log
+

@@ -1,0 +1,6 @@
+Name                           Id                                    Version      Match           Source
+------------------------------------------------------------------------------------------------------
+Firefox Developer Edition      Mozilla.Firefox.DeveloperEdition      138.0b3      Tag: firefox    winget
+Firefox Beta                   Mozilla.Firefox.Beta                  137.0b9      Tag: firefox    winget
+Mozilla Firefox                9NZVDKPMR9RD                          Unknown      Tag: firefox    msstore
+
