@@ -81,4 +81,8 @@ var (
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "search"),
 	)
+	keyImport = key.NewBinding(
+		key.WithKeys("m"),
+		key.WithHelp("m", "import"),
+	)
 )

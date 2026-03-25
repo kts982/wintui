@@ -25,10 +25,11 @@ func exportPackages(pkgs []Package) tea.Cmd {
 			Name    string `json:"name"`
 			ID      string `json:"id"`
 			Version string `json:"version"`
+			Source  string `json:"source,omitempty"`
 		}
 		out := make([]exportPkg, len(pkgs))
 		for i, p := range pkgs {
-			out[i] = exportPkg{Name: p.Name, ID: p.ID, Version: p.Version}
+			out[i] = exportPkg{Name: p.Name, ID: p.ID, Version: p.Version, Source: p.Source}
 		}
 
 		data, err := json.MarshalIndent(out, "", "  ")
