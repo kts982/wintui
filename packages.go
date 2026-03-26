@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
@@ -49,6 +50,11 @@ type packagesScreen struct {
 	launchRetry   *retryRequest
 	retryAction   *retryRequest
 	attemptAction *retryRequest
+	flashSeq      int
+}
+
+type packagesFlashClearMsg struct {
+	seq int
 }
 
 func newPackagesScreen() packagesScreen {
@@ -196,6 +202,10 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					return s, cmd
 				}
 			case "e":
+				selected := s.selectedPackages()
+				if len(selected) > 0 {
+					return s, exportPackages(selected)
+				}
 				return s, exportPackages(s.packages)
 			case "m":
 				var cmd tea.Cmd
@@ -303,11 +313,12 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		} else {
 			s.statusMsg = successStyle.Render(fmt.Sprintf("%d package(s) uninstalled!", count))
 		}
+		s.flashSeq++
 		s.selected = make(map[int]bool)
 		s.attemptAction = nil
 		// Reload the list
 		s.state = packagesLoading
-		return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
+		return s, tea.Batch(s.spinner.Tick, tickProgress(), clearPackagesFlashAfter(s.flashSeq, 8*time.Second), func() tea.Msg {
 			pkgs, err := getInstalled()
 			if err == nil {
 				cache.setInstalled(pkgs)
@@ -319,7 +330,15 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if msg.err != nil {
 			s.exportMsg = "Export failed: " + msg.err.Error()
 		} else {
-			s.exportMsg = "Exported to " + msg.path
+			s.exportMsg = fmt.Sprintf("Exported %d package(s) to %s", msg.count, msg.path)
+		}
+		s.flashSeq++
+		return s, clearPackagesFlashAfter(s.flashSeq, 8*time.Second)
+
+	case packagesFlashClearMsg:
+		if msg.seq == s.flashSeq {
+			s.exportMsg = ""
+			s.statusMsg = ""
 		}
 		return s, nil
 
@@ -392,6 +411,10 @@ func (s *packagesScreen) rebuildTable() {
 func (s packagesScreen) reload() (packagesScreen, tea.Cmd) {
 	cache.invalidate()
 	s.state = packagesLoading
+	s.exportMsg = ""
+	s.statusMsg = ""
+	s.retryAction = nil
+	s.flashSeq++
 	s.progress, _ = s.progress.start()
 	return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
 		pkgs, err := getInstalled()
@@ -430,6 +453,12 @@ func (s packagesScreen) selectedPackages() []Package {
 		}
 	}
 	return pkgs
+}
+
+func clearPackagesFlashAfter(seq int, after time.Duration) tea.Cmd {
+	return tea.Tick(after, func(time.Time) tea.Msg {
+		return packagesFlashClearMsg{seq: seq}
+	})
 }
 
 // ── View ───────────────────────────────────────────────────────────
@@ -472,7 +501,7 @@ func (s packagesScreen) view(width, height int) string {
 		selCount := s.selectedCount()
 		if selCount > 0 {
 			b.WriteString(fmt.Sprintf("  %s\n",
-				warnStyle.Render(fmt.Sprintf("%d selected for removal — press u to uninstall", selCount))))
+				warnStyle.Render(fmt.Sprintf("%d selected — press u to uninstall or e to export", selCount))))
 		}
 
 		// Dynamically set table height to fill available space

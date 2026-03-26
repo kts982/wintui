@@ -18,7 +18,7 @@ A terminal user interface for **winget** (Windows Package Manager), built with G
 - **Installed** — browse installed packages across `winget`, `msstore`, and system entries, select and uninstall with `[X]` checkboxes
 - **Install** — search and install new packages with live streaming output and source-aware results
 - **Package Details** — view publisher, description, license, release notes, homepage (press `i`)
-- **Export / Restore** — export installed packages to JSON and restore from Desktop exports with review before install
+- **Export / Restore** — export selected or installed packages to JSON and restore from Desktop exports with review before install
 
 **System Utilities**
 - **Health Check** — native Go checks for shells, dev tools, runtimes, package managers, disk space, Windows Defender, developer mode
@@ -33,7 +33,7 @@ A terminal user interface for **winget** (Windows Package Manager), built with G
 - Gradient progress bars (pink → mint) on all loading/executing states
 - Package cache with 2-minute TTL (`r` to force refresh)
 - Cancellable operations (`Esc` during loading)
-- Export installed packages to JSON (`e`) and restore from export (`m`)
+- Export selected packages to JSON with `e` (or all installed when nothing is selected) and restore from export with `m`
 - Dynamic context-aware help bar
 - `q` to quit
 

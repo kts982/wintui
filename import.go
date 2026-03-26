@@ -118,11 +118,11 @@ func (m importModel) start(installed []Package) (importModel, tea.Cmd) {
 
 func scanExportFiles(installed []Package) tea.Cmd {
 	return func() tea.Msg {
-		home, err := os.UserHomeDir()
+		desktop, err := desktopDir()
 		if err != nil {
 			return importFilesMsg{err: err}
 		}
-		pattern := filepath.Join(home, "Desktop", "wintui_packages_*.json")
+		pattern := filepath.Join(desktop, "wintui_packages_*.json")
 		files, err := filepath.Glob(pattern)
 		if err != nil {
 			return importFilesMsg{err: err}
@@ -202,6 +202,20 @@ func resolveImportSource(pkg importPkg) string {
 		return "winget"
 	}
 	return ""
+}
+
+func importSourceLabel(pkg importPkg) string {
+	if pkg.NonCanonical {
+		return ""
+	}
+	switch resolveImportSource(pkg) {
+	case "winget":
+		return "winget"
+	case "msstore":
+		return "msstore"
+	default:
+		return "default"
+	}
 }
 
 func looksLikeStoreProductID(id string) bool {
@@ -526,6 +540,9 @@ func (m importModel) view(width, height int) string {
 				status = checkbox(m.selected[i])
 			}
 			label := fmt.Sprintf("%s  (%s)  %s", pkg.Name, pkg.ID, pkg.Version)
+			if source := importSourceLabel(pkg); source != "" {
+				label += fmt.Sprintf("  [%s]", source)
+			}
 			fmt.Fprintf(&b, "  %s%s %s\n", cursor, status, style.Render(label))
 		}
 

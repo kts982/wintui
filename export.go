@@ -2,24 +2,24 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 type exportDoneMsg struct {
-	path string
-	err  error
+	path  string
+	count int
+	err   error
 }
 
 func exportPackages(pkgs []Package) tea.Cmd {
 	return func() tea.Msg {
-		home, _ := os.UserHomeDir()
-		ts := time.Now().Format("20060102_150405")
-		path := filepath.Join(home, "Desktop", fmt.Sprintf("wintui_packages_%s.json", ts))
+		path, err := exportPath()
+		if err != nil {
+			return exportDoneMsg{err: err}
+		}
 
 		type exportPkg struct {
 			Name    string `json:"name"`
@@ -39,6 +39,11 @@ func exportPackages(pkgs []Package) tea.Cmd {
 		if err := os.WriteFile(path, data, 0644); err != nil {
 			return exportDoneMsg{err: err}
 		}
-		return exportDoneMsg{path: path}
+		return exportDoneMsg{path: path, count: len(pkgs)}
 	}
+}
+
+func exportFilename() string {
+	ts := time.Now().Format("20060102_150405")
+	return "wintui_packages_" + ts + ".json"
 }
