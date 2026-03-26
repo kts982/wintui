@@ -4,6 +4,8 @@ A terminal user interface for **winget** (Windows Package Manager), built with G
 
 Browse, install, upgrade, and manage Windows packages without leaving the terminal.
 
+![WinTUI demo](demo.gif)
+
 ## Install
 
 **Requirements:** Windows 10/11 with winget installed.
@@ -112,11 +114,7 @@ The validation suite runs `gofmt`, `go test`, `go vet`, `staticcheck`, and `go b
 
 Optional Git hooks are included in `.githooks/pre-commit` and `.githooks/pre-push`.
 
-To regenerate the demo GIF, use the manual `Demo GIF` GitHub Actions workflow or render locally with [VHS](https://github.com/charmbracelet/vhs):
-
-```bash
-vhs demo.tape
-```
+Maintainers can regenerate `demo.gif` from `demo.cast` with `agg`.
 
 ## Built With
 
