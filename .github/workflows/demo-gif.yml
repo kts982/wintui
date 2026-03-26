@@ -23,6 +23,10 @@ jobs:
         shell: pwsh
         run: choco install ffmpeg -y --no-progress
 
+      - name: Install ttyd
+        shell: pwsh
+        run: winget install --id tsl0922.ttyd --exact --accept-package-agreements --accept-source-agreements --disable-interactivity
+
       - name: Install VHS
         shell: pwsh
         run: |
