@@ -25,7 +25,15 @@ jobs:
 
       - name: Install ttyd
         shell: pwsh
-        run: winget install --id tsl0922.ttyd --exact --accept-package-agreements --accept-source-agreements --disable-interactivity
+        run: |
+          winget install --id tsl0922.ttyd --exact --accept-package-agreements --accept-source-agreements --disable-interactivity
+          "$env:LOCALAPPDATA\Microsoft\WinGet\Links" >> $env:GITHUB_PATH
+
+      - name: Verify ttyd
+        shell: pwsh
+        run: |
+          Get-Command ttyd
+          ttyd --version
 
       - name: Install VHS
         shell: pwsh
