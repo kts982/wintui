@@ -34,7 +34,7 @@ Pre-built binaries are available on [GitHub Releases](https://github.com/kts982/
 gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 ```
 
-`winget` publishing is planned next, but is not available yet.
+Portable `winget` manifest files now live under [`packaging/winget`](./packaging/winget), and submission to the community `winget-pkgs` repository is the next distribution step.
 
 ## Features
 
@@ -120,6 +120,7 @@ The validation suite runs `gofmt`, `go test`, `go vet`, `staticcheck`, and `go b
 Optional Git hooks are included in `.githooks/pre-commit` and `.githooks/pre-push`.
 
 Maintainers can regenerate `demo.gif` from `demo.cast` with `agg`.
+Maintainers can validate the local WinGet manifest with `winget validate .\packaging\winget\manifests\k\kts982\WinTUI\0.1.0`.
 
 ## Built With
 
