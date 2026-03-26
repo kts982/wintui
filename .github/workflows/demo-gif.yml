@@ -51,6 +51,7 @@ jobs:
 
       - name: Render GIF
         shell: pwsh
+        timeout-minutes: 5
         run: vhs demo.tape
 
       - name: Upload demo artifact

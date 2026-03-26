@@ -23,7 +23,7 @@ Set Padding 15
 Set Framerate 24
 Set PlaybackSpeed 1.25
 
-# ── Build and launch ────────────────────────────────────────────────
+# ── Launch ──────────────────────────────────────────────────────────
 
 Hide
 Type "clear"
@@ -32,9 +32,9 @@ Show
 
 Type ".\\wintui.exe"
 Enter
-Sleep 5s
+Sleep 4s
 
-# ── Upgrade tab (loaded automatically) ──────────────────────────────
+# ── Upgrade tab ─────────────────────────────────────────────────────
 
 Down
 Sleep 400ms
@@ -44,67 +44,43 @@ Sleep 600ms
 # ── Installed tab ───────────────────────────────────────────────────
 
 Type "2"
-Sleep 3s
+Sleep 2s
 
 Down@150ms 4
 Sleep 500ms
 
-# Fuzzy filter for Firefox
+# Local filter
 Type "/"
 Sleep 400ms
-Type "firefox"
-Sleep 1s
+Type "git"
+Sleep 600ms
 Enter
-Sleep 800ms
-
-# Package details
-Type "i"
-Sleep 3s
-Escape
 Sleep 500ms
 
 # Clear filter
 Escape
-Sleep 800ms
+Sleep 600ms
 
 # ── Install tab ─────────────────────────────────────────────────────
 
 Type "3"
 Sleep 500ms
 
-Type "neovim"
+Type "git"
 Enter
-Sleep 4s
+Sleep 6s
 
 Down@300ms 2
-Up
 Sleep 500ms
-
-# Package details
-Type "i"
-Sleep 3s
-Escape
-Sleep 500ms
-
-# Back to search
-Escape
-Sleep 500ms
-
-# ── Health Check tab ────────────────────────────────────────────────
-
-Type "5"
-Sleep 4s
-
-Down@300ms 3
-Sleep 1s
 
 # ── Settings tab ────────────────────────────────────────────────────
 
 Type "6"
 Sleep 2s
-Down@300ms 2
+Down@300ms 3
 Sleep 500ms
 
 # ── Quit ────────────────────────────────────────────────────────────
 
 Ctrl+C
+Sleep 1s
