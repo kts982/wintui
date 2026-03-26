@@ -1,4 +1,5 @@
 wintui.exe
 wintui.exe~
 *.exe
+rsrc_windows*.syso
 /.dev/

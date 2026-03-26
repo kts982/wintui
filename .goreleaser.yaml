@@ -2,6 +2,10 @@ version: 2
 
 project_name: wintui
 
+before:
+  hooks:
+    - go-winres make --arch=amd64,arm64 --product-version={{ .Version }} --file-version={{ .Version }}
+
 builds:
   - main: .
     binary: wintui
@@ -16,7 +20,13 @@ builds:
       - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
 
 archives:
-  - format: zip
+  - id: zip
+    formats:
+      - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: binary
+    formats:
+      - binary
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:

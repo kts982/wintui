@@ -51,6 +51,14 @@ go build -o wintui.exe .
 go install github.com/kts982/wintui@latest
 ```
 
+Release downloads are also published on GitHub Releases:
+
+```bash
+gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
+```
+
+Release assets include both raw `.exe` files and `.zip` archives for Windows `amd64` and `arm64`.
+
 ## Usage
 
 ```bash
