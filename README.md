@@ -34,7 +34,7 @@ Pre-built binaries are available on [GitHub Releases](https://github.com/kts982/
 gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 ```
 
-Portable `winget` manifest files now live under [`packaging/winget`](./packaging/winget), and submission to the community `winget-pkgs` repository is the next distribution step.
+Portable `winget` manifest files live under [`packaging/winget`](./packaging/winget). A submission to the community `winget-pkgs` repository is pending approval.
 
 ## Features
 
