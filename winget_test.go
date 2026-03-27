@@ -121,6 +121,21 @@ func TestStreamWingetOutputLinesSkipsNoiseButKeepsUsefulStatus(t *testing.T) {
 	}
 }
 
+func TestFriendlyWingetErrorMapsKnownUpgradeCode(t *testing.T) {
+	err := friendlyWingetError(assertErr("exit status 0x8a15002b"), "", "")
+	got := err.Error()
+	want := "install technology differs from installed version (package manages its own updates)"
+	if got != want {
+		t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
+	}
+}
+
+type fixedErr string
+
+func (e fixedErr) Error() string { return string(e) }
+
+func assertErr(msg string) error { return fixedErr(msg) }
+
 func TestActionCommandArgs(t *testing.T) {
 	original := appSettings
 	defer func() { appSettings = original }()

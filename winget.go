@@ -594,9 +594,14 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 			return
 		}
 
+		var rawOutput strings.Builder
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			lines := streamWingetOutputLines(scanner.Text())
+			rawLine := scanner.Text()
+			rawOutput.WriteString(rawLine)
+			rawOutput.WriteByte('\n')
+
+			lines := streamWingetOutputLines(rawLine)
 			for _, line := range lines {
 				select {
 				case outChan <- line:
@@ -606,13 +611,25 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 				}
 			}
 		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			if ctx.Err() != nil {
+				errChan <- fmt.Errorf("cancelled")
+			} else {
+				errChan <- scanErr
+			}
+			return
+		}
 
 		waitErr := cmd.Wait()
 		if ctx.Err() != nil {
 			errChan <- fmt.Errorf("cancelled")
 			return
 		}
-		errChan <- waitErr
+		if waitErr != nil {
+			errChan <- friendlyWingetError(waitErr, "", rawOutput.String())
+			return
+		}
+		errChan <- nil
 	}()
 
 	return outChan, errChan
