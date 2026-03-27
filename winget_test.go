@@ -100,6 +100,26 @@ func TestCleanWingetOutputFixture(t *testing.T) {
 	}
 }
 
+func TestParseWingetVersions(t *testing.T) {
+	raw := strings.Join([]string{
+		"",
+		"   - ",
+		"",
+		"Found Notepad++ [Notepad++.Notepad++]",
+		"Version",
+		"-------",
+		"8.9.3",
+		"8.9.2",
+		"8.9.1",
+	}, "\r\n")
+
+	got := parseWingetVersions(raw)
+	want := []string{"8.9.3", "8.9.2", "8.9.1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseWingetVersions() = %#v, want %#v", got, want)
+	}
+}
+
 func TestStreamWingetOutputLinesSkipsNoiseButKeepsUsefulStatus(t *testing.T) {
 	raw := strings.Join([]string{
 		"\r   - \r",
@@ -142,7 +162,7 @@ func TestActionCommandArgs(t *testing.T) {
 
 	t.Run("install uses explicit package source", func(t *testing.T) {
 		appSettings = DefaultSettings()
-		got := installCommandArgs("Git.Git", "winget")
+		got := installCommandArgs("Git.Git", "winget", "")
 		want := []string{"install", "--id", "Git.Git", "--exact", "--accept-package-agreements", "--source", "winget"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("installCommandArgs() = %#v, want %#v", got, want)
@@ -153,8 +173,20 @@ func TestActionCommandArgs(t *testing.T) {
 		appSettings = DefaultSettings()
 		appSettings.Source = "msstore"
 		appSettings.IncludeUnknown = true
-		got := installCommandArgs("Contoso.App", "")
+		got := installCommandArgs("Contoso.App", "", "")
 		want := []string{"install", "--id", "Contoso.App", "--exact", "--accept-package-agreements", "--source", "msstore"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("installCommandArgs() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("install includes explicit version when selected", func(t *testing.T) {
+		appSettings = DefaultSettings()
+		got := installCommandArgs("Notepad++.Notepad++", "winget", "8.9.2")
+		want := []string{
+			"install", "--id", "Notepad++.Notepad++", "--exact",
+			"--accept-package-agreements", "--version", "8.9.2", "--source", "winget",
+		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("installCommandArgs() = %#v, want %#v", got, want)
 		}
@@ -162,8 +194,20 @@ func TestActionCommandArgs(t *testing.T) {
 
 	t.Run("upgrade uses explicit package source", func(t *testing.T) {
 		appSettings = DefaultSettings()
-		got := upgradeCommandArgs("GitHub.cli", "winget")
+		got := upgradeCommandArgs("GitHub.cli", "winget", "")
 		want := []string{"upgrade", "--id", "GitHub.cli", "--exact", "--accept-package-agreements", "--source", "winget"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("upgradeCommandArgs() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("upgrade includes explicit version when selected", func(t *testing.T) {
+		appSettings = DefaultSettings()
+		got := upgradeCommandArgs("Neovim.Neovim", "winget", "0.11.5")
+		want := []string{
+			"upgrade", "--id", "Neovim.Neovim", "--exact",
+			"--accept-package-agreements", "--version", "0.11.5", "--source", "winget",
+		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("upgradeCommandArgs() = %#v, want %#v", got, want)
 		}

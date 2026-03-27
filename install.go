@@ -27,23 +27,24 @@ const (
 )
 
 type installScreen struct {
-	state          installState
-	input          textinput.Model
-	spinner        spinner.Model
-	progress       progressBar
-	packages       []Package
-	cursor         int
-	output         string
-	err            error
-	detail         detailPanel
-	vp             viewport.Model
-	outLines       []string
-	installOutChan <-chan string
-	installErrChan <-chan error
-	ctx            context.Context
-	cancel         context.CancelFunc
-	launchRetry    *retryRequest
-	retryAction    *retryRequest
+	state            installState
+	input            textinput.Model
+	spinner          spinner.Model
+	progress         progressBar
+	packages         []Package
+	selectedVersions map[string]string
+	cursor           int
+	output           string
+	err              error
+	detail           detailPanel
+	vp               viewport.Model
+	outLines         []string
+	installOutChan   <-chan string
+	installErrChan   <-chan error
+	ctx              context.Context
+	cancel           context.CancelFunc
+	launchRetry      *retryRequest
+	retryAction      *retryRequest
 }
 
 func newInstallScreen() installScreen {
@@ -64,12 +65,13 @@ func newInstallScreen() installScreen {
 	vp.Style = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(accent)
 
 	return installScreen{
-		state:    installInput,
-		input:    ti,
-		spinner:  sp,
-		progress: newProgressBar(50),
-		detail:   newDetailPanel(),
-		vp:       vp,
+		state:            installInput,
+		input:            ti,
+		spinner:          sp,
+		progress:         newProgressBar(50),
+		detail:           newDetailPanel(),
+		selectedVersions: make(map[string]string),
+		vp:               vp,
 	}
 }
 
@@ -78,6 +80,9 @@ func newInstallScreenWithRetry(req retryRequest) installScreen {
 	s.state = installExecuting
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.launchRetry = &req
+	if req.Version != "" {
+		s.selectedVersions[packageSourceKey(req.ID, req.Source)] = req.Version
+	}
 	return s
 }
 
@@ -85,7 +90,7 @@ func (s installScreen) init() tea.Cmd {
 	if s.launchRetry != nil {
 		req := *s.launchRetry
 		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-			out, err := installPackageSourceCtx(s.ctx, req.ID, req.Source)
+			out, err := installPackageSourceCtx(s.ctx, req.ID, req.Source, req.Version)
 			return commandDoneMsg{output: out, err: err}
 		})
 	}
@@ -104,6 +109,10 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case detailVersionSelectedMsg:
+		s.setSelectedVersion(msg.pkgID, msg.source, msg.version)
+		return s, nil
+
 	case tea.KeyPressMsg:
 		if msg.String() == "esc" && s.state == installSearching {
 			if s.cancel != nil {
@@ -170,7 +179,12 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				if len(s.packages) > 0 {
 					var cmd tea.Cmd
 					pkg := s.packages[s.cursor]
-					s.detail, cmd = s.detail.show(pkg.ID, pkg.Source)
+					s.detail, cmd = s.detail.showWithVersion(
+						pkg.ID,
+						pkg.Source,
+						s.selectedVersionFor(pkg),
+						true,
+					)
 					return s, cmd
 				}
 			case "enter":
@@ -186,12 +200,13 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			switch msg.String() {
 			case "y", "Y":
 				pkg := s.packages[s.cursor]
+				version := s.selectedVersionFor(pkg)
 				s.state = installExecuting
 				s.retryAction = nil
 				s.ctx, s.cancel = context.WithCancel(context.Background())
 				s.progress, _ = s.progress.start()
 
-				s.installOutChan, s.installErrChan = installPackageStreamCtx(s.ctx, pkg.ID, pkg.Source)
+				s.installOutChan, s.installErrChan = installPackageStreamCtx(s.ctx, pkg.ID, pkg.Source, version)
 				s.outLines = nil
 				s.vp.SetContent("")
 
@@ -251,6 +266,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.progress = s.progress.stop()
 		s.retryAction = nil
 		s.packages = msg.packages
+		s.selectedVersions = make(map[string]string)
 		s.err = msg.err
 		if msg.err != nil || len(msg.packages) == 0 {
 			s.state = installDone
@@ -275,7 +291,13 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if msg.err != nil && requiresElevation(msg.err, msg.output) && !isElevated() && s.launchRetry == nil {
 			if len(s.packages) > 0 && s.cursor >= 0 && s.cursor < len(s.packages) {
 				pkg := s.packages[s.cursor]
-				s.retryAction = &retryRequest{Op: retryOpInstall, ID: pkg.ID, Source: pkg.Source}
+				s.retryAction = &retryRequest{
+					Op:      retryOpInstall,
+					ID:      pkg.ID,
+					Name:    pkg.Name,
+					Source:  pkg.Source,
+					Version: s.selectedVersionFor(pkg),
+				}
 			}
 		}
 		cache.invalidate()
@@ -304,7 +326,13 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.retryAction = nil
 		if msg.err != nil && requiresElevation(msg.err, s.output) && !isElevated() && len(s.packages) > 0 && s.cursor >= 0 && s.cursor < len(s.packages) {
 			pkg := s.packages[s.cursor]
-			s.retryAction = &retryRequest{Op: retryOpInstall, ID: pkg.ID, Source: pkg.Source}
+			s.retryAction = &retryRequest{
+				Op:      retryOpInstall,
+				ID:      pkg.ID,
+				Name:    pkg.Name,
+				Source:  pkg.Source,
+				Version: s.selectedVersionFor(pkg),
+			}
 		}
 		cache.invalidate()
 		if msg.err == nil {
@@ -339,9 +367,34 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 func (s installScreen) currentPackage() (Package, bool) {
 	if s.cursor < 0 || s.cursor >= len(s.packages) {
+		if s.launchRetry != nil {
+			name := s.launchRetry.Name
+			if name == "" {
+				name = s.launchRetry.ID
+			}
+			return Package{
+				Name:    name,
+				ID:      s.launchRetry.ID,
+				Version: s.launchRetry.Version,
+				Source:  s.launchRetry.Source,
+			}, s.launchRetry.ID != ""
+		}
 		return Package{}, false
 	}
 	return s.packages[s.cursor], true
+}
+
+func (s installScreen) selectedVersionFor(pkg Package) string {
+	return s.selectedVersions[packageSourceKey(pkg.ID, pkg.Source)]
+}
+
+func (s *installScreen) setSelectedVersion(id, source, version string) {
+	key := packageSourceKey(id, source)
+	if strings.TrimSpace(version) == "" {
+		delete(s.selectedVersions, key)
+		return
+	}
+	s.selectedVersions[key] = version
 }
 
 func (s installScreen) view(width, height int) string {
@@ -381,17 +434,36 @@ func (s installScreen) view(width, height int) string {
 			if pkg.Source != "" {
 				label += fmt.Sprintf("  [%s]", pkg.Source)
 			}
+			if version := s.selectedVersionFor(pkg); version != "" {
+				label += fmt.Sprintf("  → %s", version)
+			}
 			fmt.Fprintf(&b, "  %s%s\n", cursor, style.Render(label))
 		}
 
 	case installConfirm:
 		pkg := s.packages[s.cursor]
-		b.WriteString(fmt.Sprintf("  Install %s (%s)?\n\n",
-			itemActiveStyle.Render(pkg.Name), pkg.ID))
+		version := s.selectedVersionFor(pkg)
+		if version != "" {
+			b.WriteString(fmt.Sprintf("  Install %s (%s) version %s?\n\n",
+				itemActiveStyle.Render(pkg.Name), pkg.ID, itemActiveStyle.Render(version)))
+		} else {
+			b.WriteString(fmt.Sprintf("  Install %s (%s)?\n\n",
+				itemActiveStyle.Render(pkg.Name), pkg.ID))
+		}
 		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
 
 	case installExecuting:
-		fmt.Fprintf(&b, "  %s Installing...\n\n", s.spinner.View())
+		if pkg, ok := s.currentPackage(); ok {
+			if version := s.selectedVersionFor(pkg); version != "" {
+				fmt.Fprintf(&b, "  %s Installing %s (%s) -> %s...\n\n",
+					s.spinner.View(), pkg.Name, pkg.ID, version)
+			} else {
+				fmt.Fprintf(&b, "  %s Installing %s (%s)...\n\n",
+					s.spinner.View(), pkg.Name, pkg.ID)
+			}
+		} else {
+			fmt.Fprintf(&b, "  %s Installing...\n\n", s.spinner.View())
+		}
 		b.WriteString("  " + s.progress.view() + "\n")
 		s.vp.SetWidth(width - 8)
 		vpH := height - 12
@@ -405,7 +477,11 @@ func (s installScreen) view(width, height int) string {
 		if s.err != nil {
 			b.WriteString("  " + errorStyle.Render("Error: "+s.err.Error()) + "\n")
 			if pkg, ok := s.currentPackage(); ok {
-				b.WriteString("  " + helpStyle.Render(fmt.Sprintf("%s  (%s)", pkg.Name, pkg.ID)) + "\n")
+				meta := []string{fmt.Sprintf("%s  (%s)", pkg.Name, pkg.ID)}
+				if version := s.selectedVersionFor(pkg); version != "" {
+					meta = append(meta, "target "+version)
+				}
+				b.WriteString("  " + helpStyle.Render(strings.Join(meta, "  ")) + "\n")
 			}
 			if requiresElevation(s.err, s.output) {
 				b.WriteString("  " + helpStyle.Render(elevationRetryHint()) + "\n")
@@ -418,7 +494,9 @@ func (s installScreen) view(width, height int) string {
 				b.WriteString("  " + successStyle.Render(pkg.Name+" installed successfully") + "\n")
 				var meta []string
 				meta = append(meta, pkg.ID)
-				if pkg.Version != "" {
+				if version := s.selectedVersionFor(pkg); version != "" {
+					meta = append(meta, "target "+version)
+				} else if pkg.Version != "" {
 					meta = append(meta, pkg.Version)
 				}
 				if pkg.Source != "" {

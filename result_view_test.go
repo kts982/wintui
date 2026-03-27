@@ -43,6 +43,24 @@ func TestUpgradeExecutingViewShowsLogViewport(t *testing.T) {
 	}
 }
 
+func TestUpgradeConfirmViewShowsSelectedTargetVersion(t *testing.T) {
+	s := newUpgradeScreen()
+	s.state = upgradeConfirming
+	s.action = "selected"
+	s.packages = []Package{
+		{Name: "Neovim", ID: "Neovim.Neovim", Version: "0.11.5", Available: "0.11.6", Source: "winget"},
+	}
+	s.selected[0] = true
+	s.selectedVersions[packageSourceKey("Neovim.Neovim", "winget")] = "0.11.4"
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Upgrade ") ||
+		!strings.Contains(got, "Neovim.Neovim) to ") ||
+		!strings.Contains(got, "0.11.4") {
+		t.Fatalf("view() = %q, want explicit target version in confirm text", got)
+	}
+}
+
 func TestPackagesUninstallingViewShowsLogViewport(t *testing.T) {
 	s := newPackagesScreen()
 	s.state = packagesUninstalling

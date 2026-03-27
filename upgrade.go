@@ -29,34 +29,36 @@ const (
 type startUpgradeBatchMsg struct{}
 
 type upgradeScreen struct {
-	state        upgradeState
-	packages     []Package
-	selected     map[int]bool
-	cursor       int
-	action       string // "all" or "selected"
-	spinner      spinner.Model
-	progress     progressBar
-	output       string
-	err          error
-	detail       detailPanel
-	filter       listFilter
-	cancel       context.CancelFunc
-	ctx          context.Context
-	batchCurrent int
-	batchTotal   int
-	batchName    string
-	batchIDs     []string
-	batchSources []string
-	batchOutputs []string
-	batchErrs    []error
-	batchErr     error
-	launchRetry  *retryRequest
-	retryAction  *retryRequest
-	vp           viewport.Model
-	outLines     []string
-	currentLines []string
-	upgradeOut   <-chan string
-	upgradeErr   <-chan error
+	state            upgradeState
+	packages         []Package
+	selected         map[int]bool
+	selectedVersions map[string]string
+	cursor           int
+	action           string // "all" or "selected"
+	spinner          spinner.Model
+	progress         progressBar
+	output           string
+	err              error
+	detail           detailPanel
+	filter           listFilter
+	cancel           context.CancelFunc
+	ctx              context.Context
+	batchCurrent     int
+	batchTotal       int
+	batchName        string
+	batchIDs         []string
+	batchSources     []string
+	batchVersions    []string
+	batchOutputs     []string
+	batchErrs        []error
+	batchErr         error
+	launchRetry      *retryRequest
+	retryAction      *retryRequest
+	vp               viewport.Model
+	outLines         []string
+	currentLines     []string
+	upgradeOut       <-chan string
+	upgradeErr       <-chan error
 }
 
 func newUpgradeScreen() upgradeScreen {
@@ -67,15 +69,16 @@ func newUpgradeScreen() upgradeScreen {
 	vp.Style = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(accent)
 	ctx, cancel := context.WithCancel(context.Background())
 	return upgradeScreen{
-		state:    upgradeLoading,
-		selected: make(map[int]bool),
-		spinner:  sp,
-		progress: newProgressBar(50),
-		detail:   newDetailPanel(),
-		filter:   newListFilter(),
-		ctx:      ctx,
-		cancel:   cancel,
-		vp:       vp,
+		state:            upgradeLoading,
+		selected:         make(map[int]bool),
+		selectedVersions: make(map[string]string),
+		spinner:          sp,
+		progress:         newProgressBar(50),
+		detail:           newDetailPanel(),
+		filter:           newListFilter(),
+		ctx:              ctx,
+		cancel:           cancel,
+		vp:               vp,
 	}
 }
 
@@ -84,9 +87,13 @@ func newUpgradeScreenWithRetry(req retryRequest) upgradeScreen {
 	s.state = upgradeExecuting
 	s.batchIDs = []string{req.ID}
 	s.batchSources = []string{req.Source}
+	s.batchVersions = []string{req.Version}
 	s.batchTotal = 1
 	s.batchName = req.ID
 	s.launchRetry = &req
+	if req.Version != "" {
+		s.selectedVersions[packageSourceKey(req.ID, req.Source)] = req.Version
+	}
 	return s
 }
 
@@ -121,6 +128,10 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case detailVersionSelectedMsg:
+		s.setSelectedVersion(msg.pkgID, msg.source, msg.version)
+		return s, nil
+
 	case tea.KeyPressMsg:
 		// Filter input mode — pass navigation keys through
 		if s.filter.active {
@@ -214,7 +225,12 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			if len(filtered) > 0 && s.cursor >= 0 && s.cursor < len(filtered) {
 				var cmd tea.Cmd
 				pkg := filtered[s.cursor]
-				s.detail, cmd = s.detail.show(pkg.ID, pkg.Source)
+				s.detail, cmd = s.detail.showWithVersion(
+					pkg.ID,
+					pkg.Source,
+					s.selectedVersionFor(pkg),
+					true,
+				)
 				return s, cmd
 			}
 		}
@@ -258,6 +274,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.retryAction = nil
 		s.packages = msg.packages
 		s.selected = make(map[int]bool)
+		s.selectedVersions = make(map[string]string)
 		s.err = msg.err
 		if msg.err != nil || len(msg.packages) == 0 {
 			s.state = upgradeEmpty
@@ -326,7 +343,16 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			if len(s.batchSources) > 0 {
 				source = s.batchSources[0]
 			}
-			s.retryAction = &retryRequest{Op: retryOpUpgrade, ID: s.batchIDs[0], Source: source}
+			version := ""
+			if len(s.batchVersions) > 0 {
+				version = s.batchVersions[0]
+			}
+			s.retryAction = &retryRequest{
+				Op:      retryOpUpgrade,
+				ID:      s.batchIDs[0],
+				Source:  source,
+				Version: version,
+			}
 		}
 		cache.invalidate()
 		return s, func() tea.Msg { return packageDataChangedMsg{origin: screenUpgrade} }
@@ -401,25 +427,18 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.cancel = cancel
 
-		// Build package list: all packages or selected ones
 		var ids []string
 		var sources []string
-		if s.action == "all" {
-			for _, p := range s.packages {
-				ids = append(ids, p.ID)
-				sources = append(sources, p.Source)
-			}
-		} else {
-			for i, sel := range s.selected {
-				if sel && i < len(s.packages) {
-					ids = append(ids, s.packages[i].ID)
-					sources = append(sources, s.packages[i].Source)
-				}
-			}
+		var versions []string
+		for _, pkg := range s.packagesForAction() {
+			ids = append(ids, pkg.ID)
+			sources = append(sources, pkg.Source)
+			versions = append(versions, s.selectedVersionFor(pkg))
 		}
 		s.ctx = ctx
 		s.batchIDs = ids
 		s.batchSources = sources
+		s.batchVersions = versions
 		s.batchTotal = len(ids)
 		s.batchCurrent = 0
 		s.batchOutputs = nil
@@ -446,6 +465,42 @@ func (s upgradeScreen) selectedCount() int {
 	count := 0
 	for _, v := range s.selected {
 		if v {
+			count++
+		}
+	}
+	return count
+}
+
+func (s upgradeScreen) selectedVersionFor(pkg Package) string {
+	return s.selectedVersions[packageSourceKey(pkg.ID, pkg.Source)]
+}
+
+func (s *upgradeScreen) setSelectedVersion(id, source, version string) {
+	key := packageSourceKey(id, source)
+	if strings.TrimSpace(version) == "" {
+		delete(s.selectedVersions, key)
+		return
+	}
+	s.selectedVersions[key] = version
+}
+
+func (s upgradeScreen) packagesForAction() []Package {
+	if s.action == "all" {
+		return append([]Package(nil), s.packages...)
+	}
+	pkgs := make([]Package, 0, s.selectedCount())
+	for i, pkg := range s.packages {
+		if s.selected[i] {
+			pkgs = append(pkgs, pkg)
+		}
+	}
+	return pkgs
+}
+
+func (s upgradeScreen) customVersionCount(pkgs []Package) int {
+	count := 0
+	for _, pkg := range pkgs {
+		if s.selectedVersionFor(pkg) != "" {
 			count++
 		}
 	}
@@ -585,21 +640,36 @@ func (s *upgradeScreen) startUpgradeStream(index int) tea.Cmd {
 		return nil
 	}
 	s.batchCurrent = index
-	s.batchName = s.batchIDs[index]
 	s.currentLines = nil
 	if len(s.outLines) > 0 {
 		s.outLines = append(s.outLines, "")
 	}
 	label := s.packageLabel(s.batchIDs[index])
+	targetVersion := ""
+	if index < len(s.batchVersions) {
+		targetVersion = s.batchVersions[index]
+	}
+	s.batchName = label
+	if targetVersion != "" {
+		s.batchName += " -> " + targetVersion
+	}
 	header := "== " + label
 	if label != s.batchIDs[index] {
 		header += " (" + s.batchIDs[index] + ")"
+	}
+	if targetVersion != "" {
+		header += " -> " + targetVersion
 	}
 	header += " =="
 	s.outLines = append(s.outLines, header)
 	s.vp.SetContent(strings.Join(s.outLines, "\n"))
 	s.vp.GotoBottom()
-	s.upgradeOut, s.upgradeErr = upgradePackageStreamCtx(s.ctx, s.batchIDs[index], s.batchSources[index])
+	s.upgradeOut, s.upgradeErr = upgradePackageStreamCtx(
+		s.ctx,
+		s.batchIDs[index],
+		s.batchSources[index],
+		targetVersion,
+	)
 	return awaitStream(s.upgradeOut, s.upgradeErr)
 }
 
@@ -674,20 +744,33 @@ func (s upgradeScreen) view(width, height int) string {
 			}
 			check := checkbox(origIdx >= 0 && s.selected[origIdx])
 			label := fmt.Sprintf("%s  (%s)  %s → %s", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
+			if version := s.selectedVersionFor(pkg); version != "" {
+				label += fmt.Sprintf("  [target %s]", version)
+			}
 			fmt.Fprintf(&b, "  %s%s %s\n", cursor, check, style.Render(label))
 		}
 
 	case upgradeConfirming:
-		if s.action == "all" {
-			fmt.Fprintf(&b, "  Upgrade all %d package(s)?\n\n", len(s.packages))
-		} else {
-			count := 0
-			for _, v := range s.selected {
-				if v {
-					count++
-				}
+		targets := s.packagesForAction()
+		customVersions := s.customVersionCount(targets)
+		if len(targets) == 1 {
+			pkg := targets[0]
+			if version := s.selectedVersionFor(pkg); version != "" {
+				fmt.Fprintf(&b, "  Upgrade %s (%s) to %s?\n\n",
+					itemActiveStyle.Render(pkg.Name), pkg.ID, itemActiveStyle.Render(version))
+			} else {
+				fmt.Fprintf(&b, "  Upgrade %s (%s)?\n\n",
+					itemActiveStyle.Render(pkg.Name), pkg.ID)
 			}
-			fmt.Fprintf(&b, "  Upgrade %d selected package(s)?\n\n", count)
+		} else if s.action == "all" {
+			fmt.Fprintf(&b, "  Upgrade all %d package(s)?\n\n", len(targets))
+		} else {
+			fmt.Fprintf(&b, "  Upgrade %d selected package(s)?\n\n", len(targets))
+		}
+		if customVersions > 0 {
+			b.WriteString("  " + infoStyle.Render(
+				fmt.Sprintf("%d package(s) will use an explicitly selected version.", customVersions),
+			) + "\n\n")
 		}
 		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
 

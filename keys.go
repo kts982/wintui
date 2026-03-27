@@ -129,4 +129,12 @@ var (
 		key.WithKeys("o"),
 		key.WithHelp("o", "open link"),
 	)
+	keyVersion = key.NewBinding(
+		key.WithKeys("v"),
+		key.WithHelp("v", "versions"),
+	)
+	keyUseLatest = key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "latest"),
+	)
 )

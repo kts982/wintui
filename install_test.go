@@ -23,3 +23,19 @@ func TestInstallDoneViewShowsPackageSummaryAndHint(t *testing.T) {
 		t.Fatalf("view() = %q, want next-step hint", got)
 	}
 }
+
+func TestInstallConfirmViewShowsSelectedTargetVersion(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installConfirm
+	s.packages = []Package{
+		{Name: "Notepad++", ID: "Notepad++.Notepad++", Version: "8.9.3", Source: "winget"},
+	}
+	s.selectedVersions[packageSourceKey("Notepad++.Notepad++", "winget")] = "8.9.2"
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Install ") ||
+		!strings.Contains(got, "Notepad++.Notepad++) version ") ||
+		!strings.Contains(got, "8.9.2") {
+		t.Fatalf("view() = %q, want explicit target version in confirm text", got)
+	}
+}

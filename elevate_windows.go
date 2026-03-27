@@ -26,6 +26,9 @@ func relaunchElevatedRetry(req retryRequest) error {
 	if req.Source != "" {
 		args = append(args, "--source", req.Source)
 	}
+	if req.Version != "" {
+		args = append(args, "--package-version", req.Version)
+	}
 
 	verb, err := windows.UTF16PtrFromString("runas")
 	if err != nil {

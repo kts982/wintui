@@ -464,7 +464,7 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 
 func importInstallSingleCmd(ctx context.Context, id, source string, index int) tea.Cmd {
 	return func() tea.Msg {
-		out, err := installPackageSourceCtx(ctx, id, source)
+		out, err := installPackageSourceCtx(ctx, id, source, "")
 		return singleImportInstallDoneMsg{output: out, err: err, index: index}
 	}
 }

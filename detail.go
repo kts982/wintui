@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -20,11 +21,31 @@ type packageDetailMsg struct {
 	err    error
 }
 
+type packageVersionsMsg struct {
+	pkgID    string
+	source   string
+	versions []string
+	err      error
+}
+
+type detailVersionSelectedMsg struct {
+	pkgID   string
+	source  string
+	version string
+}
+
 // fetchDetail returns a Cmd that fetches package details async.
 func fetchDetail(id, source string) tea.Cmd {
 	return func() tea.Msg {
 		d, err := showPackage(id, source)
 		return packageDetailMsg{detail: d, err: err}
+	}
+}
+
+func fetchVersions(id, source string) tea.Cmd {
+	return func() tea.Msg {
+		versions, err := showPackageVersionsCtx(context.Background(), id, source)
+		return packageVersionsMsg{pkgID: id, source: source, versions: versions, err: err}
 	}
 }
 
@@ -43,11 +64,20 @@ const (
 )
 
 type detailPanel struct {
-	state   detailState
-	detail  PackageDetail
-	spinner spinner.Model
-	scroll  int
-	err     error
+	state              detailState
+	detail             PackageDetail
+	spinner            spinner.Model
+	scroll             int
+	err                error
+	pkgID              string
+	source             string
+	allowVersionSelect bool
+	selectedVersion    string
+	versions           []string
+	versionCursor      int
+	versionsLoading    bool
+	selectingVersion   bool
+	versionErr         string
 }
 
 func newDetailPanel() detailPanel {
@@ -59,9 +89,22 @@ func newDetailPanel() detailPanel {
 
 // show starts loading details for a package.
 func (p detailPanel) show(pkgID, source string) (detailPanel, tea.Cmd) {
+	return p.showWithVersion(pkgID, source, "", false)
+}
+
+func (p detailPanel) showWithVersion(pkgID, source, selectedVersion string, allowVersionSelect bool) (detailPanel, tea.Cmd) {
 	p.state = detailLoading
 	p.scroll = 0
 	p.err = nil
+	p.pkgID = pkgID
+	p.source = source
+	p.allowVersionSelect = allowVersionSelect
+	p.selectedVersion = selectedVersion
+	p.versions = nil
+	p.versionCursor = 0
+	p.versionsLoading = false
+	p.selectingVersion = false
+	p.versionErr = ""
 	return p, tea.Batch(p.spinner.Tick, fetchDetail(pkgID, source))
 }
 
@@ -88,7 +131,80 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 		}
 		return p, nil, true
 
+	case packageVersionsMsg:
+		if msg.pkgID != p.pkgID || msg.source != p.source {
+			return p, nil, false
+		}
+		if !p.versionsLoading {
+			return p, nil, true
+		}
+		p.versionsLoading = false
+		if msg.err != nil {
+			p.versionErr = msg.err.Error()
+			return p, nil, true
+		}
+		p.versions = msg.versions
+		p.versionCursor = 0
+		if p.selectedVersion != "" {
+			for i, version := range p.versions {
+				if version == p.selectedVersion {
+					p.versionCursor = i
+					break
+				}
+			}
+		}
+		p.selectingVersion = len(p.versions) > 0
+		if len(p.versions) == 0 {
+			p.versionErr = "No explicit versions reported for this package."
+		} else {
+			p.versionErr = ""
+		}
+		return p, nil, true
+
 	case tea.KeyPressMsg:
+		if p.versionsLoading {
+			if msg.String() == "esc" {
+				p.versionsLoading = false
+				return p, nil, true
+			}
+		}
+
+		if p.selectingVersion {
+			switch msg.String() {
+			case "up", "k":
+				if p.versionCursor > 0 {
+					p.versionCursor--
+				}
+				return p, nil, true
+			case "down", "j":
+				if p.versionCursor < len(p.versions)-1 {
+					p.versionCursor++
+				}
+				return p, nil, true
+			case "enter":
+				if len(p.versions) == 0 {
+					return p, nil, true
+				}
+				p.selectedVersion = p.versions[p.versionCursor]
+				p.selectingVersion = false
+				p.scroll = 0
+				return p, func() tea.Msg {
+					return detailVersionSelectedMsg{pkgID: p.pkgID, source: p.source, version: p.selectedVersion}
+				}, true
+			case "c":
+				p.selectedVersion = ""
+				p.selectingVersion = false
+				p.scroll = 0
+				p.versionErr = ""
+				return p, func() tea.Msg {
+					return detailVersionSelectedMsg{pkgID: p.pkgID, source: p.source, version: ""}
+				}, true
+			case "esc":
+				p.selectingVersion = false
+				return p, nil, true
+			}
+		}
+
 		switch msg.String() {
 		case "esc":
 			p.state = detailHidden
@@ -106,10 +222,28 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 				openURL(p.detail.Homepage)
 			}
 			return p, nil, true
+		case "v":
+			if p.state == detailReady && p.allowVersionSelect {
+				p.versionErr = ""
+				if len(p.versions) > 0 {
+					p.selectingVersion = true
+					return p, nil, true
+				}
+				p.versionsLoading = true
+				return p, tea.Batch(p.spinner.Tick, fetchVersions(p.pkgID, p.source)), true
+			}
+		case "c":
+			if p.state == detailReady && p.allowVersionSelect && p.selectedVersion != "" {
+				p.selectedVersion = ""
+				p.versionErr = ""
+				return p, func() tea.Msg {
+					return detailVersionSelectedMsg{pkgID: p.pkgID, source: p.source, version: ""}
+				}, true
+			}
 		}
 
 	case spinner.TickMsg:
-		if p.state == detailLoading {
+		if p.state == detailLoading || p.versionsLoading {
 			var cmd tea.Cmd
 			p.spinner, cmd = p.spinner.Update(msg)
 			return p, cmd, true
@@ -124,6 +258,20 @@ func (p detailPanel) helpKeys() []key.Binding {
 	case detailLoading, detailError:
 		return []key.Binding{keyEsc}
 	case detailReady:
+		if p.versionsLoading {
+			return []key.Binding{keyEsc}
+		}
+		if p.selectingVersion {
+			return []key.Binding{keyUp, keyDown, keyEnter, keyUseLatest, keyEsc}
+		}
+		if p.allowVersionSelect {
+			bindings := []key.Binding{keyUp, keyDown, keyVersion}
+			if p.selectedVersion != "" {
+				bindings = append(bindings, keyUseLatest)
+			}
+			bindings = append(bindings, keyOpen, keyEsc)
+			return bindings
+		}
 		return []key.Binding{keyUp, keyDown, keyOpen, keyEsc}
 	}
 	return nil
@@ -155,6 +303,20 @@ func (p detailPanel) view(width, height int) string {
 		return indentBlock(panelStyle.Render(inner), 2)
 
 	case detailReady:
+		if p.versionsLoading {
+			title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.detail.Name)
+			if p.pkgID != "" {
+				title += "  " + helpStyle.Render(p.pkgID)
+			}
+			inner := "  " + title + "\n\n" +
+				fmt.Sprintf("  %s Loading available versions...", p.spinner.View()) + "\n\n" +
+				helpStyle.Render("  esc back")
+			return indentBlock(panelStyle.Render(inner), 2)
+		}
+		if p.selectingVersion {
+			return p.renderVersionPicker(panelStyle, height)
+		}
+
 		d := p.detail
 
 		// Title
@@ -176,6 +338,13 @@ func (p detailPanel) view(width, height int) string {
 
 		addField("Version", d.Version)
 		addField("Source", d.Source)
+		if p.allowVersionSelect {
+			targetVersion := "latest"
+			if p.selectedVersion != "" {
+				targetVersion = p.selectedVersion
+			}
+			addField("Target Version", targetVersion)
+		}
 		addField("Publisher", d.Publisher)
 		addField("License", d.License)
 		addField("Moniker", d.Moniker)
@@ -239,15 +408,72 @@ func (p detailPanel) view(width, height int) string {
 		// Help
 		b.WriteString("\n")
 		help := "  ↑↓ scroll • esc close"
-		if d.Homepage != "" {
+		if p.allowVersionSelect {
+			help = "  ↑↓ scroll • v choose version • esc close"
+			if p.selectedVersion != "" {
+				help = "  ↑↓ scroll • v change version • c latest • esc close"
+			}
+			if d.Homepage != "" {
+				help += " • o open homepage"
+			}
+		} else if d.Homepage != "" {
 			help = "  ↑↓ scroll • o open homepage • esc close"
 		}
 		b.WriteString(helpStyle.Render(help))
+		if p.versionErr != "" {
+			b.WriteString("\n" + warnStyle.Render("  "+p.versionErr))
+		}
 
 		return indentBlock(panelStyle.Render(b.String()), 2)
 	}
 
 	return ""
+}
+
+func (p detailPanel) renderVersionPicker(panelStyle lipgloss.Style, height int) string {
+	var b strings.Builder
+	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.detail.Name)
+	if p.pkgID != "" {
+		title += "  " + helpStyle.Render(p.pkgID)
+	}
+	b.WriteString("  " + title + "\n\n")
+
+	targetVersion := "latest"
+	if p.selectedVersion != "" {
+		targetVersion = p.selectedVersion
+	}
+	b.WriteString("  " + infoStyle.Render("Choose Target Version") + "\n")
+	b.WriteString("  " + helpStyle.Render("Current: "+targetVersion) + "\n\n")
+
+	if len(p.versions) == 0 {
+		b.WriteString("  " + warnStyle.Render("No versions available for selection.") + "\n\n")
+		b.WriteString(helpStyle.Render("  esc back"))
+		return indentBlock(panelStyle.Render(b.String()), 2)
+	}
+
+	maxVisible := height - 10
+	if maxVisible < 5 {
+		maxVisible = 5
+	}
+	start, end := scrollWindow(p.versionCursor, len(p.versions), maxVisible)
+	for i := start; i < end; i++ {
+		cursor := cursorBlankStr
+		style := itemStyle
+		if i == p.versionCursor {
+			cursor = cursorStr
+			style = itemActiveStyle
+		}
+		version := p.versions[i]
+		suffix := ""
+		if version == p.selectedVersion {
+			suffix = helpStyle.Render("  [selected]")
+		}
+		fmt.Fprintf(&b, "  %s%s%s\n", cursor, style.Render(version), suffix)
+	}
+
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("  ↑↓ choose • enter select • c latest • esc back"))
+	return indentBlock(panelStyle.Render(b.String()), 2)
 }
 
 // ── Open URL ───────────────────────────────────────────────────────

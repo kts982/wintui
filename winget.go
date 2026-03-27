@@ -33,6 +33,10 @@ func (p Package) Description() string {
 	return fmt.Sprintf("%s  %s", p.ID, p.Version)
 }
 
+func packageSourceKey(id, source string) string {
+	return id + "\x1f" + source
+}
+
 // ── winget command execution ───────────────────────────────────────
 
 // runWingetCtx runs a winget command with a cancellable context.
@@ -107,14 +111,16 @@ func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
 
 // ── High-level action operations (mutating, need package agreements) ─
 
-func installCommandArgs(id, source string) []string {
+func installCommandArgs(id, source, version string) []string {
 	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
+	args = appendVersionArg(args, version)
 	args = append(args, appSettings.BuildInstallArgs()...)
 	return appendPreferredSourceArg(args, source)
 }
 
-func upgradeCommandArgs(id, source string) []string {
+func upgradeCommandArgs(id, source, version string) []string {
 	args := []string{"upgrade", "--id", id, "--exact", "--accept-package-agreements"}
+	args = appendVersionArg(args, version)
 	args = append(args, appSettings.BuildInstallArgs()...)
 	return appendPreferredSourceArg(args, source)
 }
@@ -148,8 +154,8 @@ func uninstallCommandArgs(pkg Package, includePurge bool) []string {
 	return append(args, appSettings.BuildUninstallArgs(includePurge)...)
 }
 
-func installPackageSourceCtx(ctx context.Context, id, source string) (string, error) {
-	args := installCommandArgs(id, source)
+func installPackageSourceCtx(ctx context.Context, id, source, version string) (string, error) {
+	args := installCommandArgs(id, source, version)
 	return runWingetActionCtx(ctx, args...)
 }
 
@@ -193,6 +199,18 @@ func showPackageCtx(ctx context.Context, id, source string) (PackageDetail, erro
 		detail.Source = source
 	}
 	return detail, nil
+}
+
+func showPackageVersionsCtx(ctx context.Context, id, source string) ([]string, error) {
+	args := []string{"show", "--id", id, "--exact", "--versions"}
+	if source == "winget" || source == "msstore" {
+		args = append(args, "--source", source)
+	}
+	out, err := runWingetCtx(ctx, args...)
+	if err != nil && len(out) == 0 {
+		return nil, err
+	}
+	return parseWingetVersions(out), nil
 }
 
 // ── Error translation ──────────────────────────────────────────────
@@ -369,6 +387,14 @@ type PackageDetail struct {
 	Moniker       string
 }
 
+func appendVersionArg(args []string, version string) []string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return args
+	}
+	return append(args, "--version", version)
+}
+
 func parseWingetShow(output string) PackageDetail {
 	var d PackageDetail
 
@@ -441,6 +467,27 @@ func parseWingetShow(output string) PackageDetail {
 	}
 
 	return d
+}
+
+func parseWingetVersions(output string) []string {
+	lines := splitWingetOutputLines(output)
+	var versions []string
+	inVersions := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "Found ") || trimmed == "Version" {
+			continue
+		}
+		if strings.Trim(trimmed, "-") == "" {
+			inVersions = true
+			continue
+		}
+		if !inVersions {
+			continue
+		}
+		versions = append(versions, trimmed)
+	}
+	return versions
 }
 
 // ── winget table parser ────────────────────────────────────────────
@@ -633,13 +680,13 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 	return outChan, errChan
 }
 
-func installPackageStreamCtx(ctx context.Context, id, source string) (<-chan string, <-chan error) {
-	args := installCommandArgs(id, source)
+func installPackageStreamCtx(ctx context.Context, id, source, version string) (<-chan string, <-chan error) {
+	args := installCommandArgs(id, source, version)
 	return runWingetStreamCtx(ctx, false, args...)
 }
 
-func upgradePackageStreamCtx(ctx context.Context, id, source string) (<-chan string, <-chan error) {
-	args := upgradeCommandArgs(id, source)
+func upgradePackageStreamCtx(ctx context.Context, id, source, version string) (<-chan string, <-chan error) {
+	args := upgradeCommandArgs(id, source, version)
 	return runWingetStreamCtx(ctx, false, args...)
 }
 

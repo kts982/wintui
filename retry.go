@@ -15,10 +15,11 @@ const (
 )
 
 type retryRequest struct {
-	Op     retryOp
-	ID     string
-	Name   string
-	Source string
+	Op      retryOp
+	ID      string
+	Name    string
+	Source  string
+	Version string
 }
 
 func (r retryRequest) valid() bool {
@@ -40,6 +41,7 @@ func parseStartupArgs(args []string) (bool, *retryRequest, error) {
 	retryID := fs.String("id", "", "")
 	retryName := fs.String("name", "", "")
 	retrySource := fs.String("source", "", "")
+	retryVersion := fs.String("package-version", "", "")
 
 	if err := fs.Parse(args); err != nil {
 		return false, nil, err
@@ -52,10 +54,11 @@ func parseStartupArgs(args []string) (bool, *retryRequest, error) {
 	}
 
 	req := &retryRequest{
-		Op:     retryOp(*retryOpVal),
-		ID:     *retryID,
-		Name:   *retryName,
-		Source: *retrySource,
+		Op:      retryOp(*retryOpVal),
+		ID:      *retryID,
+		Name:    *retryName,
+		Source:  *retrySource,
+		Version: *retryVersion,
 	}
 	if !req.valid() {
 		return false, nil, fmt.Errorf("invalid retry request")
