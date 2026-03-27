@@ -36,6 +36,7 @@ var keyUninstall = key.NewBinding(
 type packagesScreen struct {
 	state         packagesState
 	table         table.Model
+	tableWidth    int
 	spinner       spinner.Model
 	progress      progressBar
 	packages      []Package
@@ -82,6 +83,7 @@ func newPackagesScreen() packagesScreen {
 	return packagesScreen{
 		state:      packagesLoading,
 		selected:   make(map[string]bool),
+		tableWidth: packagesTableWidth(80),
 		spinner:    sp,
 		progress:   newProgressBar(50),
 		detail:     newDetailPanel(),
@@ -155,6 +157,18 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		newWidth := packagesTableWidth(msg.Width)
+		if newWidth != s.tableWidth {
+			s.tableWidth = newWidth
+			if s.state == packagesReady {
+				cursor := s.table.Cursor()
+				s.rebuildTable()
+				s.table.SetCursor(clampTableCursor(cursor, len(s.table.Rows())))
+			}
+		}
+		return s, nil
+
 	case tea.KeyPressMsg:
 		// Filter input mode
 		if s.filter.active {
@@ -351,7 +365,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.packages = deduplicatePackages(msg.packages)
 		s.selected = make(map[string]bool)
 		filtered := s.filter.filterPackages(s.packages)
-		s.table = buildSelectableTable(filtered, s.selected, 120, 30)
+		s.table = buildSelectableTable(filtered, s.selected, s.tableWidth, 30)
 		s.state = packagesReady
 		return s, nil
 
@@ -490,7 +504,7 @@ func (s packagesScreen) filteredPkgs() []Package {
 
 func (s *packagesScreen) rebuildTable() {
 	filtered := s.filter.filterPackages(s.packages)
-	s.table = buildSelectableTable(filtered, s.selected, 120, 30)
+	s.table = buildSelectableTable(filtered, s.selected, s.tableWidth, 30)
 }
 
 func (s packagesScreen) reload() (packagesScreen, tea.Cmd) {
@@ -794,8 +808,8 @@ func buildSelectableTable(pkgs []Package, selected map[string]bool, width, heigh
 	updW := 3 // "↑" indicator column
 
 	// Determine which optional columns fit
-	showSource := usable >= 90
-	showUpdate := upgrades != nil && usable >= 60
+	showSource := usable >= 88
+	showUpdate := upgrades != nil && usable >= 58
 
 	// Reserve space for fixed columns
 	reserved := checkW
@@ -809,9 +823,7 @@ func buildSelectableTable(pkgs []Package, selected map[string]bool, width, heigh
 	}
 
 	remaining := usable - reserved
-	nameW := remaining * 30 / 100
-	idW := remaining * 40 / 100
-	verW := remaining - nameW - idW
+	nameW, idW, verW := responsiveInstalledColumnWidths(remaining)
 
 	var columns []table.Column
 	columns = append(columns, table.Column{Title: "     ", Width: checkW})
@@ -869,6 +881,60 @@ func buildSelectableTable(pkgs []Package, selected map[string]bool, width, heigh
 		Bold(false)
 	t.SetStyles(st)
 	return t
+}
+
+func packagesTableWidth(screenWidth int) int {
+	width := screenWidth - 4
+	if width < 60 {
+		return 60
+	}
+	return width
+}
+
+func responsiveInstalledColumnWidths(remaining int) (nameW, idW, verW int) {
+	const (
+		minName = 12
+		minID   = 18
+		minVer  = 10
+	)
+
+	base := minName + minID + minVer
+	if remaining <= base {
+		return minName, minID, minVer
+	}
+
+	extra := remaining - base
+	nameW = minName + extra*35/100
+	idW = minID + extra*45/100
+	verW = remaining - nameW - idW
+	if verW < minVer {
+		deficit := minVer - verW
+		steal := deficit / 2
+		if idW-minID > steal {
+			idW -= steal
+		}
+		if nameW-minName > deficit-steal {
+			nameW -= deficit - steal
+		}
+		verW = remaining - nameW - idW
+		if verW < minVer {
+			verW = minVer
+		}
+	}
+	return nameW, idW, verW
+}
+
+func clampTableCursor(cursor, rowCount int) int {
+	if rowCount <= 0 {
+		return 0
+	}
+	if cursor < 0 {
+		return 0
+	}
+	if cursor >= rowCount {
+		return rowCount - 1
+	}
+	return cursor
 }
 
 func (s packagesScreen) helpKeys() []key.Binding {

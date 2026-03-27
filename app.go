@@ -258,12 +258,17 @@ func (a app) switchTab(idx int) (app, tea.Cmd) {
 	}
 	a.activeTab = idx
 	id := tabs[idx].id
-	if _, ok := a.screens[id]; ok {
-		return a, nil
+	if s, ok := a.screens[id]; ok {
+		var sizeCmd tea.Cmd
+		s, sizeCmd = a.applyCurrentSize(id, s)
+		a.screens[id] = s
+		return a, sizeCmd
 	}
 	s := createScreen(id)
+	var sizeCmd tea.Cmd
+	s, sizeCmd = a.applyCurrentSize(id, s)
 	a.screens[id] = s
-	return a, a.wrapScreenCmd(id, s.init())
+	return a, tea.Batch(sizeCmd, a.wrapScreenCmd(id, s.init()))
 }
 
 func (a app) View() tea.View {
@@ -406,11 +411,17 @@ func (a app) handleSwitchScreen(msg switchScreenMsg) (app, tea.Cmd) {
 
 	id := screenID(msg)
 	if _, ok := a.screens[id]; ok {
-		return a, nil
+		s := a.screens[id]
+		var sizeCmd tea.Cmd
+		s, sizeCmd = a.applyCurrentSize(id, s)
+		a.screens[id] = s
+		return a, sizeCmd
 	}
 	s := createScreen(id)
+	var sizeCmd tea.Cmd
+	s, sizeCmd = a.applyCurrentSize(id, s)
 	a.screens[id] = s
-	return a, a.wrapScreenCmd(id, s.init())
+	return a, tea.Batch(sizeCmd, a.wrapScreenCmd(id, s.init()))
 }
 
 func (a app) handlePackageDataChanged(msg packageDataChangedMsg) (app, tea.Cmd) {
@@ -422,8 +433,10 @@ func (a app) handlePackageDataChanged(msg packageDataChangedMsg) (app, tea.Cmd) 
 		}
 		if id == active {
 			s := createScreen(id)
+			var sizeCmd tea.Cmd
+			s, sizeCmd = a.applyCurrentSize(id, s)
 			a.screens[id] = s
-			cmds = append(cmds, a.wrapScreenCmd(id, s.init()))
+			cmds = append(cmds, sizeCmd, a.wrapScreenCmd(id, s.init()))
 			continue
 		}
 		delete(a.screens, id)
@@ -433,14 +446,24 @@ func (a app) handlePackageDataChanged(msg packageDataChangedMsg) (app, tea.Cmd) 
 
 func (a app) updateScreen(id screenID, msg tea.Msg) (app, tea.Cmd) {
 	s, ok := a.screens[id]
+	var preCmd tea.Cmd
 	if !ok {
 		s = createScreen(id)
+		s, preCmd = a.applyCurrentSize(id, s)
 		a.screens[id] = s
 	}
 
 	next, cmd := s.update(msg)
 	a.screens[id] = next
-	return a, a.wrapScreenCmd(id, cmd)
+	return a, tea.Batch(preCmd, a.wrapScreenCmd(id, cmd))
+}
+
+func (a app) applyCurrentSize(id screenID, s screen) (screen, tea.Cmd) {
+	if a.width <= 0 || a.height <= 0 {
+		return s, nil
+	}
+	next, cmd := s.update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+	return next, a.wrapScreenCmd(id, cmd)
 }
 
 func (a app) wrapScreenCmd(id screenID, cmd tea.Cmd) tea.Cmd {

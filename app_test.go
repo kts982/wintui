@@ -187,3 +187,23 @@ func TestRenderLogoUsesFullAsciiLogoOnLargeTerminals(t *testing.T) {
 		t.Fatalf("renderLogo() = %q, want full ASCII logo", got)
 	}
 }
+
+func TestSwitchTabAppliesCurrentWindowSizeToNewPackagesScreen(t *testing.T) {
+	a := newApp(nil)
+	a.width = 140
+	a.height = 40
+
+	var cmd tea.Cmd
+	a, cmd = a.switchTab(1) // Installed
+	if cmd == nil {
+		t.Fatal("expected init command when first switching to Installed tab")
+	}
+
+	s, ok := a.activeScreen().(packagesScreen)
+	if !ok {
+		t.Fatalf("active screen = %T, want packagesScreen", a.activeScreen())
+	}
+	if s.tableWidth != packagesTableWidth(140) {
+		t.Fatalf("tableWidth = %d, want %d", s.tableWidth, packagesTableWidth(140))
+	}
+}
