@@ -245,6 +245,21 @@ func TestPackagesFilteredEmptyHelpHidesRowActions(t *testing.T) {
 	}
 }
 
+func TestPackagesDoneHelpIncludesRefreshAndTabs(t *testing.T) {
+	s := newPackagesScreen()
+	s.state = packagesDone
+
+	got := bindingHelps(s.helpKeys())
+	want := []key.Help{
+		keyRefresh.Help(),
+		keyTabs.Help(),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("packages done help = %#v, want %#v", got, want)
+	}
+}
+
 func TestUpgradeFilteredHelpMatchesAvailableActions(t *testing.T) {
 	s := newUpgradeScreen()
 	s.state = upgradeSelecting

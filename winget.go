@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // Package holds parsed package info from winget output.
@@ -79,10 +81,6 @@ func getUpgradeableCtx(ctx context.Context) ([]Package, error) {
 		return nil, err
 	}
 	return parseWingetTable(out), nil
-}
-
-func getInstalled() ([]Package, error) {
-	return getInstalledCtx(context.Background())
 }
 
 func getInstalledCtx(ctx context.Context) ([]Package, error) {
@@ -172,16 +170,6 @@ func shouldRetryUninstallWithoutPurge(err error, output string) bool {
 		}
 	}
 	return false
-}
-
-func uninstallPackageCtx(ctx context.Context, pkg Package) (string, error) {
-	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall)
-	out, err := runWingetActionCtx(ctx, args...)
-	if shouldRetryUninstallWithoutPurge(err, out) {
-		args = uninstallCommandArgs(pkg, false)
-		return runWingetActionCtx(ctx, args...)
-	}
-	return out, err
 }
 
 func showPackage(id, source string) (PackageDetail, error) {
@@ -566,6 +554,16 @@ func extractPackage(line string, cols []colPos) Package {
 
 // -- Streaming command execution ------------------------------------
 
+func awaitStream(outChan <-chan string, errChan <-chan error) tea.Cmd {
+	return func() tea.Msg {
+		line, ok := <-outChan
+		if !ok {
+			return streamDoneMsg{err: <-errChan}
+		}
+		return streamMsg(line)
+	}
+}
+
 func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string) (<-chan string, <-chan error) {
 	outChan := make(chan string)
 	errChan := make(chan error, 1)
@@ -643,4 +641,50 @@ func installPackageStreamCtx(ctx context.Context, id, source string) (<-chan str
 func upgradePackageStreamCtx(ctx context.Context, id, source string) (<-chan string, <-chan error) {
 	args := upgradeCommandArgs(id, source)
 	return runWingetStreamCtx(ctx, false, args...)
+}
+
+func uninstallPackageStreamCtx(ctx context.Context, pkg Package) (<-chan string, <-chan error) {
+	outChan := make(chan string)
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer close(outChan)
+		defer close(errChan)
+
+		runAttempt := func(includePurge bool) (string, error, bool) {
+			streamOut, streamErr := runWingetStreamCtx(ctx, false, uninstallCommandArgs(pkg, includePurge)...)
+			var lines []string
+			for line := range streamOut {
+				lines = append(lines, line)
+				select {
+				case outChan <- line:
+				case <-ctx.Done():
+					errChan <- fmt.Errorf("cancelled")
+					return "", fmt.Errorf("cancelled"), true
+				}
+			}
+			err := <-streamErr
+			return strings.Join(lines, "\n"), err, false
+		}
+
+		output, err, aborted := runAttempt(appSettings.PurgeOnUninstall)
+		if aborted {
+			return
+		}
+		if shouldRetryUninstallWithoutPurge(err, output) {
+			select {
+			case outChan <- "Retrying without purge...":
+			case <-ctx.Done():
+				errChan <- fmt.Errorf("cancelled")
+				return
+			}
+			_, err, aborted = runAttempt(false)
+			if aborted {
+				return
+			}
+		}
+		errChan <- err
+	}()
+
+	return outChan, errChan
 }

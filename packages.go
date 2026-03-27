@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
 
 	tea "charm.land/bubbletea/v2"
@@ -39,7 +40,7 @@ type packagesScreen struct {
 	progress      progressBar
 	packages      []Package
 	selected      map[string]bool // selected by package ID
-	count         int
+	output        string
 	err           error
 	detail        detailPanel
 	importFlow    importModel
@@ -50,7 +51,18 @@ type packagesScreen struct {
 	cancel        context.CancelFunc
 	launchRetry   *retryRequest
 	retryAction   *retryRequest
-	attemptAction *retryRequest
+	vp            viewport.Model
+	outLines      []string
+	currentLines  []string
+	uninstallOut  <-chan string
+	uninstallErr  <-chan error
+	batchPackages []Package
+	batchOutputs  []string
+	batchErrs     []error
+	batchErr      error
+	batchCurrent  int
+	batchTotal    int
+	batchName     string
 	flashSeq      int
 }
 
@@ -58,10 +70,14 @@ type packagesFlashClearMsg struct {
 	seq int
 }
 
+type startPackagesUninstallMsg struct{}
+
 func newPackagesScreen() packagesScreen {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
+	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(10))
+	vp.Style = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(accent)
 	ctx, cancel := context.WithCancel(context.Background())
 	return packagesScreen{
 		state:      packagesLoading,
@@ -73,22 +89,26 @@ func newPackagesScreen() packagesScreen {
 		filter:     newListFilter(),
 		ctx:        ctx,
 		cancel:     cancel,
+		vp:         vp,
 	}
 }
 
 func newPackagesScreenWithRetry(req retryRequest) packagesScreen {
 	s := newPackagesScreen()
 	s.state = packagesUninstalling
+	s.batchPackages = []Package{{Name: req.Name, ID: req.ID, Source: req.Source}}
+	s.batchTotal = 1
+	s.batchName = req.ID
+	s.progress.active = false
+	s.progress.percent = 0
 	s.launchRetry = &req
 	return s
 }
 
 func (s packagesScreen) init() tea.Cmd {
 	if s.launchRetry != nil {
-		req := *s.launchRetry
-		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-			out, err := uninstallPackageCtx(s.ctx, Package{Name: req.Name, ID: req.ID, Source: req.Source})
-			return commandDoneMsg{output: out, err: err}
+		return tea.Batch(s.spinner.Tick, func() tea.Msg {
+			return startPackagesUninstallMsg{}
 		})
 	}
 	if pkgs, ok := cache.getInstalled(); ok {
@@ -181,9 +201,12 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					s.err = fmt.Errorf("cancelled")
 				}
 			} else {
-				s.state = packagesReady
-				s.statusMsg = warnStyle.Render("Cancelled")
 				s.progress = s.progress.stop()
+				s.retryAction = nil
+				s.err = fmt.Errorf("cancelled")
+				s.output = formatUninstallResults(s.batchPackages[:len(s.batchErrs)], s.batchErrs, s.batchOutputs)
+				s.selected = make(map[string]bool)
+				s.state = packagesDone
 			}
 			return s, nil
 		}
@@ -254,31 +277,42 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.table, cmd = s.table.Update(msg)
 			return s, cmd
 
-		case packagesEmpty, packagesDone:
+		case packagesEmpty:
+		case packagesDone:
+			switch msg.String() {
+			case "ctrl+e":
+				if s.retryAction != nil && !isElevated() {
+					if err := relaunchElevatedRetry(*s.retryAction); err != nil {
+						s.err = fmt.Errorf("failed to relaunch elevated: %w", err)
+						return s, nil
+					}
+					return s, tea.Quit
+				}
+			}
 		case packagesConfirmUninstall:
 			switch msg.String() {
 			case "y", "Y":
 				s.state = packagesUninstalling
-				s.progress, _ = s.progress.start()
 				ctx, cancel := context.WithCancel(context.Background())
+				s.ctx = ctx
 				s.cancel = cancel
-				selected := s.selectedPackages()
-				s.attemptAction = nil
-				if len(selected) == 1 {
-					s.attemptAction = &retryRequest{Op: retryOpUninstall, ID: selected[0].ID, Name: selected[0].Name, Source: selected[0].Source}
-				}
-				return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-					var outputs []string
-					var lastErr error
-					for _, pkg := range selected {
-						out, err := uninstallPackageCtx(ctx, pkg)
-						outputs = append(outputs, out)
-						if err != nil {
-							lastErr = err
-						}
-					}
-					return commandDoneMsg{output: strings.Join(outputs, "\n"), err: lastErr}
-				})
+				s.retryAction = nil
+				s.output = ""
+				s.err = nil
+				s.statusMsg = ""
+				s.batchPackages = s.selectedPackages()
+				s.batchTotal = len(s.batchPackages)
+				s.batchCurrent = 0
+				s.batchOutputs = nil
+				s.batchErrs = nil
+				s.batchErr = nil
+				s.batchName = ""
+				s.outLines = nil
+				s.currentLines = nil
+				s.vp.SetContent("")
+				s.progress.active = false
+				s.progress.percent = 0
+				return s, tea.Batch(s.spinner.Tick, func() tea.Msg { return startPackagesUninstallMsg{} })
 			case "n", "N", "esc":
 				s.state = packagesReady
 			}
@@ -315,51 +349,67 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		s.packages = deduplicatePackages(msg.packages)
-		s.count = len(s.packages)
 		s.selected = make(map[string]bool)
 		filtered := s.filter.filterPackages(s.packages)
 		s.table = buildSelectableTable(filtered, s.selected, 120, 30)
 		s.state = packagesReady
 		return s, nil
 
-	case commandDoneMsg:
+	case startPackagesUninstallMsg:
 		if s.state != packagesUninstalling {
 			return s, nil
 		}
-		s.progress = s.progress.stop()
-		cache.invalidate()
-		count := s.selectedCount()
-		s.retryAction = nil
-		if msg.err != nil {
-			if requiresElevation(msg.err, msg.output) {
-				s.statusMsg = errorStyle.Render("Uninstall blocked: administrator privileges required. " + elevationRetryHint())
-				if s.attemptAction != nil && !isElevated() {
-					s.retryAction = s.attemptAction
-				}
-			} else {
-				s.statusMsg = errorStyle.Render("Uninstall error: " + msg.err.Error())
-			}
-		} else {
-			s.statusMsg = successStyle.Render(fmt.Sprintf("%d package(s) uninstalled!", count))
+		if s.batchTotal == 0 {
+			return s, nil
 		}
-		s.flashSeq++
+		return s, s.startUninstallStream(s.batchCurrent)
+
+	case streamMsg:
+		if s.state != packagesUninstalling {
+			return s, nil
+		}
+		line := string(msg)
+		s.currentLines = append(s.currentLines, line)
+		s.outLines = append(s.outLines, line)
+		s.vp.SetContent(strings.Join(s.outLines, "\n"))
+		s.vp.GotoBottom()
+		return s, awaitStream(s.uninstallOut, s.uninstallErr)
+
+	case streamDoneMsg:
+		if s.state != packagesUninstalling {
+			return s, nil
+		}
+		output := strings.Join(s.currentLines, "\n")
+		s.batchOutputs = append(s.batchOutputs, output)
+		s.batchErrs = append(s.batchErrs, msg.err)
+		if msg.err != nil {
+			s.batchErr = msg.err
+		}
+		completed := s.batchCurrent + 1
+		if s.batchTotal > 0 {
+			s.progress.percent = float64(completed) / float64(s.batchTotal)
+		}
+		if completed < s.batchTotal {
+			return s, s.startUninstallStream(completed)
+		}
+
+		s.progress = s.progress.stop()
+		s.output = formatUninstallResults(s.batchPackages, s.batchErrs, s.batchOutputs)
+		s.err = s.batchErr
+		s.state = packagesDone
+		s.retryAction = nil
+		if s.batchTotal == 1 && s.batchErr != nil && len(s.batchOutputs) == 1 &&
+			requiresElevation(s.batchErr, s.batchOutputs[0]) && !isElevated() {
+			pkg := s.batchPackages[0]
+			s.retryAction = &retryRequest{Op: retryOpUninstall, ID: pkg.ID, Name: pkg.Name, Source: pkg.Source}
+		}
 		s.selected = make(map[string]bool)
-		s.attemptAction = nil
-		// Reload the list
-		s.state = packagesLoading
-		return s, tea.Batch(
-			s.spinner.Tick,
-			tickProgress(),
-			clearPackagesFlashAfter(s.flashSeq, 8*time.Second),
-			func() tea.Msg { return packageDataChangedMsg{origin: screenPackages} },
-			func() tea.Msg {
-				pkgs, err := getInstalled()
-				if err == nil {
-					cache.setInstalled(pkgs)
-				}
-				return packagesLoadedMsg{packages: pkgs, err: err}
-			},
-		)
+		successCount, _ := batchResultCounts(s.batchErrs)
+		if successCount > 0 {
+			cache.invalidate()
+			return s, func() tea.Msg { return packageDataChangedMsg{origin: screenPackages} }
+		}
+		return s, nil
 
 	case exportDoneMsg:
 		if msg.err != nil {
@@ -448,7 +498,19 @@ func (s packagesScreen) reload() (packagesScreen, tea.Cmd) {
 	s.state = packagesLoading
 	s.exportMsg = ""
 	s.statusMsg = ""
+	s.output = ""
+	s.err = nil
 	s.retryAction = nil
+	s.batchPackages = nil
+	s.batchOutputs = nil
+	s.batchErrs = nil
+	s.batchErr = nil
+	s.batchCurrent = 0
+	s.batchTotal = 0
+	s.batchName = ""
+	s.outLines = nil
+	s.currentLines = nil
+	s.vp.SetContent("")
 	s.flashSeq++
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.progress, _ = s.progress.start()
@@ -459,6 +521,63 @@ func (s packagesScreen) reload() (packagesScreen, tea.Cmd) {
 		}
 		return packagesLoadedMsg{packages: pkgs, err: err}
 	})
+}
+
+func (s *packagesScreen) startUninstallStream(index int) tea.Cmd {
+	if index < 0 || index >= len(s.batchPackages) {
+		return nil
+	}
+	s.batchCurrent = index
+	pkg := s.batchPackages[index]
+	label := uninstallPackageLabel(pkg)
+	s.batchName = label
+	s.currentLines = nil
+	if len(s.outLines) > 0 {
+		s.outLines = append(s.outLines, "")
+	}
+	header := "== " + label
+	if pkg.ID != "" && pkg.ID != label {
+		header += " (" + pkg.ID + ")"
+	}
+	header += " =="
+	s.outLines = append(s.outLines, header)
+	s.vp.SetContent(strings.Join(s.outLines, "\n"))
+	s.vp.GotoBottom()
+	s.uninstallOut, s.uninstallErr = uninstallPackageStreamCtx(s.ctx, pkg)
+	return awaitStream(s.uninstallOut, s.uninstallErr)
+}
+
+func uninstallPackageLabel(pkg Package) string {
+	if pkg.Name != "" {
+		return pkg.Name
+	}
+	if pkg.ID != "" {
+		return pkg.ID
+	}
+	return "Package"
+}
+
+func formatUninstallResults(pkgs []Package, errs []error, outputs []string) string {
+	var b strings.Builder
+	for i, pkg := range pkgs {
+		if i >= len(errs) {
+			break
+		}
+		label := uninstallPackageLabel(pkg)
+		if errs[i] == nil {
+			b.WriteString(successStyle.Render("  ✓ ") + label + "\n")
+			continue
+		}
+		reason := errs[i].Error()
+		if requiresElevation(errs[i], outputs[i]) {
+			reason = "requires administrator privileges; retry from an elevated terminal"
+		} else if detail := extractFailReason(outputs[i]); detail != "" {
+			reason = detail
+		}
+		b.WriteString(errorStyle.Render("  ✗ ") + label + "\n")
+		b.WriteString("    " + helpStyle.Render(reason) + "\n")
+	}
+	return b.String()
 }
 
 func (s packagesScreen) selectedCount() int {
@@ -570,14 +689,77 @@ func (s packagesScreen) view(width, height int) string {
 		b.WriteString("\n  " + warnStyle.Render("Press y to confirm, n to cancel"))
 
 	case packagesUninstalling:
-		fmt.Fprintf(&b, "  %s Uninstalling...\n\n", s.spinner.View())
+		if s.batchTotal > 0 {
+			fmt.Fprintf(&b, "  %s Uninstalling %d of %d: %s\n\n",
+				s.spinner.View(), s.batchCurrent+1, s.batchTotal, s.batchName)
+		} else {
+			fmt.Fprintf(&b, "  %s Uninstalling...\n\n", s.spinner.View())
+		}
 		b.WriteString("  " + s.progress.view() + "\n")
+		s.vp.SetWidth(width - 8)
+		vpH := height - 12
+		if vpH < 5 {
+			vpH = 5
+		}
+		s.vp.SetHeight(vpH)
+		b.WriteString(indentBlock(s.vp.View(), 2) + "\n")
 
 	case packagesDone:
-		if s.statusMsg != "" {
-			b.WriteString("  " + s.statusMsg + "\n")
+		successCount, failCount := batchResultCounts(s.batchErrs)
+		if s.err != nil && successCount == 0 && failCount == 0 {
+			if strings.Contains(strings.ToLower(s.err.Error()), "cancelled") {
+				b.WriteString("  " + warnStyle.Render("Uninstall cancelled before any packages completed") + "\n\n")
+			} else {
+				b.WriteString("  " + warnStyle.Render("Uninstall failed before any packages completed") + "\n\n")
+			}
+		} else if s.batchTotal == 1 && failCount == 0 && len(s.batchPackages) == 1 {
+			pkg := s.batchPackages[0]
+			b.WriteString("  " + successStyle.Render(uninstallPackageLabel(pkg)+" uninstalled successfully") + "\n")
+			if pkg.ID != "" {
+				b.WriteString("  " + helpStyle.Render(pkg.ID) + "\n\n")
+			} else {
+				b.WriteString("\n")
+			}
+		} else if failCount > 0 {
+			b.WriteString("  " + warnStyle.Render(
+				fmt.Sprintf("Uninstall finished: %d succeeded, %d failed", successCount, failCount),
+			) + "\n")
+			if successCount > 0 {
+				b.WriteString("  " + helpStyle.Render(
+					fmt.Sprintf("%d package(s) were removed before the run completed.", successCount),
+				) + "\n")
+			}
+			if batchRequiresElevation(s.batchErrs, s.batchOutputs) {
+				b.WriteString("  " + helpStyle.Render("Some packages require administrator privileges.") + "\n")
+				b.WriteString("  " + helpStyle.Render(elevationRetryHint()) + "\n\n")
+			} else {
+				b.WriteString("\n")
+			}
+		} else {
+			b.WriteString("  " + successStyle.Render(
+				fmt.Sprintf("%d package(s) uninstalled successfully", successCount),
+			) + "\n\n")
 		}
-		b.WriteString("\n  " + helpStyle.Render("Press r to reload or tab to switch screens") + "\n")
+
+		if s.output != "" {
+			lines := strings.Split(s.output, "\n")
+			maxLines := height - 8
+			if maxLines < 5 {
+				maxLines = 5
+			}
+			if len(lines) > maxLines {
+				lines = lines[:maxLines]
+				lines = append(lines, helpStyle.Render("  ... (output truncated)"))
+			}
+			for _, line := range lines {
+				b.WriteString(line + "\n")
+			}
+		}
+		if s.retryAction != nil && !isElevated() {
+			b.WriteString("\n  " + helpStyle.Render("Press ctrl+e to retry elevated, r to reload, or tab to switch screens") + "\n")
+		} else {
+			b.WriteString("\n  " + helpStyle.Render("Press r to reload or tab to switch screens") + "\n")
+		}
 	}
 
 	return b.String()
@@ -699,7 +881,12 @@ func (s packagesScreen) helpKeys() []key.Binding {
 	switch s.state {
 	case packagesLoading, packagesUninstalling:
 		return []key.Binding{keyEscCancel}
-	case packagesEmpty, packagesDone:
+	case packagesEmpty:
+		return []key.Binding{keyRefresh, keyTabs}
+	case packagesDone:
+		if s.retryAction != nil && !isElevated() {
+			return []key.Binding{keyRetryElevated, keyRefresh, keyTabs}
+		}
 		return []key.Binding{keyRefresh, keyTabs}
 	case packagesReady:
 		if s.filter.active {

@@ -43,6 +43,47 @@ func TestUpgradeExecutingViewShowsLogViewport(t *testing.T) {
 	}
 }
 
+func TestPackagesUninstallingViewShowsLogViewport(t *testing.T) {
+	s := newPackagesScreen()
+	s.state = packagesUninstalling
+	s.batchTotal = 2
+	s.batchCurrent = 0
+	s.batchName = "Mozilla Firefox"
+	s.vp.SetContent("== Mozilla Firefox ==\nRemoving package files")
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Uninstalling 1 of 2: Mozilla Firefox") {
+		t.Fatalf("view() = %q, want active uninstall progress header", got)
+	}
+	if !strings.Contains(got, "Removing package files") {
+		t.Fatalf("view() = %q, want streamed uninstall log content", got)
+	}
+	if !strings.Contains(got, "┌") {
+		t.Fatalf("view() = %q, want bordered log viewport", got)
+	}
+}
+
+func TestPackagesDoneViewShowsSummaryAndHint(t *testing.T) {
+	s := newPackagesScreen()
+	s.state = packagesDone
+	s.batchTotal = 2
+	s.batchPackages = []Package{
+		{Name: "Mozilla Firefox", ID: "Mozilla.Firefox"},
+		{Name: "Neovim", ID: "Neovim.Neovim"},
+	}
+	s.batchErrs = []error{nil, errors.New("boom")}
+	s.batchOutputs = []string{"", "installer failed with exit code 1"}
+	s.output = formatUninstallResults(s.batchPackages, s.batchErrs, s.batchOutputs)
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Uninstall finished: 1 succeeded, 1 failed") {
+		t.Fatalf("view() = %q, want uninstall result summary", got)
+	}
+	if !strings.Contains(got, "Press r to reload or tab to switch screens") {
+		t.Fatalf("view() = %q, want next-step hint", got)
+	}
+}
+
 func TestCleanupDoneViewShowsNextStepHint(t *testing.T) {
 	s := newCleanupScreen()
 	s.state = cleanupDone

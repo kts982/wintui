@@ -81,16 +81,6 @@ func newInstallScreenWithRetry(req retryRequest) installScreen {
 	return s
 }
 
-func awaitStream(outChan <-chan string, errChan <-chan error) tea.Cmd {
-	return func() tea.Msg {
-		line, ok := <-outChan
-		if !ok {
-			return streamDoneMsg{err: <-errChan}
-		}
-		return streamMsg(line)
-	}
-}
-
 func (s installScreen) init() tea.Cmd {
 	if s.launchRetry != nil {
 		req := *s.launchRetry
