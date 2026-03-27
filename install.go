@@ -337,6 +337,13 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	return s, nil
 }
 
+func (s installScreen) currentPackage() (Package, bool) {
+	if s.cursor < 0 || s.cursor >= len(s.packages) {
+		return Package{}, false
+	}
+	return s.packages[s.cursor], true
+}
+
 func (s installScreen) view(width, height int) string {
 	if s.detail.visible() {
 		return "  " + sectionTitleStyle.Render("Install Package") + "\n\n" +
@@ -397,14 +404,32 @@ func (s installScreen) view(width, height int) string {
 	case installDone:
 		if s.err != nil {
 			b.WriteString("  " + errorStyle.Render("Error: "+s.err.Error()) + "\n")
+			if pkg, ok := s.currentPackage(); ok {
+				b.WriteString("  " + helpStyle.Render(fmt.Sprintf("%s  (%s)", pkg.Name, pkg.ID)) + "\n")
+			}
 			if requiresElevation(s.err, s.output) {
 				b.WriteString("  " + helpStyle.Render(elevationRetryHint()) + "\n")
 			}
 		} else if s.output != "" && len(s.packages) == 0 {
 			b.WriteString("  " + warnStyle.Render(s.output) + "\n")
 		} else {
-			b.WriteString("  " + successStyle.Render("Installation complete!") + "\n")
+			pkg, ok := s.currentPackage()
+			if ok {
+				b.WriteString("  " + successStyle.Render(pkg.Name+" installed successfully") + "\n")
+				var meta []string
+				meta = append(meta, pkg.ID)
+				if pkg.Version != "" {
+					meta = append(meta, pkg.Version)
+				}
+				if pkg.Source != "" {
+					meta = append(meta, "["+pkg.Source+"]")
+				}
+				b.WriteString("  " + helpStyle.Render(strings.Join(meta, "  ")) + "\n")
+			} else {
+				b.WriteString("  " + successStyle.Render("Installation complete!") + "\n")
+			}
 		}
+		b.WriteString("\n  " + helpStyle.Render("Press r to search again or esc to leave") + "\n")
 	}
 
 	return b.String()
@@ -425,9 +450,9 @@ func (s installScreen) helpKeys() []key.Binding {
 		return []key.Binding{keyConfirmY}
 	case installDone:
 		if s.retryAction != nil && !isElevated() {
-			return []key.Binding{keyRetryElevated, keyRefresh, keyEsc, keyTabs}
+			return []key.Binding{keyRetryElevated, keySearchAgain, keyEsc, keyTabs}
 		}
-		return []key.Binding{keyRefresh, keyEsc, keyTabs}
+		return []key.Binding{keySearchAgain, keyEsc, keyTabs}
 	}
 	return []key.Binding{keyTabs}
 }

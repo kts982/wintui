@@ -25,6 +25,10 @@ var (
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "upgrade"),
 	)
+	keyInstallSelected = key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "install"),
+	)
 	keyEsc = key.NewBinding(
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "back"),
@@ -108,6 +112,18 @@ var (
 	keyCleanAll = key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "clean all"),
+	)
+	keySearchAgain = key.NewBinding(
+		key.WithKeys("r"),
+		key.WithHelp("r", "search again"),
+	)
+	keyShowSkipped = key.NewBinding(
+		key.WithKeys("v"),
+		key.WithHelp("v", "show skipped"),
+	)
+	keyFocusInstallable = key.NewBinding(
+		key.WithKeys("v"),
+		key.WithHelp("v", "focus installable"),
 	)
 	keyOpen = key.NewBinding(
 		key.WithKeys("o"),

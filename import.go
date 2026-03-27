@@ -70,6 +70,7 @@ type importModel struct {
 	packages   []importPkg
 	selected   map[int]bool
 	cursor     int
+	showAll    bool
 	spinner    spinner.Model
 	progress   progressBar
 	err        error
@@ -109,6 +110,7 @@ func (m importModel) start(installed []Package) (importModel, tea.Cmd) {
 	m.packages = nil
 	m.files = nil
 	m.selected = make(map[int]bool)
+	m.showAll = false
 	m.batchTotal = 0
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.progress, _ = m.progress.start()
@@ -295,38 +297,17 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 		case importReview:
 			switch msg.String() {
 			case "up", "k":
-				if m.cursor > 0 {
-					m.cursor--
-				}
+				m.moveCursor(-1)
 			case "down", "j":
-				if m.cursor < len(m.packages)-1 {
-					m.cursor++
-				}
+				m.moveCursor(1)
 			case "space", "x":
-				if m.cursor < len(m.packages) {
-					pkg := m.packages[m.cursor]
-					if !pkg.Installed && !pkg.NonCanonical {
-						m.selected[m.cursor] = !m.selected[m.cursor]
-					}
-				}
-				if m.cursor < len(m.packages)-1 {
-					m.cursor++
-				}
+				m.toggleCurrentSelection()
 			case "a":
-				allSelected := true
-				for i, pkg := range m.packages {
-					if !pkg.Installed && !pkg.NonCanonical && !m.selected[i] {
-						allSelected = false
-						break
-					}
-				}
-				m.selected = make(map[int]bool)
-				if !allSelected {
-					for i, pkg := range m.packages {
-						if !pkg.Installed && !pkg.NonCanonical {
-							m.selected[i] = true
-						}
-					}
+				m.toggleAllSelectable()
+			case "v":
+				if m.skippedCount() > 0 {
+					m.showAll = !m.showAll
+					m.clampCursor()
 				}
 			case "enter":
 				if m.selectedCount() > 0 {
@@ -428,6 +409,8 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 			}
 		}
 		m.cursor = 0
+		m.showAll = false
+		m.clampCursor()
 		m.state = importReview
 		return m, nil, true
 
@@ -496,6 +479,111 @@ func (m importModel) selectedCount() int {
 	return count
 }
 
+func (m importModel) reviewCounts() (installable, installed, nonCanonical int) {
+	for _, pkg := range m.packages {
+		switch {
+		case pkg.Installed:
+			installed++
+		case pkg.NonCanonical:
+			nonCanonical++
+		default:
+			installable++
+		}
+	}
+	return installable, installed, nonCanonical
+}
+
+func (m importModel) skippedCount() int {
+	_, installed, nonCanonical := m.reviewCounts()
+	return installed + nonCanonical
+}
+
+func (m importModel) visiblePackageIndices() []int {
+	indices := make([]int, 0, len(m.packages))
+	for i, pkg := range m.packages {
+		if !m.showAll && (pkg.Installed || pkg.NonCanonical) {
+			continue
+		}
+		indices = append(indices, i)
+	}
+	return indices
+}
+
+func (m *importModel) clampCursor() {
+	visible := m.visiblePackageIndices()
+	if len(visible) == 0 {
+		m.cursor = 0
+		return
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= len(visible) {
+		m.cursor = len(visible) - 1
+	}
+}
+
+func (m *importModel) moveCursor(delta int) {
+	if len(m.visiblePackageIndices()) == 0 {
+		m.cursor = 0
+		return
+	}
+	m.cursor += delta
+	m.clampCursor()
+}
+
+func (m importModel) currentVisiblePackageIndex() (int, bool) {
+	visible := m.visiblePackageIndices()
+	if len(visible) == 0 || m.cursor < 0 || m.cursor >= len(visible) {
+		return 0, false
+	}
+	return visible[m.cursor], true
+}
+
+func (m *importModel) toggleCurrentSelection() bool {
+	index, ok := m.currentVisiblePackageIndex()
+	if !ok {
+		return false
+	}
+	pkg := m.packages[index]
+	if pkg.Installed || pkg.NonCanonical {
+		return false
+	}
+	m.selected[index] = !m.selected[index]
+	return true
+}
+
+func (m *importModel) toggleAllSelectable() {
+	installable, _, _ := m.reviewCounts()
+	if installable == 0 {
+		return
+	}
+
+	allSelected := true
+	for i, pkg := range m.packages {
+		if pkg.Installed || pkg.NonCanonical {
+			continue
+		}
+		if !m.selected[i] {
+			allSelected = false
+			break
+		}
+	}
+
+	if allSelected {
+		m.selected = make(map[int]bool)
+		return
+	}
+
+	selected := make(map[int]bool, installable)
+	for i, pkg := range m.packages {
+		if !pkg.Installed && !pkg.NonCanonical {
+			selected[i] = true
+		}
+	}
+	m.selected = selected
+}
+
 // ── View ───────────────────────────────────────────────────────────
 
 func (m importModel) view(width, height int) string {
@@ -521,20 +609,20 @@ func (m importModel) view(width, height int) string {
 		}
 
 	case importReview:
-		installable, installed, nonCanonical := 0, 0, 0
-		for _, pkg := range m.packages {
-			switch {
-			case pkg.Installed:
-				installed++
-			case pkg.NonCanonical:
-				nonCanonical++
-			default:
-				installable++
-			}
-		}
+		installable, installed, nonCanonical := m.reviewCounts()
+		skipped := installed + nonCanonical
+		visible := m.visiblePackageIndices()
 
 		b.WriteString(fmt.Sprintf("  %s\n",
 			infoStyle.Render(fmt.Sprintf("%d package(s) in file", len(m.packages)))))
+		if installable > 0 && !m.showAll {
+			b.WriteString(fmt.Sprintf("  %s\n",
+				helpStyle.Render(fmt.Sprintf("Showing %d actionable package(s)", installable))))
+		}
+		if m.showAll && len(m.packages) > 0 {
+			b.WriteString(fmt.Sprintf("  %s\n",
+				helpStyle.Render(fmt.Sprintf("Showing all %d package(s)", len(m.packages)))))
+		}
 		if installed > 0 {
 			b.WriteString(fmt.Sprintf("  %s\n",
 				helpStyle.Render(fmt.Sprintf("%d already installed (skipped)", installed))))
@@ -548,15 +636,36 @@ func (m importModel) view(width, height int) string {
 			b.WriteString(fmt.Sprintf("  %s\n",
 				successStyle.Render(fmt.Sprintf("%d selected for install — press enter to proceed", selCount))))
 		}
+		if skipped > 0 {
+			hint := "Press v to show skipped entries"
+			if m.showAll {
+				hint = "Press v to focus installable packages"
+			}
+			b.WriteString(fmt.Sprintf("  %s\n", helpStyle.Render(hint)))
+		}
 		b.WriteString("\n")
+
+		if len(visible) == 0 {
+			switch {
+			case len(m.packages) == 0:
+				b.WriteString("  " + warnStyle.Render("No packages found in this export.") + "\n")
+			case !m.showAll && skipped > 0:
+				b.WriteString("  " + warnStyle.Render("Nothing to install from this file.") + "\n")
+				b.WriteString("  " + helpStyle.Render("All entries are already installed or non-restorable.") + "\n")
+			default:
+				b.WriteString("  " + warnStyle.Render("No packages to show.") + "\n")
+			}
+			break
+		}
 
 		maxVisible := height - 12
 		if maxVisible < 5 {
 			maxVisible = 5
 		}
-		start, end := scrollWindow(m.cursor, len(m.packages), maxVisible)
+		start, end := scrollWindow(m.cursor, len(visible), maxVisible)
 		for i := start; i < end; i++ {
-			pkg := m.packages[i]
+			index := visible[i]
+			pkg := m.packages[index]
 			cursor := cursorBlankStr
 			style := itemStyle
 			if i == m.cursor {
@@ -570,7 +679,7 @@ func (m importModel) view(width, height int) string {
 			case pkg.NonCanonical:
 				status = warnStyle.Render("[raw]      ")
 			default:
-				status = checkbox(m.selected[i])
+				status = checkbox(m.selected[index])
 			}
 			label := fmt.Sprintf("%s  (%s)  %s", pkg.Name, pkg.ID, pkg.Version)
 			if source := importSourceLabel(pkg); source != "" {
@@ -643,7 +752,33 @@ func (m importModel) helpKeys() []key.Binding {
 	case importFileSelect:
 		return []key.Binding{keyUp, keyDown, keyEnter, keyEsc}
 	case importReview:
-		return []key.Binding{keyUp, keyDown, keyToggle, keyToggleAll, keyEnter, keyEsc}
+		installable, _, _ := m.reviewCounts()
+		bindings := make([]key.Binding, 0, 6)
+		visible := m.visiblePackageIndices()
+		if len(visible) > 0 {
+			bindings = append(bindings, keyUp, keyDown)
+		}
+		if index, ok := m.currentVisiblePackageIndex(); ok {
+			pkg := m.packages[index]
+			if !pkg.Installed && !pkg.NonCanonical {
+				bindings = append(bindings, keyToggle)
+			}
+		}
+		if installable > 0 {
+			bindings = append(bindings, keyToggleAll)
+		}
+		if m.skippedCount() > 0 {
+			if m.showAll {
+				bindings = append(bindings, keyFocusInstallable)
+			} else {
+				bindings = append(bindings, keyShowSkipped)
+			}
+		}
+		if m.selectedCount() > 0 {
+			bindings = append(bindings, keyInstallSelected)
+		}
+		bindings = append(bindings, keyEsc)
+		return bindings
 	case importConfirm:
 		return []key.Binding{keyConfirmY}
 	case importInstalling:

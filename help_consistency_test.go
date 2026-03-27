@@ -65,6 +65,22 @@ func TestInstallSearchingEscCancelsBackToInput(t *testing.T) {
 	}
 }
 
+func TestInstallDoneHelpUsesSearchAgain(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installDone
+
+	got := bindingHelps(s.helpKeys())
+	want := []key.Help{
+		keySearchAgain.Help(),
+		keyEsc.Help(),
+		keyTabs.Help(),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("install done help = %#v, want %#v", got, want)
+	}
+}
+
 func TestPackagesReadyEscBacksToUpgrade(t *testing.T) {
 	s := newPackagesScreen()
 	s.state = packagesReady
@@ -204,6 +220,51 @@ func TestUpgradeFilteredHelpMatchesAvailableActions(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("upgrade filtered help = %#v, want %#v", got, want)
+	}
+}
+
+func TestImportReviewSkippedOnlyHelpShowsRevealAction(t *testing.T) {
+	m := newImportModel()
+	m.state = importReview
+	m.packages = []importPkg{
+		{Name: "Git", ID: "Git.Git", Installed: true},
+		{Name: "Raw App", ID: "MSIX\\Raw.App_hash123", NonCanonical: true},
+	}
+
+	got := bindingHelps(m.helpKeys())
+	want := []key.Help{
+		keyShowSkipped.Help(),
+		keyEsc.Help(),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("import review help = %#v, want %#v", got, want)
+	}
+}
+
+func TestImportReviewShowAllHelpUsesFocusInstallable(t *testing.T) {
+	m := newImportModel()
+	m.state = importReview
+	m.showAll = true
+	m.packages = []importPkg{
+		{Name: "Firefox", ID: "Mozilla.Firefox"},
+		{Name: "Git", ID: "Git.Git", Installed: true},
+	}
+	m.selected[0] = true
+
+	got := bindingHelps(m.helpKeys())
+	want := []key.Help{
+		keyUp.Help(),
+		keyDown.Help(),
+		keyToggle.Help(),
+		keyToggleAll.Help(),
+		keyFocusInstallable.Help(),
+		keyInstallSelected.Help(),
+		keyEsc.Help(),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("import review show-all help = %#v, want %#v", got, want)
 	}
 }
 

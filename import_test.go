@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -186,5 +188,75 @@ func TestResolveImportSource(t *testing.T) {
 				t.Fatalf("resolveImportSource(%+v) = %q, want %q", tt.pkg, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestImportLoadedDefaultsToActionablePackages(t *testing.T) {
+	m := newImportModel()
+	m.active = true
+	m.state = importScanning
+
+	next, _, handled := m.update(importLoadedMsg{
+		packages: []importPkg{
+			{Name: "Firefox", ID: "Mozilla.Firefox", Version: "128.0"},
+			{Name: "Git", ID: "Git.Git", Version: "2.45", Installed: true},
+			{Name: "Raw App", ID: "MSIX\\Raw.App_hash123", Version: "1.0", NonCanonical: true},
+		},
+	}, nil)
+	if !handled {
+		t.Fatal("expected importLoadedMsg to be handled")
+	}
+
+	if next.state != importReview {
+		t.Fatalf("state = %v, want %v", next.state, importReview)
+	}
+	if next.showAll {
+		t.Fatal("expected review to default to actionable packages")
+	}
+	if got := next.visiblePackageIndices(); !reflect.DeepEqual(got, []int{0}) {
+		t.Fatalf("visiblePackageIndices() = %v, want [0]", got)
+	}
+	if got := next.selectedCount(); got != 1 {
+		t.Fatalf("selectedCount() = %d, want 1", got)
+	}
+}
+
+func TestImportReviewToggleSkippedShowsAllEntries(t *testing.T) {
+	m := newImportModel()
+	m.active = true
+	m.state = importReview
+	m.packages = []importPkg{
+		{Name: "Firefox", ID: "Mozilla.Firefox", Version: "128.0"},
+		{Name: "Git", ID: "Git.Git", Version: "2.45", Installed: true},
+		{Name: "Raw App", ID: "MSIX\\Raw.App_hash123", Version: "1.0", NonCanonical: true},
+	}
+	m.selected[0] = true
+
+	next, _, handled := m.update(keyMsg("v"), nil)
+	if !handled {
+		t.Fatal("expected show-skipped toggle to be handled")
+	}
+	if !next.showAll {
+		t.Fatal("expected showAll to be enabled after pressing v")
+	}
+	if got := next.visiblePackageIndices(); !reflect.DeepEqual(got, []int{0, 1, 2}) {
+		t.Fatalf("visiblePackageIndices() = %v, want [0 1 2]", got)
+	}
+}
+
+func TestImportReviewShowsEmptyActionableSummary(t *testing.T) {
+	m := newImportModel()
+	m.state = importReview
+	m.packages = []importPkg{
+		{Name: "Git", ID: "Git.Git", Installed: true},
+		{Name: "Raw App", ID: "MSIX\\Raw.App_hash123", NonCanonical: true},
+	}
+
+	got := m.view(120, 24)
+	if !strings.Contains(got, "Nothing to install from this file.") {
+		t.Fatalf("view() = %q, want empty actionable summary", got)
+	}
+	if !strings.Contains(got, "Press v to show skipped entries") {
+		t.Fatalf("view() = %q, want skipped toggle hint", got)
 	}
 }
