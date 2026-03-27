@@ -305,7 +305,17 @@ func (a app) View() tea.View {
 
 // ── Logo rendering ─────────────────────────────────────────────────
 
+func (a app) useCompactHeader() bool {
+	return a.height < 32 || a.width < 110
+}
+
 func (a app) renderLogo() string {
+	if a.useCompactHeader() {
+		title := lipgloss.NewStyle().Foreground(accent).Bold(true).Render("WinTUI")
+		subtitle := lipgloss.NewStyle().Foreground(dim).Italic(true).Render("Windows Package Manager")
+		return "  " + title + "  " + subtitle + "\n"
+	}
+
 	n := len(logoGradient)
 	var lines []string
 	for i, line := range asciiLogo {
@@ -347,7 +357,11 @@ func (a app) renderTabBar() string {
 	} else {
 		adminBadge = lipgloss.NewStyle().Foreground(warning).Render("● user")
 	}
-	bar += "    " + adminBadge + helpStyle.Render("  tab cycle • q quit")
+	hint := "  tab cycle • q quit"
+	if a.useCompactHeader() {
+		hint = "  tab/q"
+	}
+	bar += "    " + adminBadge + helpStyle.Render(hint)
 
 	return bar + "\n"
 }

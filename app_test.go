@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/key"
@@ -159,5 +160,30 @@ func TestPackageDataChangedReloadsActiveDataScreen(t *testing.T) {
 	}
 	if _, ok := a.screens[screenPackages].(packagesScreen); !ok {
 		t.Fatalf("active packages screen was not recreated: %#v", a.screens[screenPackages])
+	}
+}
+
+func TestRenderLogoUsesCompactHeaderOnShortTerminals(t *testing.T) {
+	a := newApp(nil)
+	a.width = 100
+	a.height = 24
+
+	got := a.renderLogo()
+	if !strings.Contains(got, "WinTUI") {
+		t.Fatalf("renderLogo() = %q, want compact title", got)
+	}
+	if strings.Contains(got, asciiLogo[0]) {
+		t.Fatalf("renderLogo() = %q, did not expect full ASCII logo in compact mode", got)
+	}
+}
+
+func TestRenderLogoUsesFullAsciiLogoOnLargeTerminals(t *testing.T) {
+	a := newApp(nil)
+	a.width = 140
+	a.height = 40
+
+	got := a.renderLogo()
+	if !strings.Contains(got, asciiLogo[0]) {
+		t.Fatalf("renderLogo() = %q, want full ASCII logo", got)
 	}
 }
