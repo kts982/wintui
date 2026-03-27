@@ -9,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
 
 	tea "charm.land/bubbletea/v2"
@@ -25,12 +26,7 @@ const (
 	upgradeDone
 )
 
-// singleUpgradeDoneMsg reports completion of a single package upgrade during a batch.
-type singleUpgradeDoneMsg struct {
-	index  int
-	output string
-	err    error
-}
+type startUpgradeBatchMsg struct{}
 
 type upgradeScreen struct {
 	state        upgradeState
@@ -56,12 +52,19 @@ type upgradeScreen struct {
 	batchErr     error
 	launchRetry  *retryRequest
 	retryAction  *retryRequest
+	vp           viewport.Model
+	outLines     []string
+	currentLines []string
+	upgradeOut   <-chan string
+	upgradeErr   <-chan error
 }
 
 func newUpgradeScreen() upgradeScreen {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
+	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(10))
+	vp.Style = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(accent)
 	ctx, cancel := context.WithCancel(context.Background())
 	return upgradeScreen{
 		state:    upgradeLoading,
@@ -72,6 +75,7 @@ func newUpgradeScreen() upgradeScreen {
 		filter:   newListFilter(),
 		ctx:      ctx,
 		cancel:   cancel,
+		vp:       vp,
 	}
 }
 
@@ -88,11 +92,7 @@ func newUpgradeScreenWithRetry(req retryRequest) upgradeScreen {
 
 func (s upgradeScreen) init() tea.Cmd {
 	if s.launchRetry != nil {
-		req := *s.launchRetry
-		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-			out, err := upgradePackageSourceCtx(s.ctx, req.ID, req.Source)
-			return singleUpgradeDoneMsg{output: out, err: err, index: 0}
-		})
+		return tea.Batch(s.spinner.Tick, func() tea.Msg { return startUpgradeBatchMsg{} })
 	}
 	// Check cache first
 	if pkgs, ok := cache.getUpgradeable(); ok {
@@ -266,39 +266,11 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		return s, nil
 
-	case singleUpgradeDoneMsg:
-		if s.state != upgradeExecuting {
+	case startUpgradeBatchMsg:
+		if s.state != upgradeExecuting || s.batchTotal == 0 {
 			return s, nil
 		}
-		s.batchOutputs = append(s.batchOutputs, msg.output)
-		s.batchErrs = append(s.batchErrs, msg.err) // nil for success
-		if msg.err != nil {
-			s.batchErr = msg.err
-		}
-		s.batchCurrent = msg.index + 1
-		if s.batchTotal > 0 {
-			s.progress.percent = float64(s.batchCurrent) / float64(s.batchTotal)
-		}
-
-		if s.batchCurrent < s.batchTotal {
-			s.batchName = s.batchIDs[s.batchCurrent]
-			return s, upgradeSingleCmd(s.ctx, s.batchIDs[s.batchCurrent], s.batchSources[s.batchCurrent], s.batchCurrent)
-		}
-
-		s.progress = s.progress.stop()
-		s.output = formatBatchResults(s.batchIDs, s.batchErrs, s.batchOutputs)
-		s.err = s.batchErr
-		s.state = upgradeDone
-		s.retryAction = nil
-		if s.batchTotal == 1 && s.batchErr != nil && requiresElevation(s.batchErr, s.output) && !isElevated() {
-			source := ""
-			if len(s.batchSources) > 0 {
-				source = s.batchSources[0]
-			}
-			s.retryAction = &retryRequest{Op: retryOpUpgrade, ID: s.batchIDs[0], Source: source}
-		}
-		cache.invalidate() // packages changed
-		return s, func() tea.Msg { return packageDataChangedMsg{origin: screenUpgrade} }
+		return s, s.startUpgradeStream(s.batchCurrent)
 
 	case commandDoneMsg:
 		if s.state != upgradeExecuting {
@@ -313,6 +285,51 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, func() tea.Msg { return packageDataChangedMsg{origin: screenUpgrade} }
 		}
 		return s, nil
+
+	case streamMsg:
+		if s.state != upgradeExecuting {
+			return s, nil
+		}
+		line := string(msg)
+		s.currentLines = append(s.currentLines, line)
+		s.outLines = append(s.outLines, line)
+		s.vp.SetContent(strings.Join(s.outLines, "\n"))
+		s.vp.GotoBottom()
+		return s, awaitStream(s.upgradeOut, s.upgradeErr)
+
+	case streamDoneMsg:
+		if s.state != upgradeExecuting {
+			return s, nil
+		}
+		output := strings.Join(s.currentLines, "\n")
+		s.batchOutputs = append(s.batchOutputs, output)
+		s.batchErrs = append(s.batchErrs, msg.err)
+		if msg.err != nil {
+			s.batchErr = msg.err
+		}
+		completed := s.batchCurrent + 1
+		if s.batchTotal > 0 {
+			s.progress.percent = float64(completed) / float64(s.batchTotal)
+		}
+		if completed < s.batchTotal {
+			return s, s.startUpgradeStream(completed)
+		}
+
+		s.progress = s.progress.stop()
+		s.output = formatBatchResults(s.batchIDs, s.batchErrs, s.batchOutputs)
+		s.err = s.batchErr
+		s.state = upgradeDone
+		s.retryAction = nil
+		if s.batchTotal == 1 && s.batchErr != nil && len(s.batchOutputs) == 1 &&
+			requiresElevation(s.batchErr, s.batchOutputs[0]) && !isElevated() {
+			source := ""
+			if len(s.batchSources) > 0 {
+				source = s.batchSources[0]
+			}
+			s.retryAction = &retryRequest{Op: retryOpUpgrade, ID: s.batchIDs[0], Source: source}
+		}
+		cache.invalidate()
+		return s, func() tea.Msg { return packageDataChangedMsg{origin: screenUpgrade} }
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -408,12 +425,14 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 		s.batchOutputs = nil
 		s.batchErrs = nil
 		s.batchErr = nil
+		s.outLines = nil
+		s.currentLines = nil
+		s.vp.SetContent("")
 		s.progress.active = false // don't use indeterminate animation for batch
 		s.progress.percent = 0
 
 		if s.batchTotal > 0 {
-			s.batchName = s.batchIDs[0]
-			return s, tea.Batch(s.spinner.Tick, upgradeSingleCmd(s.ctx, s.batchIDs[0], s.batchSources[0], 0))
+			return s, tea.Batch(s.spinner.Tick, s.startUpgradeStream(0))
 		}
 		return s, nil
 
@@ -561,12 +580,27 @@ func extractFailReason(output string) string {
 	return ""
 }
 
-// upgradeSingleCmd upgrades a single package and sends a completion message.
-func upgradeSingleCmd(ctx context.Context, id, source string, index int) tea.Cmd {
-	return func() tea.Msg {
-		out, err := upgradePackageSourceCtx(ctx, id, source)
-		return singleUpgradeDoneMsg{output: out, err: err, index: index}
+func (s *upgradeScreen) startUpgradeStream(index int) tea.Cmd {
+	if index < 0 || index >= len(s.batchIDs) {
+		return nil
 	}
+	s.batchCurrent = index
+	s.batchName = s.batchIDs[index]
+	s.currentLines = nil
+	if len(s.outLines) > 0 {
+		s.outLines = append(s.outLines, "")
+	}
+	label := s.packageLabel(s.batchIDs[index])
+	header := "== " + label
+	if label != s.batchIDs[index] {
+		header += " (" + s.batchIDs[index] + ")"
+	}
+	header += " =="
+	s.outLines = append(s.outLines, header)
+	s.vp.SetContent(strings.Join(s.outLines, "\n"))
+	s.vp.GotoBottom()
+	s.upgradeOut, s.upgradeErr = upgradePackageStreamCtx(s.ctx, s.batchIDs[index], s.batchSources[index])
+	return awaitStream(s.upgradeOut, s.upgradeErr)
 }
 
 func (s upgradeScreen) view(width, height int) string {
@@ -665,6 +699,13 @@ func (s upgradeScreen) view(width, height int) string {
 			fmt.Fprintf(&b, "  %s Upgrading packages...\n\n", s.spinner.View())
 		}
 		b.WriteString("  " + s.progress.view() + "\n")
+		s.vp.SetWidth(width - 8)
+		vpH := height - 12
+		if vpH < 5 {
+			vpH = 5
+		}
+		s.vp.SetHeight(vpH)
+		b.WriteString("  " + s.vp.View() + "\n")
 
 	case upgradeDone:
 		successCount, failCount := batchResultCounts(s.batchErrs)

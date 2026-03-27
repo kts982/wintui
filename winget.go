@@ -150,11 +150,6 @@ func uninstallCommandArgs(pkg Package, includePurge bool) []string {
 	return append(args, appSettings.BuildUninstallArgs(includePurge)...)
 }
 
-func upgradePackageSourceCtx(ctx context.Context, id, source string) (string, error) {
-	args := upgradeCommandArgs(id, source)
-	return runWingetActionCtx(ctx, args...)
-}
-
 func installPackageSourceCtx(ctx context.Context, id, source string) (string, error) {
 	args := installCommandArgs(id, source)
 	return runWingetActionCtx(ctx, args...)
@@ -596,5 +591,10 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 
 func installPackageStreamCtx(ctx context.Context, id, source string) (<-chan string, <-chan error) {
 	args := installCommandArgs(id, source)
+	return runWingetStreamCtx(ctx, false, args...)
+}
+
+func upgradePackageStreamCtx(ctx context.Context, id, source string) (<-chan string, <-chan error) {
+	args := upgradeCommandArgs(id, source)
 	return runWingetStreamCtx(ctx, false, args...)
 }

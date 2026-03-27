@@ -23,6 +23,26 @@ func TestUpgradeDoneViewShowsSummaryAndHint(t *testing.T) {
 	}
 }
 
+func TestUpgradeExecutingViewShowsLogViewport(t *testing.T) {
+	s := newUpgradeScreen()
+	s.state = upgradeExecuting
+	s.batchTotal = 2
+	s.batchCurrent = 0
+	s.batchName = "Mozilla.Firefox"
+	s.vp.SetContent("== Mozilla Firefox ==\nDownloading installer")
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Upgrading 1 of 2: Mozilla.Firefox") {
+		t.Fatalf("view() = %q, want active upgrade progress header", got)
+	}
+	if !strings.Contains(got, "Downloading installer") {
+		t.Fatalf("view() = %q, want streamed log content", got)
+	}
+	if !strings.Contains(got, "┌") {
+		t.Fatalf("view() = %q, want bordered log viewport", got)
+	}
+}
+
 func TestCleanupDoneViewShowsNextStepHint(t *testing.T) {
 	s := newCleanupScreen()
 	s.state = cleanupDone
