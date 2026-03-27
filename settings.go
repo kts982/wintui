@@ -11,13 +11,19 @@ import (
 )
 
 type settingsScreen struct {
-	cursor int
-	saved  bool
-	errMsg string
+	cursor    int
+	saved     bool
+	dirty     bool
+	errMsg    string
+	diskState Settings // snapshot of settings on disk when screen was created
 }
 
 func newSettingsScreen() settingsScreen {
-	return settingsScreen{}
+	disk := LoadSettings()
+	return settingsScreen{
+		diskState: disk,
+		dirty:     appSettings != disk,
+	}
 }
 
 func (s settingsScreen) init() tea.Cmd { return nil }
@@ -43,11 +49,14 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.errMsg = "Save failed: " + err.Error()
 			} else {
 				s.saved = true
+				s.dirty = false
+				s.diskState = appSettings
 				s.errMsg = ""
 			}
 		case "r":
 			appSettings = DefaultSettings()
 			s.saved = false
+			s.dirty = appSettings != s.diskState
 			s.errMsg = ""
 		}
 
@@ -86,6 +95,7 @@ func (s *settingsScreen) cycleForward() {
 		appSettings.setValue(def.key, def.choices[idx])
 	}
 	s.saved = false
+	s.dirty = appSettings != s.diskState
 	cache.invalidate()
 }
 
@@ -94,6 +104,7 @@ func (s *settingsScreen) cycleBackward() {
 	switch def.stype {
 	case settingToggle:
 		s.cycleForward() // toggle is the same either direction
+		return
 	case settingChoice:
 		cur := appSettings.getValue(def.key)
 		idx := 0
@@ -110,6 +121,7 @@ func (s *settingsScreen) cycleBackward() {
 		appSettings.setValue(def.key, def.choices[idx])
 	}
 	s.saved = false
+	s.dirty = appSettings != s.diskState
 	cache.invalidate()
 }
 
@@ -144,7 +156,7 @@ func (s settingsScreen) view(width, height int) string {
 		b.WriteString("  " + errorStyle.Render(s.errMsg) + "\n")
 	} else if s.saved {
 		b.WriteString("  " + successStyle.Render("Settings saved!") + "\n")
-	} else {
+	} else if s.dirty {
 		b.WriteString("  " + warnStyle.Render("Unsaved changes") + "\n")
 	}
 

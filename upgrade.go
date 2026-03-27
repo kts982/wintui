@@ -248,6 +248,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.progress = s.progress.stop()
 		s.retryAction = nil
 		s.packages = msg.packages
+		s.selected = make(map[int]bool)
 		s.err = msg.err
 		if msg.err != nil || len(msg.packages) == 0 {
 			s.state = upgradeEmpty
@@ -404,7 +405,7 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyMsg) (screen, tea.Cmd) {
 			}
 		} else {
 			for i, sel := range s.selected {
-				if sel {
+				if sel && i < len(s.packages) {
 					ids = append(ids, s.packages[i].ID)
 					sources = append(sources, s.packages[i].Source)
 				}
