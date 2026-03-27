@@ -19,7 +19,7 @@ Browse, install, upgrade, and manage Windows packages without leaving the termin
 # Run a release binary
 .\wintui.exe
 
-# Or build/install with Go 1.24.2+
+# Or build/install with Go 1.26+
 go install github.com/kts982/wintui@latest
 
 # Or clone and build from source
