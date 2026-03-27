@@ -147,6 +147,8 @@ func (s settingsScreen) view(width, height int) string {
 	}
 
 	b.WriteString("\n")
+	b.WriteString(s.renderDetailPanel(width, height > 0 && height < 28))
+	b.WriteString("\n\n")
 
 	// Config file path
 	b.WriteString("  " + helpStyle.Render("Config: "+configPath()) + "\n\n")
@@ -178,10 +180,7 @@ func renderSettingValue(def settingDef, val string) string {
 	case settingChoice:
 		var parts []string
 		for _, c := range def.choices {
-			display := c
-			if display == "" {
-				display = "auto"
-			}
+			display := def.choiceLabel(c)
 			if c == val {
 				parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("["+display+"]"))
 			} else {
@@ -189,6 +188,46 @@ func renderSettingValue(def settingDef, val string) string {
 			}
 		}
 		return strings.Join(parts, "")
+	}
+	return val
+}
+
+func (s settingsScreen) renderDetailPanel(width int, compact bool) string {
+	def := settingDefs[s.cursor]
+	val := appSettings.getValue(def.key)
+
+	lines := []string{
+		lipgloss.NewStyle().Bold(true).Foreground(accent).Render(def.label),
+		helpStyle.Render("Current: " + def.choiceLabel(valOrOnOff(def, val))),
+	}
+	if hint := strings.TrimSpace(def.currentHint(val)); hint != "" {
+		lines = append(lines, hint)
+	}
+	if !compact {
+		if detail := strings.TrimSpace(def.detail); detail != "" {
+			lines = append(lines, "", detail)
+		}
+		lines = append(lines, "", helpStyle.Render("enter/space/right next • left previous • s save • r defaults"))
+	} else {
+		lines = append(lines, "", helpStyle.Render("s save • r defaults"))
+	}
+
+	panel := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(secondary).
+		Padding(0, 1)
+	if width > 10 {
+		panel = panel.Width(width - 6)
+	}
+	return "  " + panel.Render(strings.Join(lines, "\n"))
+}
+
+func valOrOnOff(def settingDef, val string) string {
+	if def.stype == settingToggle {
+		if val == "true" {
+			return "on"
+		}
+		return "off"
 	}
 	return val
 }

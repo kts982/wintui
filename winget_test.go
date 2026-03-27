@@ -162,4 +162,14 @@ func TestActionCommandArgs(t *testing.T) {
 			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
 		}
 	})
+
+	t.Run("uninstall respects silent mode", func(t *testing.T) {
+		appSettings = DefaultSettings()
+		appSettings.InstallMode = "silent"
+		got := uninstallCommandArgs(Package{ID: "Mozilla.Firefox", Source: "winget"}, false)
+		want := []string{"uninstall", "--id", "Mozilla.Firefox", "--exact", "--silent"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
+		}
+	})
 }
