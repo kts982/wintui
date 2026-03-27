@@ -146,7 +146,6 @@ func (s settingsScreen) view(width, height int) string {
 		fmt.Fprintf(&b, "  %s%s %s  %s\n", cursor, label, valDisplay, desc)
 	}
 
-	b.WriteString("\n")
 	b.WriteString(s.renderDetailPanel(width, height > 0 && height < 28))
 	b.WriteString("\n\n")
 

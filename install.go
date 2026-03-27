@@ -356,7 +356,7 @@ func (s installScreen) currentPackage() (Package, bool) {
 
 func (s installScreen) view(width, height int) string {
 	if s.detail.visible() {
-		return "  " + sectionTitleStyle.Render("Install Package") + "\n\n" +
+		return "  " + sectionTitleStyle.Render("Install Package") + "\n" +
 			s.detail.view(width, height-2)
 	}
 
@@ -402,7 +402,7 @@ func (s installScreen) view(width, height int) string {
 
 	case installExecuting:
 		fmt.Fprintf(&b, "  %s Installing...\n\n", s.spinner.View())
-		b.WriteString("  " + s.progress.view() + "\n\n")
+		b.WriteString("  " + s.progress.view() + "\n")
 		s.vp.SetWidth(width - 8)
 		vpH := height - 12
 		if vpH < 5 {
