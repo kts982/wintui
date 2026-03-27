@@ -506,6 +506,17 @@ func formatBatchResults(ids []string, errs []error, outputs []string) string {
 	return b.String()
 }
 
+func batchResultCounts(errs []error) (successCount, failCount int) {
+	for _, err := range errs {
+		if err == nil {
+			successCount++
+		} else {
+			failCount++
+		}
+	}
+	return successCount, failCount
+}
+
 func batchRequiresElevation(errs []error, outputs []string) bool {
 	for i, err := range errs {
 		output := ""
@@ -517,6 +528,24 @@ func batchRequiresElevation(errs []error, outputs []string) bool {
 		}
 	}
 	return false
+}
+
+func (s upgradeScreen) packageLabel(id string) string {
+	for _, pkg := range s.packages {
+		if pkg.ID == id {
+			if pkg.Name != "" {
+				return pkg.Name
+			}
+			break
+		}
+	}
+	if id != "" {
+		return id
+	}
+	if s.batchName != "" {
+		return s.batchName
+	}
+	return "Package"
 }
 
 // extractFailReason pulls the most relevant failure line from winget output.
@@ -561,6 +590,7 @@ func (s upgradeScreen) view(width, height int) string {
 		} else {
 			b.WriteString("  " + successStyle.Render("All packages are up to date!") + "\n")
 		}
+		b.WriteString("\n  " + helpStyle.Render("Press r to scan again or tab to switch screens") + "\n")
 
 	case upgradeSelecting:
 		filtered := s.filter.filterPackages(s.packages)
@@ -637,16 +667,47 @@ func (s upgradeScreen) view(width, height int) string {
 		b.WriteString("  " + s.progress.view() + "\n")
 
 	case upgradeDone:
-		if s.err != nil {
+		successCount, failCount := batchResultCounts(s.batchErrs)
+		if s.err != nil && successCount == 0 && failCount == 0 {
+			if strings.Contains(strings.ToLower(s.err.Error()), "cancelled") {
+				b.WriteString("  " + warnStyle.Render("Upgrade cancelled before any packages completed") + "\n\n")
+			} else {
+				b.WriteString("  " + warnStyle.Render("Upgrade failed before any packages completed") + "\n\n")
+			}
+		} else if s.batchTotal == 1 && failCount == 0 && len(s.batchIDs) == 1 {
+			b.WriteString("  " + successStyle.Render(s.packageLabel(s.batchIDs[0])+" upgraded successfully") + "\n")
+			b.WriteString("  " + helpStyle.Render(s.batchIDs[0]) + "\n\n")
+		} else if failCount > 0 {
+			b.WriteString("  " + warnStyle.Render(
+				fmt.Sprintf("Upgrade finished: %d succeeded, %d failed", successCount, failCount),
+			) + "\n")
+			if successCount > 0 {
+				b.WriteString("  " + helpStyle.Render(
+					fmt.Sprintf("%d package(s) were upgraded before the run completed.", successCount),
+				) + "\n")
+			}
 			if requiresElevation(s.err, s.output) || batchRequiresElevation(s.batchErrs, s.batchOutputs) {
-				b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n")
 				b.WriteString("  " + helpStyle.Render("Some packages require administrator privileges.") + "\n")
 				b.WriteString("  " + helpStyle.Render(elevationRetryHint()) + "\n\n")
 			} else {
-				b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n\n")
+				b.WriteString("\n")
 			}
 		} else {
-			b.WriteString("  " + successStyle.Render("Upgrade complete!") + "\n\n")
+			b.WriteString("  " + successStyle.Render(
+				fmt.Sprintf("%d package(s) upgraded successfully", successCount),
+			) + "\n\n")
+		}
+
+		if s.err != nil {
+			if s.output == "" && (s.batchTotal == 0 || (successCount == 0 && failCount == 0)) {
+				if requiresElevation(s.err, s.output) || batchRequiresElevation(s.batchErrs, s.batchOutputs) {
+					b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n")
+					b.WriteString("  " + helpStyle.Render("Some packages require administrator privileges.") + "\n")
+					b.WriteString("  " + helpStyle.Render(elevationRetryHint()) + "\n\n")
+				} else if !strings.Contains(strings.ToLower(s.err.Error()), "cancelled") {
+					b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n\n")
+				}
+			}
 		}
 		if s.output != "" {
 			// Batch results are already formatted; non-batch needs cleaning
@@ -666,6 +727,11 @@ func (s upgradeScreen) view(width, height int) string {
 			for _, line := range lines {
 				b.WriteString(line + "\n")
 			}
+		}
+		if s.retryAction != nil && !isElevated() {
+			b.WriteString("\n  " + helpStyle.Render("Press ctrl+e to retry elevated, r to rescan, or tab to switch screens") + "\n")
+		} else {
+			b.WriteString("\n  " + helpStyle.Render("Press r to rescan or tab to switch screens") + "\n")
 		}
 	}
 

@@ -452,6 +452,13 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 			case "down", "j":
 				s.scroll++
+			case "pgup":
+				s.scroll -= 8
+				if s.scroll < 0 {
+					s.scroll = 0
+				}
+			case "pgdown":
+				s.scroll += 8
 			case "r":
 				return s.reload()
 			case "esc":
@@ -537,6 +544,10 @@ func (s healthcheckScreen) view(width, height int) string {
 			lines = append(lines, "")
 		}
 
+		if len(recs) > 0 {
+			b.WriteString("  " + helpStyle.Render(fmt.Sprintf("%d recommendation(s) listed at the end of the report.", len(recs))) + "\n")
+		}
+
 		// Scrollable display
 		maxVisible := height - 10
 		if maxVisible < 5 {
@@ -567,7 +578,9 @@ func (s healthcheckScreen) view(width, height int) string {
 
 		if totalLines > maxVisible {
 			b.WriteString(fmt.Sprintf("\n  %s\n", helpStyle.Render(
-				fmt.Sprintf("Showing %d-%d of %d (↑↓ to scroll)", start+1, end, totalLines))))
+				fmt.Sprintf("Showing %d-%d of %d (↑↓/PgUp/PgDn to scroll)", start+1, end, totalLines))))
+		} else {
+			b.WriteString("\n  " + helpStyle.Render("Press r to rerun checks or tab to switch screens") + "\n")
 		}
 
 	}

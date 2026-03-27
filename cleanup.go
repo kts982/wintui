@@ -230,6 +230,7 @@ func (s cleanupScreen) view(width, height int) string {
 		} else {
 			b.WriteString("  " + successStyle.Render("No old temp files found. All clean!") + "\n")
 		}
+		b.WriteString("\n  " + helpStyle.Render("Press r to scan again or tab to switch screens") + "\n")
 
 	case cleanupReady:
 		b.WriteString(fmt.Sprintf("  %s\n",
@@ -283,6 +284,7 @@ func (s cleanupScreen) view(width, height int) string {
 			b.WriteString(fmt.Sprintf("  %s\n",
 				warnStyle.Render(fmt.Sprintf("%d item(s) could not be removed (in use or locked).", s.failed))))
 		}
+		b.WriteString("\n  " + helpStyle.Render("Press r to scan again or tab to switch screens") + "\n")
 	}
 
 	return b.String()

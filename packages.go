@@ -521,6 +521,7 @@ func (s packagesScreen) view(width, height int) string {
 		} else {
 			b.WriteString("  " + warnStyle.Render("No packages found.") + "\n")
 		}
+		b.WriteString("\n  " + helpStyle.Render("Press r to reload or tab to switch screens") + "\n")
 
 	case packagesReady:
 		filtered := s.filteredPkgs()
@@ -576,6 +577,7 @@ func (s packagesScreen) view(width, height int) string {
 		if s.statusMsg != "" {
 			b.WriteString("  " + s.statusMsg + "\n")
 		}
+		b.WriteString("\n  " + helpStyle.Render("Press r to reload or tab to switch screens") + "\n")
 	}
 
 	return b.String()

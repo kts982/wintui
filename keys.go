@@ -94,8 +94,8 @@ var (
 		key.WithHelp("1-6", "tabs"),
 	)
 	keyScroll = key.NewBinding(
-		key.WithKeys("up", "down"),
-		key.WithHelp("↑↓", "scroll"),
+		key.WithKeys("up", "down", "pgup", "pgdown"),
+		key.WithHelp("↑↓/pg", "scroll"),
 	)
 	keySearch = key.NewBinding(
 		key.WithKeys("enter"),

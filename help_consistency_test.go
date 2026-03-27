@@ -22,6 +22,10 @@ func keyMsg(keyName string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyEscape}
 	case "enter":
 		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "pgup":
+		return tea.KeyPressMsg{Code: tea.KeyPgUp}
+	case "pgdown":
+		return tea.KeyPressMsg{Code: tea.KeyPgDown}
 	default:
 		r := []rune(keyName)[0]
 		return tea.KeyPressMsg{Code: r, Text: string(r)}
@@ -148,6 +152,18 @@ func TestHealthcheckReadyHelpIncludesRefreshAndBack(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("health help = %#v, want %#v", got, want)
+	}
+}
+
+func TestHealthcheckPgDownAdvancesScroll(t *testing.T) {
+	s := newHealthcheckScreen()
+	s.state = hcReady
+
+	next, _ := s.update(keyMsg("pgdown"))
+	got := next.(healthcheckScreen)
+
+	if got.scroll != 8 {
+		t.Fatalf("scroll = %d, want 8", got.scroll)
 	}
 }
 

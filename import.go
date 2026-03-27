@@ -708,20 +708,13 @@ func (m importModel) view(width, height int) string {
 		} else if m.statusMsg != "" {
 			b.WriteString("  " + m.statusMsg + "\n")
 		} else if m.batchTotal > 0 {
-			successCount, failCount := 0, 0
-			for _, err := range m.batchErrs {
-				if err == nil {
-					successCount++
-				} else {
-					failCount++
-				}
-			}
+			successCount, failCount := batchResultCounts(m.batchErrs)
 			if failCount == 0 {
 				b.WriteString(fmt.Sprintf("  %s\n\n",
-					successStyle.Render(fmt.Sprintf("All %d package(s) installed successfully!", successCount))))
+					successStyle.Render(fmt.Sprintf("%d package(s) installed from this export.", successCount))))
 			} else {
 				b.WriteString(fmt.Sprintf("  %s\n\n",
-					warnStyle.Render(fmt.Sprintf("Completed: %d succeeded, %d failed", successCount, failCount))))
+					warnStyle.Render(fmt.Sprintf("Import finished: %d succeeded, %d failed", successCount, failCount))))
 			}
 			output := formatBatchResults(m.batchIDs, m.batchErrs, m.batchOutputs)
 			lines := strings.Split(output, "\n")
@@ -739,7 +732,7 @@ func (m importModel) view(width, height int) string {
 		} else {
 			b.WriteString("  " + successStyle.Render("Import complete!") + "\n")
 		}
-		b.WriteString("\n  " + helpStyle.Render("Press enter or esc to return") + "\n")
+		b.WriteString("\n  " + helpStyle.Render("Press enter or esc to return to Installed packages") + "\n")
 	}
 
 	return b.String()
