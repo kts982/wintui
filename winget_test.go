@@ -137,7 +137,7 @@ func TestActionCommandArgs(t *testing.T) {
 		appSettings = DefaultSettings()
 		appSettings.Source = "winget"
 		got := uninstallCommandArgs(Package{ID: "Notepad++.Notepad++", Source: "winget"}, false)
-		want := []string{"uninstall", "--id", "Notepad++.Notepad++", "--exact", "--accept-package-agreements"}
+		want := []string{"uninstall", "--id", "Notepad++.Notepad++", "--exact"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
 		}
@@ -147,7 +147,7 @@ func TestActionCommandArgs(t *testing.T) {
 		appSettings = DefaultSettings()
 		appSettings.PurgeOnUninstall = true
 		got := uninstallCommandArgs(Package{ID: "Contoso.Portable", Source: "winget"}, true)
-		want := []string{"uninstall", "--id", "Contoso.Portable", "--exact", "--accept-package-agreements", "--purge"}
+		want := []string{"uninstall", "--id", "Contoso.Portable", "--exact", "--purge"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
 		}
@@ -157,7 +157,7 @@ func TestActionCommandArgs(t *testing.T) {
 		appSettings = DefaultSettings()
 		appSettings.PurgeOnUninstall = true
 		got := uninstallCommandArgs(Package{ID: "Mozilla.Firefox", Source: "winget"}, false)
-		want := []string{"uninstall", "--id", "Mozilla.Firefox", "--exact", "--accept-package-agreements"}
+		want := []string{"uninstall", "--id", "Mozilla.Firefox", "--exact"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
 		}

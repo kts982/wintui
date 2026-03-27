@@ -146,7 +146,7 @@ func uninstallLookupArgs(pkg Package) []string {
 func uninstallCommandArgs(pkg Package, includePurge bool) []string {
 	args := []string{"uninstall"}
 	args = append(args, uninstallLookupArgs(pkg)...)
-	args = append(args, "--exact", "--accept-package-agreements")
+	args = append(args, "--exact")
 	return append(args, appSettings.BuildUninstallArgs(includePurge)...)
 }
 
