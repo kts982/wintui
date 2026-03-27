@@ -99,3 +99,47 @@ func TestCleanWingetOutputFixture(t *testing.T) {
 		t.Fatalf("cleanWingetOutput() = %q, want %q", got, want)
 	}
 }
+
+func TestActionCommandArgs(t *testing.T) {
+	original := appSettings
+	defer func() { appSettings = original }()
+
+	t.Run("install uses explicit package source", func(t *testing.T) {
+		appSettings = DefaultSettings()
+		got := installCommandArgs("Git.Git", "winget")
+		want := []string{"install", "--id", "Git.Git", "--exact", "--accept-package-agreements", "--source", "winget"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("installCommandArgs() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("install falls back to configured default source only", func(t *testing.T) {
+		appSettings = DefaultSettings()
+		appSettings.Source = "msstore"
+		appSettings.IncludeUnknown = true
+		got := installCommandArgs("Contoso.App", "")
+		want := []string{"install", "--id", "Contoso.App", "--exact", "--accept-package-agreements", "--source", "msstore"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("installCommandArgs() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("upgrade uses explicit package source", func(t *testing.T) {
+		appSettings = DefaultSettings()
+		got := upgradeCommandArgs("GitHub.cli", "winget")
+		want := []string{"upgrade", "--id", "GitHub.cli", "--exact", "--accept-package-agreements", "--source", "winget"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("upgradeCommandArgs() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("uninstall never forces source", func(t *testing.T) {
+		appSettings = DefaultSettings()
+		appSettings.Source = "winget"
+		got := uninstallCommandArgs("Notepad++.Notepad++")
+		want := []string{"uninstall", "--id", "Notepad++.Notepad++", "--exact", "--accept-package-agreements"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
+		}
+	})
+}

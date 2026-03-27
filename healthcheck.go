@@ -430,6 +430,16 @@ func (s healthcheckScreen) init() tea.Cmd {
 	})
 }
 
+func (s healthcheckScreen) reload() (healthcheckScreen, tea.Cmd) {
+	s.state = hcLoading
+	s.err = nil
+	s.scroll = 0
+	return s, tea.Batch(s.spinner.Tick, func() tea.Msg {
+		report, err := runHealthcheck()
+		return healthcheckDoneMsg{report: report, err: err}
+	})
+}
+
 func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -442,11 +452,16 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 			case "down", "j":
 				s.scroll++
-			case "esc", "q", "enter":
+			case "r":
+				return s.reload()
+			case "esc":
 				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 		case hcError:
-			if msg.String() == "esc" || msg.String() == "enter" || msg.String() == "q" {
+			if msg.String() == "r" {
+				return s.reload()
+			}
+			if msg.String() == "esc" {
 				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 		}
@@ -565,9 +580,9 @@ func (s healthcheckScreen) helpKeys() []key.Binding {
 	case hcLoading:
 		return []key.Binding{}
 	case hcError:
-		return []key.Binding{keyEnter, keyEsc}
+		return []key.Binding{keyRefresh, keyEsc, keyTabs}
 	case hcReady:
-		return []key.Binding{keyScroll, keyTabs}
+		return []key.Binding{keyScroll, keyRefresh, keyEsc, keyTabs}
 	}
 	return []key.Binding{keyTabs}
 }

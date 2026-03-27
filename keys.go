@@ -17,6 +17,14 @@ var (
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "select"),
 	)
+	keyApply = key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "apply"),
+	)
+	keyUpgradeSelected = key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "upgrade"),
+	)
 	keyEsc = key.NewBinding(
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "back"),
@@ -25,6 +33,10 @@ var (
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "cancel"),
 	)
+	keyEscClear = key.NewBinding(
+		key.WithKeys("esc"),
+		key.WithHelp("esc", "clear"),
+	)
 	keyRefresh = key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "refresh"),
@@ -32,6 +44,10 @@ var (
 	keyFilter = key.NewBinding(
 		key.WithKeys("/"),
 		key.WithHelp("/", "filter"),
+	)
+	keyFilterEdit = key.NewBinding(
+		key.WithKeys("/"),
+		key.WithHelp("/", "edit"),
 	)
 	keyDetails = key.NewBinding(
 		key.WithKeys("i", "d"),
@@ -84,5 +100,17 @@ var (
 	keyImport = key.NewBinding(
 		key.WithKeys("m"),
 		key.WithHelp("m", "import"),
+	)
+	keyUpgradeAll = key.NewBinding(
+		key.WithKeys("u"),
+		key.WithHelp("u", "upgrade all"),
+	)
+	keyCleanAll = key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "clean all"),
+	)
+	keyOpen = key.NewBinding(
+		key.WithKeys("o"),
+		key.WithHelp("o", "open link"),
 	)
 )

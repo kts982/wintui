@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/lipgloss/v2"
 
@@ -89,7 +90,7 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "esc", "q":
+		case "esc":
 			p.state = detailHidden
 			return p, nil, true
 		case "up", "k":
@@ -116,6 +117,16 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 	}
 
 	return p, nil, false
+}
+
+func (p detailPanel) helpKeys() []key.Binding {
+	switch p.state {
+	case detailLoading, detailError:
+		return []key.Binding{keyEsc}
+	case detailReady:
+		return []key.Binding{keyUp, keyDown, keyOpen, keyEsc}
+	}
+	return nil
 }
 
 // view renders the detail panel.

@@ -110,14 +110,18 @@ func (m importModel) start(installed []Package) (importModel, tea.Cmd) {
 	m.files = nil
 	m.selected = make(map[int]bool)
 	m.batchTotal = 0
+	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.progress, _ = m.progress.start()
-	return m, tea.Batch(m.spinner.Tick, tickProgress(), scanExportFiles(installed))
+	return m, tea.Batch(m.spinner.Tick, tickProgress(), scanExportFilesCtx(m.ctx, installed))
 }
 
 // ── File scanning & loading ────────────────────────────────────────
 
-func scanExportFiles(installed []Package) tea.Cmd {
+func scanExportFilesCtx(ctx context.Context, installed []Package) tea.Cmd {
 	return func() tea.Msg {
+		if ctx.Err() != nil {
+			return importFilesMsg{err: fmt.Errorf("cancelled")}
+		}
 		desktop, err := desktopDir()
 		if err != nil {
 			return importFilesMsg{err: err}
@@ -138,6 +142,9 @@ func scanExportFiles(installed []Package) tea.Cmd {
 		})
 		if len(files) == 0 {
 			return importFilesMsg{err: fmt.Errorf("no wintui_packages_*.json found on Desktop — export first with e")}
+		}
+		if ctx.Err() != nil {
+			return importFilesMsg{err: fmt.Errorf("cancelled")}
 		}
 		// Single file: auto-load it
 		if len(files) == 1 {
@@ -241,6 +248,16 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch m.state {
+		case importScanning:
+			if msg.String() == "esc" {
+				if m.cancel != nil {
+					m.cancel()
+				}
+				m.active = false
+				return m, nil, true
+			}
+			return m, nil, true
+
 		case importFileSelect:
 			switch msg.String() {
 			case "up", "k":
@@ -253,12 +270,19 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 				}
 			case "enter":
 				m.state = importScanning
+				m.ctx, m.cancel = context.WithCancel(context.Background())
 				m.progress, _ = m.progress.start()
 				path := m.files[m.fileCursor]
 				return m, tea.Batch(m.spinner.Tick, tickProgress(), func() tea.Msg {
+					if m.ctx.Err() != nil {
+						return importLoadedMsg{err: fmt.Errorf("cancelled")}
+					}
 					pkgs, err := loadImportFile(path, installed)
 					if err != nil {
 						return importLoadedMsg{err: err}
+					}
+					if m.ctx.Err() != nil {
+						return importLoadedMsg{err: fmt.Errorf("cancelled")}
 					}
 					return importLoadedMsg{packages: pkgs}
 				}), true
@@ -372,6 +396,9 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 		return m, nil, true
 
 	case importFilesMsg:
+		if m.state != importScanning {
+			return m, nil, true
+		}
 		m.progress = m.progress.stop()
 		if msg.err != nil {
 			m.err = msg.err
@@ -384,6 +411,9 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 		return m, nil, true
 
 	case importLoadedMsg:
+		if m.state != importScanning {
+			return m, nil, true
+		}
 		m.progress = m.progress.stop()
 		if msg.err != nil {
 			m.err = msg.err
@@ -402,6 +432,9 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 		return m, nil, true
 
 	case singleImportInstallDoneMsg:
+		if m.state != importInstalling {
+			return m, nil, true
+		}
 		m.batchOutputs = append(m.batchOutputs, msg.output)
 		m.batchErrs = append(m.batchErrs, msg.err)
 		if msg.err != nil {

@@ -19,7 +19,6 @@ type upgradeState int
 const (
 	upgradeLoading upgradeState = iota
 	upgradeEmpty
-	upgradeChooseAction
 	upgradeSelecting
 	upgradeConfirming
 	upgradeExecuting
@@ -38,7 +37,6 @@ type upgradeScreen struct {
 	packages     []Package
 	selected     map[int]bool
 	cursor       int
-	actionCursor int
 	action       string // "all" or "selected"
 	spinner      spinner.Model
 	progress     progressBar
@@ -60,12 +58,11 @@ type upgradeScreen struct {
 	retryAction  *retryRequest
 }
 
-var upgradeActions = []string{"Upgrade All", "Select Packages"}
-
 func newUpgradeScreen() upgradeScreen {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
+	ctx, cancel := context.WithCancel(context.Background())
 	return upgradeScreen{
 		state:    upgradeLoading,
 		selected: make(map[int]bool),
@@ -73,6 +70,8 @@ func newUpgradeScreen() upgradeScreen {
 		progress: newProgressBar(50),
 		detail:   newDetailPanel(),
 		filter:   newListFilter(),
+		ctx:      ctx,
+		cancel:   cancel,
 	}
 }
 
@@ -91,7 +90,7 @@ func (s upgradeScreen) init() tea.Cmd {
 	if s.launchRetry != nil {
 		req := *s.launchRetry
 		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-			out, err := upgradePackageSourceCtx(context.Background(), req.ID, req.Source)
+			out, err := upgradePackageSourceCtx(s.ctx, req.ID, req.Source)
 			return singleUpgradeDoneMsg{output: out, err: err, index: 0}
 		})
 	}
@@ -102,7 +101,7 @@ func (s upgradeScreen) init() tea.Cmd {
 		}
 	}
 	return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-		pkgs, err := getUpgradeable()
+		pkgs, err := getUpgradeableCtx(s.ctx)
 		if err == nil {
 			cache.setUpgradeable(pkgs)
 		}
@@ -174,19 +173,35 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			if s.cancel != nil {
 				s.cancel()
 			}
-			s.state = upgradeEmpty
-			s.err = fmt.Errorf("cancelled")
 			s.progress = s.progress.stop()
+			s.retryAction = nil
+			if s.state == upgradeLoading {
+				s.err = fmt.Errorf("cancelled")
+				if len(s.packages) > 0 {
+					s.state = upgradeSelecting
+				} else {
+					s.state = upgradeEmpty
+				}
+			} else {
+				s.state = upgradeDone
+				s.err = fmt.Errorf("cancelled")
+				s.output = formatBatchResults(
+					s.batchIDs[:len(s.batchErrs)],
+					s.batchErrs,
+					s.batchOutputs,
+				)
+			}
 			return s, nil
 		}
 		// Refresh with r
-		if msg.String() == "r" && (s.state == upgradeChooseAction || s.state == upgradeEmpty || s.state == upgradeDone) {
+		if msg.String() == "r" && (s.state == upgradeSelecting || s.state == upgradeEmpty || s.state == upgradeDone) {
 			cache.invalidate()
 			s.retryAction = nil
 			s.state = upgradeLoading
+			s.ctx, s.cancel = context.WithCancel(context.Background())
 			s.progress, _ = s.progress.start()
 			return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-				pkgs, err := getUpgradeable()
+				pkgs, err := getUpgradeableCtx(s.ctx)
 				if err == nil {
 					cache.setUpgradeable(pkgs)
 				}
@@ -194,21 +209,16 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			})
 		}
 		// Show details
-		if (msg.String() == "i" || msg.String() == "d") && (s.state == upgradeSelecting || s.state == upgradeChooseAction) {
-			if len(s.packages) > 0 {
-				idx := s.cursor
-				if s.state == upgradeChooseAction {
-					idx = 0
-				}
+		if (msg.String() == "i" || msg.String() == "d") && s.state == upgradeSelecting {
+			filtered := s.filter.filterPackages(s.packages)
+			if len(filtered) > 0 && s.cursor >= 0 && s.cursor < len(filtered) {
 				var cmd tea.Cmd
-				pkg := s.packages[idx]
+				pkg := filtered[s.cursor]
 				s.detail, cmd = s.detail.show(pkg.ID, pkg.Source)
 				return s, cmd
 			}
 		}
 		switch s.state {
-		case upgradeChooseAction:
-			return s.updateAction(msg)
 		case upgradeSelecting:
 			return s.updateSelect(msg)
 		case upgradeConfirming:
@@ -230,21 +240,20 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if msg.Button == tea.MouseLeft {
 			contentY := msg.Y - 9 // header(6 logo) + tabbar(2) + title(1)
 			switch s.state {
-			case upgradeChooseAction:
-				row := contentY - 1
-				if row >= 0 && row < len(upgradeActions) {
-					s.actionCursor = row
-					return s.selectAction()
-				}
 			case upgradeSelecting:
-				if contentY >= 1 && contentY-1 < len(s.packages) {
-					s.cursor = contentY - 1
-					s.selected[s.cursor] = !s.selected[s.cursor]
+				filtered := s.filter.filterPackages(s.packages)
+				row := contentY - 5
+				if row >= 0 && row < len(filtered) {
+					s.cursor = row
+					s.toggleFilteredSelection(filtered)
 				}
 			}
 		}
 
 	case packagesLoadedMsg:
+		if s.state != upgradeLoading {
+			return s, nil
+		}
 		s.progress = s.progress.stop()
 		s.retryAction = nil
 		s.packages = msg.packages
@@ -253,11 +262,14 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if msg.err != nil || len(msg.packages) == 0 {
 			s.state = upgradeEmpty
 		} else {
-			s.state = upgradeChooseAction
+			s.state = upgradeSelecting
 		}
 		return s, nil
 
 	case singleUpgradeDoneMsg:
+		if s.state != upgradeExecuting {
+			return s, nil
+		}
 		s.batchOutputs = append(s.batchOutputs, msg.output)
 		s.batchErrs = append(s.batchErrs, msg.err) // nil for success
 		if msg.err != nil {
@@ -286,14 +298,20 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.retryAction = &retryRequest{Op: retryOpUpgrade, ID: s.batchIDs[0], Source: source}
 		}
 		cache.invalidate() // packages changed
-		return s, nil
+		return s, func() tea.Msg { return packageDataChangedMsg{origin: screenUpgrade} }
 
 	case commandDoneMsg:
+		if s.state != upgradeExecuting {
+			return s, nil
+		}
 		s.progress = s.progress.stop()
 		s.output = msg.output
 		s.err = msg.err
 		s.state = upgradeDone
 		cache.invalidate() // packages changed
+		if msg.err == nil {
+			return s, func() tea.Msg { return packageDataChangedMsg{origin: screenUpgrade} }
+		}
 		return s, nil
 
 	case spinner.TickMsg:
@@ -314,34 +332,6 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	return s, nil
 }
 
-func (s upgradeScreen) selectAction() (screen, tea.Cmd) {
-	switch s.actionCursor {
-	case 0: // Upgrade All
-		s.action = "all"
-		s.state = upgradeConfirming
-	case 1: // Select Packages
-		s.state = upgradeSelecting
-		s.cursor = 0
-	}
-	return s, nil
-}
-
-func (s upgradeScreen) updateAction(msg tea.KeyPressMsg) (screen, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
-		if s.actionCursor > 0 {
-			s.actionCursor--
-		}
-	case "down", "j":
-		if s.actionCursor < len(upgradeActions)-1 {
-			s.actionCursor++
-		}
-	case "enter":
-		return s.selectAction()
-	}
-	return s, nil
-}
-
 func (s upgradeScreen) updateSelect(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 	filtered := s.filter.filterPackages(s.packages)
 	switch msg.String() {
@@ -357,31 +347,30 @@ func (s upgradeScreen) updateSelect(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 			s.cursor++
 		}
 	case "space", "x":
-		s.selected[s.cursor] = !s.selected[s.cursor]
+		s.toggleFilteredSelection(filtered)
 		if s.cursor < len(filtered)-1 {
 			s.cursor++
 		}
 	case "a":
-		allSelected := len(s.selected) == len(s.packages)
-		s.selected = make(map[int]bool)
-		if !allSelected {
-			for i := range s.packages {
-				s.selected[i] = true
-			}
+		s.toggleAllFiltered(filtered)
+	case "u":
+		if len(s.packages) > 0 {
+			s.action = "all"
+			s.state = upgradeConfirming
 		}
 	case "enter":
-		count := 0
-		for _, v := range s.selected {
-			if v {
-				count++
-			}
-		}
-		if count > 0 {
+		if s.selectedCount() > 0 {
 			s.action = "selected"
 			s.state = upgradeConfirming
 		}
 	case "esc":
-		s.state = upgradeChooseAction
+		switch {
+		case s.filter.query != "":
+			s.filter = s.filter.deactivate()
+			s.cursor = 0
+		case s.selectedCount() > 0:
+			s.selected = make(map[int]bool)
+		}
 	}
 	return s, nil
 }
@@ -429,13 +418,66 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 		return s, nil
 
 	case "n", "N", "esc":
-		if s.action == "all" {
-			s.state = upgradeChooseAction
-		} else {
-			s.state = upgradeSelecting
-		}
+		s.state = upgradeSelecting
 	}
 	return s, nil
+}
+
+func (s upgradeScreen) selectedCount() int {
+	count := 0
+	for _, v := range s.selected {
+		if v {
+			count++
+		}
+	}
+	return count
+}
+
+func (s upgradeScreen) filteredSelectionIndex(filtered []Package) int {
+	if s.cursor < 0 || s.cursor >= len(filtered) {
+		return -1
+	}
+	target := filtered[s.cursor].ID
+	for i, pkg := range s.packages {
+		if pkg.ID == target {
+			return i
+		}
+	}
+	return -1
+}
+
+func (s *upgradeScreen) toggleFilteredSelection(filtered []Package) {
+	idx := s.filteredSelectionIndex(filtered)
+	if idx < 0 {
+		return
+	}
+	s.selected[idx] = !s.selected[idx]
+}
+
+func (s *upgradeScreen) toggleAllFiltered(filtered []Package) {
+	if len(filtered) == 0 {
+		return
+	}
+	indices := make([]int, 0, len(filtered))
+	allSelected := true
+	for _, pkg := range filtered {
+		for i, base := range s.packages {
+			if base.ID == pkg.ID {
+				indices = append(indices, i)
+				if !s.selected[i] {
+					allSelected = false
+				}
+				break
+			}
+		}
+	}
+	for _, idx := range indices {
+		if allSelected {
+			delete(s.selected, idx)
+		} else {
+			s.selected[idx] = true
+		}
+	}
 }
 
 // formatBatchResults builds a per-package summary from batch upgrade results.
@@ -520,27 +562,31 @@ func (s upgradeScreen) view(width, height int) string {
 			b.WriteString("  " + successStyle.Render("All packages are up to date!") + "\n")
 		}
 
-	case upgradeChooseAction:
-		b.WriteString(fmt.Sprintf("  %s\n\n",
-			infoStyle.Render(fmt.Sprintf("%d package(s) with updates available.", len(s.packages)))))
-		for i, action := range upgradeActions {
-			cursor := cursorBlankStr
-			style := itemStyle
-			if i == s.actionCursor {
-				cursor = cursorStr
-				style = itemActiveStyle
-			}
-			fmt.Fprintf(&b, "  %s%s\n", cursor, style.Render(action))
-		}
-
 	case upgradeSelecting:
-		b.WriteString("  Select packages to upgrade:\n")
+		filtered := s.filter.filterPackages(s.packages)
+		selected := s.selectedCount()
+		b.WriteString(fmt.Sprintf("  %s\n",
+			infoStyle.Render(fmt.Sprintf("%d package(s) with updates available.", len(s.packages)))))
 		filterView := s.filter.view()
 		if filterView != "" {
-			b.WriteString(filterView + "\n")
+			if s.filter.active {
+				b.WriteString(filterView + "\n")
+			} else {
+				b.WriteString(filterView + fmt.Sprintf("  %s",
+					helpStyle.Render(fmt.Sprintf("(%d shown)", len(filtered)))) + "\n")
+			}
+		}
+		if selected > 0 {
+			b.WriteString(fmt.Sprintf("  %s\n",
+				warnStyle.Render(fmt.Sprintf("%d selected — enter to upgrade selected or u to upgrade all", selected))))
+		} else {
+			b.WriteString("  " + helpStyle.Render("space select • a select visible • u upgrade all") + "\n")
 		}
 		b.WriteString("\n")
-		filtered := s.filter.filterPackages(s.packages)
+		if len(filtered) == 0 {
+			b.WriteString("  " + warnStyle.Render("No packages match the current filter.") + "\n")
+			break
+		}
 		maxVisible := height - 10
 		if maxVisible < 5 {
 			maxVisible = 5
@@ -566,13 +612,6 @@ func (s upgradeScreen) view(width, height int) string {
 			label := fmt.Sprintf("%s  (%s)  %s → %s", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
 			fmt.Fprintf(&b, "  %s%s %s\n", cursor, check, style.Render(label))
 		}
-		selected := 0
-		for _, v := range s.selected {
-			if v {
-				selected++
-			}
-		}
-		fmt.Fprintf(&b, "\n  %s\n", infoStyle.Render(fmt.Sprintf("%d selected", selected)))
 
 	case upgradeConfirming:
 		if s.action == "all" {
@@ -634,6 +673,9 @@ func (s upgradeScreen) view(width, height int) string {
 }
 
 func (s upgradeScreen) helpKeys() []key.Binding {
+	if s.detail.visible() {
+		return s.detail.helpKeys()
+	}
 	switch s.state {
 	case upgradeLoading, upgradeExecuting:
 		return []key.Binding{keyEscCancel}
@@ -642,13 +684,39 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 			return []key.Binding{keyRetryElevated, keyRefresh, keyTabs}
 		}
 		return []key.Binding{keyRefresh, keyTabs}
-	case upgradeChooseAction:
-		return []key.Binding{keyUp, keyDown, keyEnter, keyRefresh}
 	case upgradeSelecting:
 		if s.filter.active {
-			return []key.Binding{keyUp, keyDown, keyToggle, keyEnter, keyEsc}
+			filtered := s.filter.filterPackages(s.packages)
+			bindings := []key.Binding{keyUp, keyDown}
+			if len(filtered) > 0 {
+				bindings = append(bindings, keyToggle)
+			}
+			bindings = append(bindings, keyApply, keyEsc)
+			return bindings
 		}
-		return []key.Binding{keyUp, keyDown, keyFilter, keyToggle, keyToggleAll, keyDetails, keyEnter, keyEsc}
+		filtered := s.filter.filterPackages(s.packages)
+		selected := s.selectedCount()
+		bindings := []key.Binding{keyUp, keyDown}
+		if s.filter.query != "" {
+			bindings = append(bindings, keyFilterEdit)
+		} else {
+			bindings = append(bindings, keyFilter)
+		}
+		if len(filtered) > 0 {
+			bindings = append(bindings, keyToggleAll)
+			bindings = append(bindings, keyToggle, keyDetails)
+		}
+		if len(s.packages) > 0 {
+			bindings = append(bindings, keyUpgradeAll)
+		}
+		if selected > 0 {
+			bindings = append(bindings, keyUpgradeSelected)
+		}
+		bindings = append(bindings, keyRefresh)
+		if s.filter.query != "" || selected > 0 {
+			bindings = append(bindings, keyEscClear)
+		}
+		return bindings
 	case upgradeConfirming:
 		return []key.Binding{keyConfirmY}
 	}

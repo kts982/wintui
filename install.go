@@ -40,6 +40,8 @@ type installScreen struct {
 	outLines       []string
 	installOutChan <-chan string
 	installErrChan <-chan error
+	ctx            context.Context
+	cancel         context.CancelFunc
 	launchRetry    *retryRequest
 	retryAction    *retryRequest
 }
@@ -74,6 +76,7 @@ func newInstallScreen() installScreen {
 func newInstallScreenWithRetry(req retryRequest) installScreen {
 	s := newInstallScreen()
 	s.state = installExecuting
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.launchRetry = &req
 	return s
 }
@@ -92,7 +95,7 @@ func (s installScreen) init() tea.Cmd {
 	if s.launchRetry != nil {
 		req := *s.launchRetry
 		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-			out, err := installPackageSourceCtx(context.Background(), req.ID, req.Source)
+			out, err := installPackageSourceCtx(s.ctx, req.ID, req.Source)
 			return commandDoneMsg{output: out, err: err}
 		})
 	}
@@ -112,6 +115,30 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		if msg.String() == "esc" && s.state == installSearching {
+			if s.cancel != nil {
+				s.cancel()
+			}
+			s.progress = s.progress.stop()
+			s.retryAction = nil
+			s.err = nil
+			s.output = ""
+			s.state = installInput
+			s.input.Focus()
+			return s, textinput.Blink
+		}
+		if msg.String() == "esc" && s.state == installExecuting {
+			if s.cancel != nil {
+				s.cancel()
+			}
+			s.progress = s.progress.stop()
+			s.retryAction = nil
+			s.output = strings.Join(s.outLines, "\n")
+			s.err = fmt.Errorf("cancelled")
+			s.state = installDone
+			return s, nil
+		}
+
 		switch s.state {
 		case installInput:
 			switch msg.String() {
@@ -122,9 +149,10 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 				s.state = installSearching
 				s.retryAction = nil
+				s.ctx, s.cancel = context.WithCancel(context.Background())
 				s.progress, _ = s.progress.start()
 				return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-					pkgs, err := searchPackages(query)
+					pkgs, err := searchPackagesCtx(s.ctx, query)
 					return packagesLoadedMsg{packages: pkgs, err: err}
 				})
 			case "esc":
@@ -166,9 +194,10 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				pkg := s.packages[s.cursor]
 				s.state = installExecuting
 				s.retryAction = nil
+				s.ctx, s.cancel = context.WithCancel(context.Background())
 				s.progress, _ = s.progress.start()
 
-				s.installOutChan, s.installErrChan = installPackageStream(pkg.ID, pkg.Source)
+				s.installOutChan, s.installErrChan = installPackageStreamCtx(s.ctx, pkg.ID, pkg.Source)
 				s.outLines = nil
 				s.vp.SetContent("")
 
@@ -193,11 +222,13 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				cache.invalidate()
 				s.state = installInput
 				s.retryAction = nil
+				s.err = nil
+				s.output = ""
 				s.input.SetValue("")
 				s.input.Focus()
 				return s, textinput.Blink
 			}
-			if msg.String() == "enter" || msg.String() == "esc" {
+			if msg.String() == "esc" {
 				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 		}
@@ -214,6 +245,9 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 
 	case packagesLoadedMsg:
+		if s.state != installSearching {
+			return s, nil
+		}
 		s.progress = s.progress.stop()
 		s.retryAction = nil
 		s.packages = msg.packages
@@ -230,6 +264,9 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		return s, nil
 
 	case commandDoneMsg:
+		if s.state != installExecuting {
+			return s, nil
+		}
 		s.progress = s.progress.stop()
 		s.output = msg.output
 		s.err = msg.err
@@ -242,15 +279,24 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 		}
 		cache.invalidate()
+		if msg.err == nil {
+			return s, func() tea.Msg { return packageDataChangedMsg{origin: screenInstall} }
+		}
 		return s, nil
 
 	case streamMsg:
+		if s.state != installExecuting {
+			return s, nil
+		}
 		s.outLines = append(s.outLines, string(msg))
 		s.vp.SetContent(strings.Join(s.outLines, "\n"))
 		s.vp.GotoBottom()
 		return s, awaitStream(s.installOutChan, s.installErrChan)
 
 	case streamDoneMsg:
+		if s.state != installExecuting {
+			return s, nil
+		}
 		s.progress = s.progress.stop()
 		s.err = msg.err
 		s.output = strings.Join(s.outLines, "\n")
@@ -261,6 +307,9 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.retryAction = &retryRequest{Op: retryOpInstall, ID: pkg.ID, Source: pkg.Source}
 		}
 		cache.invalidate()
+		if msg.err == nil {
+			return s, func() tea.Msg { return packageDataChangedMsg{origin: screenInstall} }
+		}
 		return s, nil
 
 	case spinner.TickMsg:
@@ -362,6 +411,9 @@ func (s installScreen) view(width, height int) string {
 }
 
 func (s installScreen) helpKeys() []key.Binding {
+	if s.detail.visible() {
+		return s.detail.helpKeys()
+	}
 	switch s.state {
 	case installInput:
 		return []key.Binding{keySearch, keyEsc}
@@ -373,9 +425,9 @@ func (s installScreen) helpKeys() []key.Binding {
 		return []key.Binding{keyConfirmY}
 	case installDone:
 		if s.retryAction != nil && !isElevated() {
-			return []key.Binding{keyRetryElevated, keyRefresh, keyTabs}
+			return []key.Binding{keyRetryElevated, keyRefresh, keyEsc, keyTabs}
 		}
-		return []key.Binding{keyRefresh, keyTabs}
+		return []key.Binding{keyRefresh, keyEsc, keyTabs}
 	}
 	return []key.Binding{keyTabs}
 }

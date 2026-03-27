@@ -68,10 +68,6 @@ func runWingetWithModeCtx(ctx context.Context, nonInteractive bool, args ...stri
 
 // ── High-level query operations (read-only, no package agreements) ─
 
-func getUpgradeable() ([]Package, error) {
-	return getUpgradeableCtx(context.Background())
-}
-
 func getUpgradeableCtx(ctx context.Context) ([]Package, error) {
 	// Don't pass --source here: it removes the Available column from output.
 	args := []string{"upgrade"}
@@ -101,10 +97,6 @@ func getInstalledCtx(ctx context.Context) ([]Package, error) {
 	return parseWingetTable(out), nil
 }
 
-func searchPackages(query string) ([]Package, error) {
-	return searchPackagesCtx(context.Background(), query)
-}
-
 func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
 	args := []string{"search", query, "--count", "100"}
 	args = append(args, appSettings.BuildListArgs()...)
@@ -117,24 +109,35 @@ func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
 
 // ── High-level action operations (mutating, need package agreements) ─
 
-func upgradePackageSourceCtx(ctx context.Context, id, source string) (string, error) {
+func installCommandArgs(id, source string) []string {
+	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
+	args = append(args, appSettings.BuildInstallArgs()...)
+	return appendPreferredSourceArg(args, source)
+}
+
+func upgradeCommandArgs(id, source string) []string {
 	args := []string{"upgrade", "--id", id, "--exact", "--accept-package-agreements"}
 	args = append(args, appSettings.BuildInstallArgs()...)
-	args = appendActionSourceArgs(args, source)
+	return appendPreferredSourceArg(args, source)
+}
+
+func uninstallCommandArgs(id string) []string {
+	args := []string{"uninstall", "--id", id, "--exact", "--accept-package-agreements"}
+	return append(args, appSettings.BuildUninstallArgs()...)
+}
+
+func upgradePackageSourceCtx(ctx context.Context, id, source string) (string, error) {
+	args := upgradeCommandArgs(id, source)
 	return runWingetActionCtx(ctx, args...)
 }
 
 func installPackageSourceCtx(ctx context.Context, id, source string) (string, error) {
-	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
-	args = append(args, appSettings.BuildInstallArgs()...)
-	args = appendActionSourceArgs(args, source)
+	args := installCommandArgs(id, source)
 	return runWingetActionCtx(ctx, args...)
 }
 
-func uninstallPackageSourceCtx(ctx context.Context, id, source string) (string, error) {
-	args := []string{"uninstall", "--id", id, "--exact", "--accept-package-agreements"}
-	args = append(args, appSettings.BuildUninstallArgs()...)
-	args = appendActionSourceArgs(args, source)
+func uninstallPackageSourceCtx(ctx context.Context, id, _ string) (string, error) {
+	args := uninstallCommandArgs(id)
 	return runWingetActionCtx(ctx, args...)
 }
 
@@ -227,11 +230,14 @@ func elevationRetryHint() string {
 	return "Press Ctrl+e to relaunch elevated, or run WinTUI in an elevated terminal and retry."
 }
 
-func appendActionSourceArgs(args []string, source string) []string {
+func appendPreferredSourceArg(args []string, source string) []string {
+	if source != "winget" && source != "msstore" {
+		source = appSettings.Source
+	}
 	if source == "winget" || source == "msstore" {
 		return append(args, "--source", source)
 	}
-	return append(args, appSettings.BuildListArgs()...)
+	return args
 }
 
 // ── Output cleaning ────────────────────────────────────────────────
@@ -521,18 +527,26 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			outChan <- scanner.Text()
+			select {
+			case outChan <- scanner.Text():
+			case <-ctx.Done():
+				errChan <- fmt.Errorf("cancelled")
+				return
+			}
 		}
 
-		errChan <- cmd.Wait()
+		waitErr := cmd.Wait()
+		if ctx.Err() != nil {
+			errChan <- fmt.Errorf("cancelled")
+			return
+		}
+		errChan <- waitErr
 	}()
 
 	return outChan, errChan
 }
 
-func installPackageStream(id, source string) (<-chan string, <-chan error) {
-	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
-	args = append(args, appSettings.BuildInstallArgs()...)
-	args = appendActionSourceArgs(args, source)
-	return runWingetStreamCtx(context.Background(), false, args...)
+func installPackageStreamCtx(ctx context.Context, id, source string) (<-chan string, <-chan error) {
+	args := installCommandArgs(id, source)
+	return runWingetStreamCtx(ctx, false, args...)
 }

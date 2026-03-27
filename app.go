@@ -64,6 +64,10 @@ type streamDoneMsg struct {
 	err error
 }
 
+type packageDataChangedMsg struct {
+	origin screenID
+}
+
 type filesScannedMsg struct {
 	files []string
 	err   error
@@ -240,6 +244,9 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case switchScreenMsg:
 		return a.handleSwitchScreen(msg)
+
+	case packageDataChangedMsg:
+		return a.handlePackageDataChanged(msg)
 	}
 
 	return a.updateScreen(a.currentScreenID(), msg)
@@ -392,6 +399,24 @@ func (a app) handleSwitchScreen(msg switchScreenMsg) (app, tea.Cmd) {
 	return a, a.wrapScreenCmd(id, s.init())
 }
 
+func (a app) handlePackageDataChanged(msg packageDataChangedMsg) (app, tea.Cmd) {
+	active := a.currentScreenID()
+	var cmds []tea.Cmd
+	for _, id := range []screenID{screenUpgrade, screenPackages} {
+		if id == msg.origin {
+			continue
+		}
+		if id == active {
+			s := createScreen(id)
+			a.screens[id] = s
+			cmds = append(cmds, a.wrapScreenCmd(id, s.init()))
+			continue
+		}
+		delete(a.screens, id)
+	}
+	return a, tea.Batch(cmds...)
+}
+
 func (a app) updateScreen(id screenID, msg tea.Msg) (app, tea.Cmd) {
 	s, ok := a.screens[id]
 	if !ok {
@@ -429,6 +454,8 @@ func (a app) wrapScreenCmd(id screenID, cmd tea.Cmd) tea.Cmd {
 		case screenCmdMsg:
 			return msg
 		case switchScreenMsg:
+			return msg
+		case packageDataChangedMsg:
 			return msg
 		default:
 			return screenCmdMsg{target: id, msg: msg}

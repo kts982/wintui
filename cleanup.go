@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,32 +28,47 @@ const (
 )
 
 type cleanupScreen struct {
-	state    cleanupState
-	files    []string
-	cursor   int
-	spinner  spinner.Model
-	progress progressBar
-	err      error
-	deleted  int
-	failed   int
+	state     cleanupState
+	files     []string
+	cursor    int
+	spinner   spinner.Model
+	progress  progressBar
+	err       error
+	deleted   int
+	failed    int
+	ctx       context.Context
+	cancel    context.CancelFunc
+	cancelled bool
 }
 
 func newCleanupScreen() cleanupScreen {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
+	ctx, cancel := context.WithCancel(context.Background())
 	return cleanupScreen{
 		state:    cleanupLoading,
 		spinner:  sp,
 		progress: newProgressBar(50),
+		ctx:      ctx,
+		cancel:   cancel,
 	}
 }
 
 func (s cleanupScreen) init() tea.Cmd {
-	return tea.Batch(s.spinner.Tick, tickProgress(), scanTempFiles)
+	return tea.Batch(s.spinner.Tick, tickProgress(), scanTempFilesCmd(s.ctx))
 }
 
-func scanTempFiles() tea.Msg {
+func scanTempFilesCmd(ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		return scanTempFiles(ctx)
+	}
+}
+
+func scanTempFiles(ctx context.Context) tea.Msg {
+	if ctx.Err() != nil {
+		return filesScannedMsg{err: fmt.Errorf("cancelled")}
+	}
 	tmpDir := os.TempDir()
 	cutoff := time.Now().Add(-7 * 24 * time.Hour)
 	var old []string
@@ -63,6 +79,9 @@ func scanTempFiles() tea.Msg {
 	}
 
 	for _, e := range entries {
+		if ctx.Err() != nil {
+			return filesScannedMsg{err: fmt.Errorf("cancelled")}
+		}
 		info, err := e.Info()
 		if err != nil {
 			continue
@@ -74,9 +93,34 @@ func scanTempFiles() tea.Msg {
 	return filesScannedMsg{files: old}
 }
 
+func (s cleanupScreen) reload() (cleanupScreen, tea.Cmd) {
+	s.state = cleanupLoading
+	s.err = nil
+	s.deleted = 0
+	s.failed = 0
+	s.cancelled = false
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.progress, _ = s.progress.start()
+	return s, tea.Batch(s.spinner.Tick, tickProgress(), scanTempFilesCmd(s.ctx))
+}
+
 func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		if msg.String() == "r" && (s.state == cleanupReady || s.state == cleanupEmpty || s.state == cleanupDone) {
+			return s.reload()
+		}
+
+		if msg.String() == "esc" && (s.state == cleanupLoading || s.state == cleanupExecuting) {
+			if s.cancel != nil {
+				s.cancel()
+			}
+			if s.state == cleanupLoading {
+				s.progress = s.progress.stop()
+			}
+			return s, nil
+		}
+
 		switch s.state {
 		case cleanupReady:
 			switch msg.String() {
@@ -88,9 +132,9 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				if s.cursor < len(s.files)-1 {
 					s.cursor++
 				}
-			case "enter", "d":
+			case "enter":
 				s.state = cleanupConfirm
-			case "esc", "q":
+			case "esc":
 				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 
@@ -98,11 +142,17 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			switch msg.String() {
 			case "y", "Y":
 				s.state = cleanupExecuting
+				s.cancelled = false
+				s.ctx, s.cancel = context.WithCancel(context.Background())
 				s.progress, _ = s.progress.start()
 				files := s.files
+				ctx := s.ctx
 				return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
 					deleted, failed := 0, 0
 					for _, f := range files {
+						if ctx.Err() != nil {
+							return cleanupDoneMsg{deleted: deleted, failed: failed, cancelled: true}
+						}
 						if err := os.RemoveAll(f); err != nil {
 							failed++
 						} else {
@@ -116,15 +166,19 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 
 		case cleanupDone, cleanupEmpty:
-			if msg.String() == "enter" || msg.String() == "esc" {
+			if msg.String() == "esc" {
 				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 		}
 
 	case filesScannedMsg:
+		if s.state != cleanupLoading {
+			return s, nil
+		}
 		s.progress = s.progress.stop()
 		s.files = msg.files
 		s.err = msg.err
+		s.cancelled = false
 		if msg.err != nil || len(msg.files) == 0 {
 			s.state = cleanupEmpty
 		} else {
@@ -133,9 +187,13 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		return s, nil
 
 	case cleanupDoneMsg:
+		if s.state != cleanupExecuting {
+			return s, nil
+		}
 		s.progress = s.progress.stop()
 		s.deleted = msg.deleted
 		s.failed = msg.failed
+		s.cancelled = msg.cancelled
 		s.state = cleanupDone
 		return s, nil
 
@@ -174,27 +232,38 @@ func (s cleanupScreen) view(width, height int) string {
 		}
 
 	case cleanupReady:
-		b.WriteString(fmt.Sprintf("  %s\n\n",
-			warnStyle.Render(fmt.Sprintf("%d item(s) older than 7 days.", len(s.files)))))
+		b.WriteString(fmt.Sprintf("  %s\n",
+			warnStyle.Render(fmt.Sprintf("%d item(s) older than 7 days will be removed.", len(s.files)))))
+		b.WriteString("  " + helpStyle.Render("Preview of cleanup targets") + "\n\n")
 
-		maxVisible := height - 8
+		maxVisible := height - 12
 		if maxVisible < 5 {
 			maxVisible = 5
 		}
-		start, end := scrollWindow(s.cursor, len(s.files), maxVisible)
-		for i := start; i < end; i++ {
-			cursor := cursorBlankStr
-			style := itemStyle
-			if i == s.cursor {
-				cursor = cursorStr
-				style = itemActiveStyle
-			}
-			name := filepath.Base(s.files[i])
-			fmt.Fprintf(&b, "  %s%s\n", cursor, style.Render(name))
+		start := s.cursor
+		maxStart := len(s.files) - maxVisible
+		if maxStart < 0 {
+			maxStart = 0
 		}
+		if start > maxStart {
+			start = maxStart
+		}
+		end := start + maxVisible
+		if end > len(s.files) {
+			end = len(s.files)
+		}
+		for i := start; i < end; i++ {
+			name := filepath.Base(s.files[i])
+			fmt.Fprintf(&b, "  • %s\n", itemStyle.Render(name))
+		}
+		if len(s.files) > maxVisible {
+			b.WriteString(fmt.Sprintf("\n  %s\n",
+				helpStyle.Render(fmt.Sprintf("Showing %d-%d of %d (↑↓ to scroll)", start+1, end, len(s.files)))))
+		}
+		b.WriteString("\n  " + helpStyle.Render(fmt.Sprintf("Press enter to delete all %d item(s).", len(s.files))) + "\n")
 
 	case cleanupConfirm:
-		b.WriteString(fmt.Sprintf("  Delete %d temp item(s)?\n\n",
+		b.WriteString(fmt.Sprintf("  Delete all %d temp item(s)?\n\n",
 			len(s.files)))
 		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
 
@@ -203,8 +272,13 @@ func (s cleanupScreen) view(width, height int) string {
 		b.WriteString("  " + s.progress.view() + "\n")
 
 	case cleanupDone:
-		b.WriteString(fmt.Sprintf("  %s\n",
-			successStyle.Render(fmt.Sprintf("Deleted %d item(s).", s.deleted))))
+		if s.cancelled {
+			b.WriteString(fmt.Sprintf("  %s\n",
+				warnStyle.Render(fmt.Sprintf("Cleanup cancelled after deleting %d item(s).", s.deleted))))
+		} else {
+			b.WriteString(fmt.Sprintf("  %s\n",
+				successStyle.Render(fmt.Sprintf("Deleted %d item(s).", s.deleted))))
+		}
 		if s.failed > 0 {
 			b.WriteString(fmt.Sprintf("  %s\n",
 				warnStyle.Render(fmt.Sprintf("%d item(s) could not be removed (in use or locked).", s.failed))))
@@ -219,9 +293,9 @@ func (s cleanupScreen) helpKeys() []key.Binding {
 	case cleanupLoading, cleanupExecuting:
 		return []key.Binding{keyEscCancel}
 	case cleanupEmpty, cleanupDone:
-		return []key.Binding{keyRefresh, keyTabs}
+		return []key.Binding{keyRefresh, keyEsc, keyTabs}
 	case cleanupReady:
-		return []key.Binding{keyUp, keyDown, keyEnter, keyEsc}
+		return []key.Binding{keyUp, keyDown, keyCleanAll, keyRefresh, keyEsc}
 	case cleanupConfirm:
 		return []key.Binding{keyConfirmY}
 	}
@@ -230,6 +304,7 @@ func (s cleanupScreen) helpKeys() []key.Binding {
 
 // cleanupDoneMsg is sent when temp file deletion completes.
 type cleanupDoneMsg struct {
-	deleted int
-	failed  int
+	deleted   int
+	failed    int
+	cancelled bool
 }

@@ -46,6 +46,7 @@ type packagesScreen struct {
 	exportMsg     string
 	statusMsg     string
 	filter        listFilter
+	ctx           context.Context
 	cancel        context.CancelFunc
 	launchRetry   *retryRequest
 	retryAction   *retryRequest
@@ -61,6 +62,7 @@ func newPackagesScreen() packagesScreen {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
+	ctx, cancel := context.WithCancel(context.Background())
 	return packagesScreen{
 		state:      packagesLoading,
 		selected:   make(map[string]bool),
@@ -69,6 +71,8 @@ func newPackagesScreen() packagesScreen {
 		detail:     newDetailPanel(),
 		importFlow: newImportModel(),
 		filter:     newListFilter(),
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 }
 
@@ -83,7 +87,7 @@ func (s packagesScreen) init() tea.Cmd {
 	if s.launchRetry != nil {
 		req := *s.launchRetry
 		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-			out, err := uninstallPackageSourceCtx(context.Background(), req.ID, req.Source)
+			out, err := uninstallPackageSourceCtx(s.ctx, req.ID, req.Source)
 			return commandDoneMsg{output: out, err: err}
 		})
 	}
@@ -93,7 +97,7 @@ func (s packagesScreen) init() tea.Cmd {
 		}
 	}
 	return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-		pkgs, err := getInstalled()
+		pkgs, err := getInstalledCtx(s.ctx)
 		if err == nil {
 			cache.setInstalled(pkgs)
 		}
@@ -120,7 +124,11 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if handled {
 			if !s.importFlow.active && s.importFlow.batchTotal > 0 {
 				// Import completed with installations — reload
-				return s.reload()
+				next, reloadCmd := s.reload()
+				return next, tea.Batch(
+					reloadCmd,
+					func() tea.Msg { return packageDataChangedMsg{origin: screenPackages} },
+				)
 			}
 			return s, cmd
 		}
@@ -158,13 +166,25 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 
 		// Cancel
-		if msg.String() == "esc" && s.state == packagesUninstalling {
+		if msg.String() == "esc" && (s.state == packagesLoading || s.state == packagesUninstalling) {
 			if s.cancel != nil {
 				s.cancel()
 			}
-			s.state = packagesReady
-			s.statusMsg = warnStyle.Render("Cancelled")
-			s.progress = s.progress.stop()
+			if s.state == packagesLoading {
+				s.progress = s.progress.stop()
+				if len(s.packages) > 0 {
+					s.state = packagesReady
+					s.statusMsg = warnStyle.Render("Refresh cancelled")
+					s.rebuildTable()
+				} else {
+					s.state = packagesEmpty
+					s.err = fmt.Errorf("cancelled")
+				}
+			} else {
+				s.state = packagesReady
+				s.statusMsg = warnStyle.Render("Cancelled")
+				s.progress = s.progress.stop()
+			}
 			return s, nil
 		}
 
@@ -188,6 +208,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					s.rebuildTable()
 					return s, nil
 				}
+				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			case "i", "d":
 				filtered := s.filteredPkgs()
 				row := s.table.Cursor()
@@ -230,8 +251,8 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, cmd
 
 		case packagesEmpty, packagesDone:
-			if msg.String() == "enter" || msg.String() == "esc" {
-				return s.reload()
+			if msg.String() == "esc" {
+				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 
 		case packagesConfirmUninstall:
@@ -284,6 +305,9 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 
 	case packagesLoadedMsg:
+		if s.state != packagesLoading {
+			return s, nil
+		}
 		s.progress = s.progress.stop()
 		if msg.err != nil || len(msg.packages) == 0 {
 			s.err = msg.err
@@ -299,6 +323,9 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		return s, nil
 
 	case commandDoneMsg:
+		if s.state != packagesUninstalling {
+			return s, nil
+		}
 		s.progress = s.progress.stop()
 		cache.invalidate()
 		count := s.selectedCount()
@@ -320,13 +347,19 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.attemptAction = nil
 		// Reload the list
 		s.state = packagesLoading
-		return s, tea.Batch(s.spinner.Tick, tickProgress(), clearPackagesFlashAfter(s.flashSeq, 8*time.Second), func() tea.Msg {
-			pkgs, err := getInstalled()
-			if err == nil {
-				cache.setInstalled(pkgs)
-			}
-			return packagesLoadedMsg{packages: pkgs, err: err}
-		})
+		return s, tea.Batch(
+			s.spinner.Tick,
+			tickProgress(),
+			clearPackagesFlashAfter(s.flashSeq, 8*time.Second),
+			func() tea.Msg { return packageDataChangedMsg{origin: screenPackages} },
+			func() tea.Msg {
+				pkgs, err := getInstalled()
+				if err == nil {
+					cache.setInstalled(pkgs)
+				}
+				return packagesLoadedMsg{packages: pkgs, err: err}
+			},
+		)
 
 	case exportDoneMsg:
 		if msg.err != nil {
@@ -417,9 +450,10 @@ func (s packagesScreen) reload() (packagesScreen, tea.Cmd) {
 	s.statusMsg = ""
 	s.retryAction = nil
 	s.flashSeq++
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.progress, _ = s.progress.start()
 	return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-		pkgs, err := getInstalled()
+		pkgs, err := getInstalledCtx(s.ctx)
 		if err == nil {
 			cache.setInstalled(pkgs)
 		}
@@ -657,16 +691,34 @@ func (s packagesScreen) helpKeys() []key.Binding {
 	if s.importFlow.active {
 		return s.importFlow.helpKeys()
 	}
+	if s.detail.visible() {
+		return s.detail.helpKeys()
+	}
 	switch s.state {
 	case packagesLoading, packagesUninstalling:
 		return []key.Binding{keyEscCancel}
 	case packagesEmpty, packagesDone:
-		return []key.Binding{keyRefresh, keyTabs}
+		return []key.Binding{keyRefresh, keyEsc, keyTabs}
 	case packagesReady:
 		if s.filter.active {
-			return []key.Binding{keyUp, keyDown, keyEnter, keyEsc}
+			return []key.Binding{keyUp, keyDown, keyApply, keyEsc}
 		}
-		bindings := []key.Binding{keyUp, keyDown, keyFilter, keyToggle, keyDetails, keyExport, keyImport, keyRefresh}
+		filtered := s.filteredPkgs()
+		bindings := []key.Binding{keyUp, keyDown}
+		if s.filter.query != "" {
+			bindings = append(bindings, keyFilterEdit)
+		} else {
+			bindings = append(bindings, keyFilter)
+		}
+		if len(filtered) > 0 {
+			bindings = append(bindings, keyToggle, keyDetails)
+		}
+		bindings = append(bindings, keyExport, keyImport, keyRefresh)
+		if s.filter.query != "" {
+			bindings = append(bindings, keyEscClear)
+		} else {
+			bindings = append(bindings, keyEsc)
+		}
 		if s.retryAction != nil && !isElevated() {
 			bindings = append(bindings, keyRetryElevated)
 		}
