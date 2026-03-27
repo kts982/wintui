@@ -68,6 +68,65 @@ func TestIdentityKind(t *testing.T) {
 	}
 }
 
+func TestUninstallLookupArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		pkg  Package
+		want []string
+	}{
+		{
+			name: "winget package uses id",
+			pkg:  Package{ID: "Mozilla.Firefox", Source: "winget"},
+			want: []string{"--id", "Mozilla.Firefox"},
+		},
+		{
+			name: "msstore package uses id",
+			pkg:  Package{ID: "9NBLGGH5R558", Source: "msstore"},
+			want: []string{"--id", "9NBLGGH5R558"},
+		},
+		{
+			name: "canonical package without parsed source uses id",
+			pkg:  Package{ID: "Neovim.Neovim"},
+			want: []string{"--id", "Neovim.Neovim"},
+		},
+		{
+			name: "arp package uses exact name",
+			pkg:  Package{Name: "Mozilla Maintenance Service", ID: "ARP\\Machine\\X64\\MozillaMaintenanceService"},
+			want: []string{"--name", "Mozilla Maintenance Service"},
+		},
+		{
+			name: "guid package uses product code",
+			pkg:  Package{Name: "Legacy App", ID: "{11111111-2222-3333-4444-555555555555}"},
+			want: []string{"--product-code", "{11111111-2222-3333-4444-555555555555}"},
+		},
+		{
+			name: "raw msix identity falls back to exact name",
+			pkg:  Package{Name: "Notepad++", ID: "MSIX\\NotepadPlusPlus_1.0.0.0_neutral__gabc1234"},
+			want: []string{"--name", "Notepad++"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := uninstallLookupArgs(tt.pkg); !equalStringSlices(got, tt.want) {
+				t.Fatalf("uninstallLookupArgs(%+v) = %#v, want %#v", tt.pkg, got, tt.want)
+			}
+		})
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestDeduplicatePackages(t *testing.T) {
 	pkgs := []Package{
 		{Name: "Notepad++", ID: "Notepad++.Notepad++", Version: "8.6.4", Source: "winget"},

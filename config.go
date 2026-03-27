@@ -107,9 +107,9 @@ func (s Settings) BuildInstallArgs() []string {
 }
 
 // BuildUninstallArgs returns extra winget flags for uninstall.
-func (s Settings) BuildUninstallArgs() []string {
+func (s Settings) BuildUninstallArgs(includePurge bool) []string {
 	var args []string
-	if s.PurgeOnUninstall {
+	if includePurge && s.PurgeOnUninstall {
 		args = append(args, "--purge")
 	}
 	if s.Force {

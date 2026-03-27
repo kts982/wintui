@@ -87,7 +87,7 @@ func (s packagesScreen) init() tea.Cmd {
 	if s.launchRetry != nil {
 		req := *s.launchRetry
 		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-			out, err := uninstallPackageSourceCtx(s.ctx, req.ID, req.Source)
+			out, err := uninstallPackageCtx(s.ctx, Package{Name: req.Name, ID: req.ID, Source: req.Source})
 			return commandDoneMsg{output: out, err: err}
 		})
 	}
@@ -265,13 +265,13 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				selected := s.selectedPackages()
 				s.attemptAction = nil
 				if len(selected) == 1 {
-					s.attemptAction = &retryRequest{Op: retryOpUninstall, ID: selected[0].ID, Source: selected[0].Source}
+					s.attemptAction = &retryRequest{Op: retryOpUninstall, ID: selected[0].ID, Name: selected[0].Name, Source: selected[0].Source}
 				}
 				return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
 					var outputs []string
 					var lastErr error
 					for _, pkg := range selected {
-						out, err := uninstallPackageSourceCtx(ctx, pkg.ID, pkg.Source)
+						out, err := uninstallPackageCtx(ctx, pkg)
 						outputs = append(outputs, out)
 						if err != nil {
 							lastErr = err

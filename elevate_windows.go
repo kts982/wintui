@@ -20,6 +20,9 @@ func relaunchElevatedRetry(req retryRequest) error {
 		"--retry-op", string(req.Op),
 		"--id", req.ID,
 	}
+	if req.Name != "" {
+		args = append(args, "--name", req.Name)
+	}
 	if req.Source != "" {
 		args = append(args, "--source", req.Source)
 	}

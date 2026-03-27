@@ -121,9 +121,33 @@ func upgradeCommandArgs(id, source string) []string {
 	return appendPreferredSourceArg(args, source)
 }
 
-func uninstallCommandArgs(id string) []string {
-	args := []string{"uninstall", "--id", id, "--exact", "--accept-package-agreements"}
-	return append(args, appSettings.BuildUninstallArgs()...)
+func uninstallLookupArgs(pkg Package) []string {
+	switch {
+	case strings.HasPrefix(pkg.ID, "{") && strings.HasSuffix(pkg.ID, "}"):
+		return []string{"--product-code", pkg.ID}
+	case isNonCanonical(pkg.ID):
+		if strings.TrimSpace(pkg.Name) != "" {
+			return []string{"--name", pkg.Name}
+		}
+		return []string{"--id", pkg.ID}
+	case pkg.Source == "winget" || pkg.Source == "msstore":
+		return []string{"--id", pkg.ID}
+	case looksLikeStoreProductID(pkg.ID):
+		return []string{"--id", pkg.ID}
+	case strings.Contains(pkg.ID, "."):
+		return []string{"--id", pkg.ID}
+	case strings.TrimSpace(pkg.Name) != "":
+		return []string{"--name", pkg.Name}
+	default:
+		return []string{"--id", pkg.ID}
+	}
+}
+
+func uninstallCommandArgs(pkg Package, includePurge bool) []string {
+	args := []string{"uninstall"}
+	args = append(args, uninstallLookupArgs(pkg)...)
+	args = append(args, "--exact", "--accept-package-agreements")
+	return append(args, appSettings.BuildUninstallArgs(includePurge)...)
 }
 
 func upgradePackageSourceCtx(ctx context.Context, id, source string) (string, error) {
@@ -136,9 +160,33 @@ func installPackageSourceCtx(ctx context.Context, id, source string) (string, er
 	return runWingetActionCtx(ctx, args...)
 }
 
-func uninstallPackageSourceCtx(ctx context.Context, id, _ string) (string, error) {
-	args := uninstallCommandArgs(id)
-	return runWingetActionCtx(ctx, args...)
+func shouldRetryUninstallWithoutPurge(err error, output string) bool {
+	if err == nil || !appSettings.PurgeOnUninstall {
+		return false
+	}
+	lower := strings.ToLower(err.Error() + "\n" + output)
+	patterns := []string{
+		"no applicable installer",
+		"package not found",
+		"0x8a150002",
+		"0x8a150011",
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func uninstallPackageCtx(ctx context.Context, pkg Package) (string, error) {
+	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall)
+	out, err := runWingetActionCtx(ctx, args...)
+	if shouldRetryUninstallWithoutPurge(err, out) {
+		args = uninstallCommandArgs(pkg, false)
+		return runWingetActionCtx(ctx, args...)
+	}
+	return out, err
 }
 
 func showPackage(id, source string) (PackageDetail, error) {
