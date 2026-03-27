@@ -462,14 +462,13 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			case "r":
 				return s.reload()
 			case "esc":
-				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
+				if s.scroll > 0 {
+					s.scroll = 0
+				}
 			}
 		case hcError:
 			if msg.String() == "r" {
 				return s.reload()
-			}
-			if msg.String() == "esc" {
-				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
 		}
 
@@ -593,9 +592,14 @@ func (s healthcheckScreen) helpKeys() []key.Binding {
 	case hcLoading:
 		return []key.Binding{}
 	case hcError:
-		return []key.Binding{keyRefresh, keyEsc, keyTabs}
+		return []key.Binding{keyRefresh, keyTabs}
 	case hcReady:
-		return []key.Binding{keyScroll, keyRefresh, keyEsc, keyTabs}
+		bindings := []key.Binding{keyScroll, keyRefresh}
+		if s.scroll > 0 {
+			bindings = append(bindings, keyEscClear)
+		}
+		bindings = append(bindings, keyTabs)
+		return bindings
 	}
 	return []key.Binding{keyTabs}
 }

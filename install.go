@@ -156,7 +156,11 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					return packagesLoadedMsg{packages: pkgs, err: err}
 				})
 			case "esc":
-				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
+				if s.input.Value() != "" {
+					s.input.SetValue("")
+					s.input.Focus()
+					return s, textinput.Blink
+				}
 			}
 			var cmd tea.Cmd
 			s.input, cmd = s.input.Update(msg)
@@ -229,7 +233,13 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				return s, textinput.Blink
 			}
 			if msg.String() == "esc" {
-				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
+				s.state = installInput
+				s.retryAction = nil
+				s.err = nil
+				s.output = ""
+				s.input.SetValue("")
+				s.input.Focus()
+				return s, textinput.Blink
 			}
 		}
 
@@ -441,7 +451,10 @@ func (s installScreen) helpKeys() []key.Binding {
 	}
 	switch s.state {
 	case installInput:
-		return []key.Binding{keySearch, keyEsc}
+		if s.input.Value() != "" {
+			return []key.Binding{keySearch, keyEscClear}
+		}
+		return []key.Binding{keySearch}
 	case installSearching, installExecuting:
 		return []key.Binding{keyEscCancel}
 	case installResults:

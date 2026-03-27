@@ -58,8 +58,6 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.saved = false
 			s.dirty = appSettings != s.diskState
 			s.errMsg = ""
-		case "esc":
-			return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 		}
 
 	case tea.MouseClickMsg:
@@ -166,7 +164,7 @@ func (s settingsScreen) view(width, height int) string {
 }
 
 func (s settingsScreen) helpKeys() []key.Binding {
-	return []key.Binding{keyUp, keyDown, keyCycle, keySave, keyReset, keyEsc}
+	return []key.Binding{keyUp, keyDown, keyCycle, keySave, keyReset, keyTabs}
 }
 
 func renderSettingValue(def settingDef, val string) string {

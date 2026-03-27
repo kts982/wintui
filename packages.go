@@ -208,7 +208,11 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					s.rebuildTable()
 					return s, nil
 				}
-				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
+				if s.selectedCount() > 0 {
+					s.selected = make(map[string]bool)
+					s.rebuildTable()
+					return s, nil
+				}
 			case "i", "d":
 				filtered := s.filteredPkgs()
 				row := s.table.Cursor()
@@ -251,10 +255,6 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, cmd
 
 		case packagesEmpty, packagesDone:
-			if msg.String() == "esc" {
-				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
-			}
-
 		case packagesConfirmUninstall:
 			switch msg.String() {
 			case "y", "Y":
@@ -700,7 +700,7 @@ func (s packagesScreen) helpKeys() []key.Binding {
 	case packagesLoading, packagesUninstalling:
 		return []key.Binding{keyEscCancel}
 	case packagesEmpty, packagesDone:
-		return []key.Binding{keyRefresh, keyEsc, keyTabs}
+		return []key.Binding{keyRefresh, keyTabs}
 	case packagesReady:
 		if s.filter.active {
 			return []key.Binding{keyUp, keyDown, keyApply, keyEsc}
@@ -716,10 +716,8 @@ func (s packagesScreen) helpKeys() []key.Binding {
 			bindings = append(bindings, keyToggle, keyDetails)
 		}
 		bindings = append(bindings, keyExport, keyImport, keyRefresh)
-		if s.filter.query != "" {
+		if s.filter.query != "" || s.selectedCount() > 0 {
 			bindings = append(bindings, keyEscClear)
-		} else {
-			bindings = append(bindings, keyEsc)
 		}
 		if s.retryAction != nil && !isElevated() {
 			bindings = append(bindings, keyRetryElevated)

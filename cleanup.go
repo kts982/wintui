@@ -135,7 +135,9 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			case "enter":
 				s.state = cleanupConfirm
 			case "esc":
-				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
+				if s.cursor > 0 {
+					s.cursor = 0
+				}
 			}
 
 		case cleanupConfirm:
@@ -166,9 +168,6 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 
 		case cleanupDone, cleanupEmpty:
-			if msg.String() == "esc" {
-				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
-			}
 		}
 
 	case filesScannedMsg:
@@ -295,9 +294,13 @@ func (s cleanupScreen) helpKeys() []key.Binding {
 	case cleanupLoading, cleanupExecuting:
 		return []key.Binding{keyEscCancel}
 	case cleanupEmpty, cleanupDone:
-		return []key.Binding{keyRefresh, keyEsc, keyTabs}
+		return []key.Binding{keyRefresh, keyTabs}
 	case cleanupReady:
-		return []key.Binding{keyUp, keyDown, keyCleanAll, keyRefresh, keyEsc}
+		bindings := []key.Binding{keyUp, keyDown, keyCleanAll, keyRefresh}
+		if s.cursor > 0 {
+			bindings = append(bindings, keyEscClear)
+		}
+		return bindings
 	case cleanupConfirm:
 		return []key.Binding{keyConfirmY}
 	}

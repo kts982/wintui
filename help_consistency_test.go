@@ -26,6 +26,8 @@ func keyMsg(keyName string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyPgUp}
 	case "pgdown":
 		return tea.KeyPressMsg{Code: tea.KeyPgDown}
+	case "ctrl+,":
+		return tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}
 	default:
 		r := []rune(keyName)[0]
 		return tea.KeyPressMsg{Code: r, Text: string(r)}
@@ -85,23 +87,37 @@ func TestInstallDoneHelpUsesSearchAgain(t *testing.T) {
 	}
 }
 
-func TestPackagesReadyEscBacksToUpgrade(t *testing.T) {
-	s := newPackagesScreen()
-	s.state = packagesReady
+func TestInstallInputEscClearsQueryLocally(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installInput
+	s.input.SetValue("firefox")
 
 	next, cmd := s.update(keyMsg("esc"))
 	if cmd == nil {
-		t.Fatal("expected back command")
+		t.Fatal("expected blink command after clearing input")
+	}
+
+	got := next.(installScreen)
+	if got.input.Value() != "" {
+		t.Fatalf("input = %q, want empty", got.input.Value())
+	}
+}
+
+func TestPackagesReadyEscClearsSelectionLocally(t *testing.T) {
+	s := newPackagesScreen()
+	s.state = packagesReady
+	s.packages = []Package{{Name: "Git", ID: "Git.Git", Version: "1.0", Source: "winget"}}
+	s.selected["Git.Git"] = true
+	s.rebuildTable()
+
+	next, cmd := s.update(keyMsg("esc"))
+	if cmd != nil {
+		t.Fatalf("expected no tab switch command, got %#v", cmd())
 	}
 
 	got := next.(packagesScreen)
-	if got.state != packagesReady {
-		t.Fatalf("state = %v, want %v", got.state, packagesReady)
-	}
-
-	msg := cmd()
-	if back, ok := msg.(switchScreenMsg); !ok || back != switchScreenMsg(screenUpgrade) {
-		t.Fatalf("back cmd = %#v, want switchScreenMsg(screenUpgrade)", msg)
+	if got.selectedCount() != 0 {
+		t.Fatalf("selectedCount() = %d, want 0", got.selectedCount())
 	}
 }
 
@@ -130,7 +146,6 @@ func TestCleanupReadyHelpMatchesBulkAction(t *testing.T) {
 		keyDown.Help(),
 		keyCleanAll.Help(),
 		keyRefresh.Help(),
-		keyEsc.Help(),
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -138,7 +153,7 @@ func TestCleanupReadyHelpMatchesBulkAction(t *testing.T) {
 	}
 }
 
-func TestHealthcheckReadyHelpIncludesRefreshAndBack(t *testing.T) {
+func TestHealthcheckReadyHelpIncludesRefreshAndTabs(t *testing.T) {
 	s := newHealthcheckScreen()
 	s.state = hcReady
 
@@ -146,7 +161,6 @@ func TestHealthcheckReadyHelpIncludesRefreshAndBack(t *testing.T) {
 	want := []key.Help{
 		keyScroll.Help(),
 		keyRefresh.Help(),
-		keyEsc.Help(),
 		keyTabs.Help(),
 	}
 
@@ -164,6 +178,22 @@ func TestHealthcheckPgDownAdvancesScroll(t *testing.T) {
 
 	if got.scroll != 8 {
 		t.Fatalf("scroll = %d, want 8", got.scroll)
+	}
+}
+
+func TestHealthcheckEscResetsScrollLocally(t *testing.T) {
+	s := newHealthcheckScreen()
+	s.state = hcReady
+	s.scroll = 12
+
+	next, cmd := s.update(keyMsg("esc"))
+	if cmd != nil {
+		t.Fatalf("expected no tab switch command, got %#v", cmd())
+	}
+
+	got := next.(healthcheckScreen)
+	if got.scroll != 0 {
+		t.Fatalf("scroll = %d, want 0", got.scroll)
 	}
 }
 
@@ -281,6 +311,24 @@ func TestImportReviewShowAllHelpUsesFocusInstallable(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("import review show-all help = %#v, want %#v", got, want)
+	}
+}
+
+func TestSettingsHelpUsesTabsInsteadOfEsc(t *testing.T) {
+	s := newSettingsScreen()
+
+	got := bindingHelps(s.helpKeys())
+	want := []key.Help{
+		keyUp.Help(),
+		keyDown.Help(),
+		keyCycle.Help(),
+		keySave.Help(),
+		keyReset.Help(),
+		keyTabs.Help(),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("settings help = %#v, want %#v", got, want)
 	}
 }
 
