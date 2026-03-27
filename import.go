@@ -10,11 +10,11 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // ── Import flow state machine ──────────────────────────────────────
@@ -239,7 +239,7 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch m.state {
 		case importFileSelect:
 			switch msg.String() {
@@ -278,7 +278,7 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 				if m.cursor < len(m.packages)-1 {
 					m.cursor++
 				}
-			case " ", "x":
+			case "space", "x":
 				if m.cursor < len(m.packages) {
 					pkg := m.packages[m.cursor]
 					if !pkg.Installed && !pkg.NonCanonical {

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/lipgloss/v2"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type settingsScreen struct {
@@ -30,7 +30,7 @@ func (s settingsScreen) init() tea.Cmd { return nil }
 
 func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
 			if s.cursor > 0 {
@@ -40,7 +40,7 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			if s.cursor < len(settingDefs)-1 {
 				s.cursor++
 			}
-		case "enter", " ", "right", "l":
+		case "enter", "space", "right", "l":
 			s.cycleForward()
 		case "left", "h":
 			s.cycleBackward()
@@ -60,8 +60,8 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.errMsg = ""
 		}
 
-	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
 			contentY := msg.Y - 9 // header + tab + title offset
 			if contentY >= 0 && contentY < len(settingDefs) {
 				s.cursor = contentY

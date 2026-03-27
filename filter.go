@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/lipgloss/v2"
 	"github.com/sahilm/fuzzy"
 )
 
@@ -17,10 +17,12 @@ type listFilter struct {
 func newListFilter() listFilter {
 	ti := textinput.New()
 	ti.Placeholder = "filter..."
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(accent)
-	ti.Cursor.Style = lipgloss.NewStyle().Foreground(accent)
+	styles := ti.Styles()
+	styles.Focused.Prompt = lipgloss.NewStyle().Foreground(accent)
+	styles.Cursor.Color = accent
+	ti.SetStyles(styles)
 	ti.Prompt = "/ "
-	ti.Width = 30
+	ti.SetWidth(30)
 	return listFilter{input: ti}
 }
 

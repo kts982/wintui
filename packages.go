@@ -6,14 +6,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/table"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/lipgloss/v2"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type packagesState int
@@ -38,7 +38,7 @@ type packagesScreen struct {
 	spinner       spinner.Model
 	progress      progressBar
 	packages      []Package
-	selected      map[int]bool // selected by filtered index
+	selected      map[string]bool // selected by package ID
 	count         int
 	err           error
 	detail        detailPanel
@@ -63,7 +63,7 @@ func newPackagesScreen() packagesScreen {
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
 	return packagesScreen{
 		state:      packagesLoading,
-		selected:   make(map[int]bool),
+		selected:   make(map[string]bool),
 		spinner:    sp,
 		progress:   newProgressBar(50),
 		detail:     newDetailPanel(),
@@ -127,19 +127,17 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Filter input mode
 		if s.filter.active {
 			switch msg.String() {
 			case "enter":
 				s.filter = s.filter.apply()
 				s.rebuildTable()
-				s.selected = make(map[int]bool)
 				return s, nil
 			case "esc":
 				s.filter = s.filter.deactivate()
 				s.rebuildTable()
-				s.selected = make(map[int]bool)
 				return s, nil
 			case "up", "down", "pgup", "pgdown":
 				var cmd tea.Cmd
@@ -150,7 +148,6 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.filter.input, cmd = s.filter.input.Update(msg)
 				s.filter.query = s.filter.input.Value()
 				s.rebuildTable()
-				s.selected = make(map[int]bool)
 				return s, cmd
 			}
 		}
@@ -189,7 +186,6 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				if s.filter.query != "" {
 					s.filter = s.filter.deactivate()
 					s.rebuildTable()
-					s.selected = make(map[int]bool)
 					return s, nil
 				}
 			case "i", "d":
@@ -211,15 +207,17 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				var cmd tea.Cmd
 				s.importFlow, cmd = s.importFlow.start(s.packages)
 				return s, cmd
-			case " ", "x":
+			case "space", "x":
 				row := s.table.Cursor()
-				if row >= 0 {
-					s.selected[row] = !s.selected[row]
+				filtered := s.filteredPkgs()
+				if row >= 0 && row < len(filtered) {
+					id := filtered[row].ID
+					s.selected[id] = !s.selected[id]
 					// Rebuild table to update checkbox display
 					s.rebuildTable()
 					s.table.SetCursor(row)
 					// Move cursor down
-					s.table, _ = s.table.Update(tea.KeyMsg{Type: tea.KeyDown})
+					s.table, _ = s.table.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 					return s, nil
 				}
 			case "u":
@@ -265,17 +263,21 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 		}
 
-	case tea.MouseMsg:
+	case tea.MouseClickMsg:
 		if s.state == packagesReady {
-			switch {
-			case msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft:
+			if msg.Button == tea.MouseLeft {
 				var cmd tea.Cmd
 				s.table, cmd = s.table.Update(msg)
 				return s, cmd
-			case msg.Button == tea.MouseButtonWheelUp:
+			}
+		}
+
+	case tea.MouseWheelMsg:
+		if s.state == packagesReady {
+			if msg.Button == tea.MouseWheelUp {
 				s.table.MoveUp(3)
 				return s, nil
-			case msg.Button == tea.MouseButtonWheelDown:
+			} else if msg.Button == tea.MouseWheelDown {
 				s.table.MoveDown(3)
 				return s, nil
 			}
@@ -290,7 +292,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		s.packages = deduplicatePackages(msg.packages)
 		s.count = len(s.packages)
-		s.selected = make(map[int]bool)
+		s.selected = make(map[string]bool)
 		filtered := s.filter.filterPackages(s.packages)
 		s.table = buildSelectableTable(filtered, s.selected, 120, 30)
 		s.state = packagesReady
@@ -314,7 +316,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.statusMsg = successStyle.Render(fmt.Sprintf("%d package(s) uninstalled!", count))
 		}
 		s.flashSeq++
-		s.selected = make(map[int]bool)
+		s.selected = make(map[string]bool)
 		s.attemptAction = nil
 		// Reload the list
 		s.state = packagesLoading
@@ -445,11 +447,10 @@ func (s packagesScreen) selectedNames() []string {
 }
 
 func (s packagesScreen) selectedPackages() []Package {
-	filtered := s.filteredPkgs()
 	var pkgs []Package
-	for i, sel := range s.selected {
-		if sel && i < len(filtered) {
-			pkgs = append(pkgs, filtered[i])
+	for _, pkg := range s.packages {
+		if s.selected[pkg.ID] {
+			pkgs = append(pkgs, pkg)
 		}
 	}
 	return pkgs
@@ -564,7 +565,7 @@ func upgradeableIDs() map[string]bool {
 // buildSelectableTable creates a table with a checkbox column.
 // selected maps row index → bool.
 // Responsively adds Source and update indicator columns when width allows.
-func buildSelectableTable(pkgs []Package, selected map[int]bool, width, height int) table.Model {
+func buildSelectableTable(pkgs []Package, selected map[string]bool, width, height int) table.Model {
 	usable := width - 8
 	if usable < 40 {
 		usable = 40
@@ -611,7 +612,7 @@ func buildSelectableTable(pkgs []Package, selected map[int]bool, width, height i
 	rows := make([]table.Row, len(pkgs))
 	for i, p := range pkgs {
 		check := " [ ] "
-		if selected[i] {
+		if selected[p.ID] {
 			check = " [X] "
 		}
 		var row table.Row
@@ -634,6 +635,7 @@ func buildSelectableTable(pkgs []Package, selected map[int]bool, width, height i
 		table.WithColumns(columns),
 		table.WithRows(rows),
 		table.WithFocused(true),
+		table.WithWidth(width),
 		table.WithHeight(height),
 	)
 	st := table.DefaultStyles()

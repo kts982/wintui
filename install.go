@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	"charm.land/lipgloss/v2"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type installState int
@@ -47,16 +47,18 @@ type installScreen struct {
 func newInstallScreen() installScreen {
 	ti := textinput.New()
 	ti.Placeholder = "Search for a package..."
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(accent)
-	ti.Cursor.Style = lipgloss.NewStyle().Foreground(accent)
+	styles := ti.Styles()
+	styles.Focused.Prompt = lipgloss.NewStyle().Foreground(accent)
+	styles.Cursor.Color = accent
+	ti.SetStyles(styles)
 	ti.Focus()
-	ti.Width = 40
+	ti.SetWidth(40)
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
 
-	vp := viewport.New(0, 10)
+	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(10))
 	vp.Style = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(accent)
 
 	return installScreen{
@@ -109,7 +111,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch s.state {
 		case installInput:
 			switch msg.String() {
@@ -200,8 +202,8 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 		}
 
-	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
 			contentY := msg.Y - 7
 			if s.state == installResults && contentY >= 1 {
 				row := contentY - 1
@@ -335,11 +337,12 @@ func (s installScreen) view(width, height int) string {
 	case installExecuting:
 		fmt.Fprintf(&b, "  %s Installing...\n\n", s.spinner.View())
 		b.WriteString("  " + s.progress.view() + "\n\n")
-		s.vp.Width = width - 8
-		s.vp.Height = height - 12
-		if s.vp.Height < 5 {
-			s.vp.Height = 5
+		s.vp.SetWidth(width - 8)
+		vpH := height - 12
+		if vpH < 5 {
+			vpH = 5
 		}
+		s.vp.SetHeight(vpH)
 		b.WriteString("  " + s.vp.View() + "\n")
 
 	case installDone:

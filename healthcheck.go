@@ -11,11 +11,11 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/lipgloss/v2"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // ── Health check data ──────────────────────────────────────────────
@@ -432,7 +432,7 @@ func (s healthcheckScreen) init() tea.Cmd {
 
 func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch s.state {
 		case hcReady:
 			switch msg.String() {

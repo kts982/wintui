@@ -3,8 +3,9 @@ package main
 import (
 	"time"
 
-	"github.com/charmbracelet/bubbles/progress"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/progress"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // progressBar wraps the bubbles progress component with auto-tick for
@@ -19,7 +20,7 @@ type progressTickMsg time.Time
 
 func newProgressBar(width int) progressBar {
 	p := progress.New(
-		progress.WithGradient("#FF6BD6", "#6BFFC8"), // pink → mint gradient
+		progress.WithColors(lipgloss.Color("#FF6BD6"), lipgloss.Color("#6BFFC8")), // pink → mint gradient
 		progress.WithWidth(width),
 	)
 	// Start active by default — screens that start in loading state need this
@@ -64,14 +65,14 @@ func (p progressBar) update(msg tea.Msg) (progressBar, tea.Cmd) {
 		}
 		// Also update the progress bar animation frames
 		var cmd tea.Cmd
-		barModel, barCmd := p.bar.Update(msg)
-		p.bar = barModel.(progress.Model)
+		var barCmd tea.Cmd
+		p.bar, barCmd = p.bar.Update(msg)
 		cmd = tea.Batch(barCmd, tickProgress())
 		return p, cmd
 
 	case progress.FrameMsg:
-		barModel, cmd := p.bar.Update(msg)
-		p.bar = barModel.(progress.Model)
+		var cmd tea.Cmd
+		p.bar, cmd = p.bar.Update(msg)
 		return p, cmd
 	}
 	return p, nil

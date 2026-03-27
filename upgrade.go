@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/progress"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/lipgloss/v2"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type upgradeState int
@@ -122,7 +122,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Filter input mode — pass navigation keys through
 		if s.filter.active {
 			switch msg.String() {
@@ -145,7 +145,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					s.cursor++
 				}
 				return s, nil
-			case " ", "x":
+			case "space", "x":
 				// Toggle selection while filtering
 				filtered := s.filter.filterPackages(s.packages)
 				if s.cursor < len(filtered) {
@@ -226,8 +226,8 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 		}
 
-	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
 			contentY := msg.Y - 9 // header(6 logo) + tabbar(2) + title(1)
 			switch s.state {
 			case upgradeChooseAction:
@@ -326,7 +326,7 @@ func (s upgradeScreen) selectAction() (screen, tea.Cmd) {
 	return s, nil
 }
 
-func (s upgradeScreen) updateAction(msg tea.KeyMsg) (screen, tea.Cmd) {
+func (s upgradeScreen) updateAction(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		if s.actionCursor > 0 {
@@ -342,7 +342,7 @@ func (s upgradeScreen) updateAction(msg tea.KeyMsg) (screen, tea.Cmd) {
 	return s, nil
 }
 
-func (s upgradeScreen) updateSelect(msg tea.KeyMsg) (screen, tea.Cmd) {
+func (s upgradeScreen) updateSelect(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 	filtered := s.filter.filterPackages(s.packages)
 	switch msg.String() {
 	case "/":
@@ -356,7 +356,7 @@ func (s upgradeScreen) updateSelect(msg tea.KeyMsg) (screen, tea.Cmd) {
 		if s.cursor < len(filtered)-1 {
 			s.cursor++
 		}
-	case " ", "x":
+	case "space", "x":
 		s.selected[s.cursor] = !s.selected[s.cursor]
 		if s.cursor < len(filtered)-1 {
 			s.cursor++
@@ -386,7 +386,7 @@ func (s upgradeScreen) updateSelect(msg tea.KeyMsg) (screen, tea.Cmd) {
 	return s, nil
 }
 
-func (s upgradeScreen) updateConfirm(msg tea.KeyMsg) (screen, tea.Cmd) {
+func (s upgradeScreen) updateConfirm(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
 		s.state = upgradeExecuting

@@ -1,16 +1,17 @@
 package main
 
 import (
+	"image/color"
 	"math"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/harmonica"
-	"github.com/charmbracelet/lipgloss"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // ── Screen identifiers ─────────────────────────────────────────────
@@ -93,7 +94,7 @@ var asciiLogo = []string{
 	` ╚══╝╚══╝  ╚═╝ ╚═╝  ╚═══╝    ╚═╝     ╚═════╝  ╚═╝`,
 }
 
-var logoGradient = []lipgloss.Color{
+var logoGradient = []color.Color{
 	lipgloss.Color("212"), // bright pink
 	lipgloss.Color("211"), // pink
 	lipgloss.Color("206"), // salmon
@@ -180,7 +181,7 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
 			a.quitting = true
@@ -205,8 +206,8 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case tea.MouseMsg:
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
 			// Check if click is on the tab bar row
 			tabRow := lipgloss.Height(a.renderLogo()) // row right after logo
 			if msg.Y == tabRow {
@@ -258,16 +259,16 @@ func (a app) switchTab(idx int) (app, tea.Cmd) {
 	return a, a.wrapScreenCmd(id, s.init())
 }
 
-func (a app) View() string {
+func (a app) View() tea.View {
 	if a.quitting {
-		return ""
+		return tea.NewView("")
 	}
 
 	logo := a.renderLogo()
 	tabBar := a.renderTabBar()
 
 	// Build help bar from screen keybindings
-	a.help.Width = a.width - 4
+	a.help.SetWidth(a.width - 4)
 	helpBar := "  " + a.help.ShortHelpView(a.activeScreen().helpKeys())
 
 	chrome := logo + tabBar + "\n"
@@ -289,7 +290,10 @@ func (a app) View() string {
 		rendered = chrome + content + strings.Repeat("\n", pad+1) + helpBar
 	}
 
-	return rendered
+	v := tea.NewView(rendered)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 // ── Logo rendering ─────────────────────────────────────────────────

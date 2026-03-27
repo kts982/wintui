@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // Set by GoReleaser via ldflags.
@@ -29,11 +29,7 @@ func main() {
 	// Load settings from config file
 	appSettings = LoadSettings()
 
-	p := tea.NewProgram(
-		newApp(retryReq),
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
+	p := tea.NewProgram(newApp(retryReq))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

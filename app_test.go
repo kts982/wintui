@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 )
 
 type stubStateMsg string
@@ -21,7 +21,7 @@ func (s stubScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	case stubStateMsg:
 		s.log = append(s.log, string(msg))
 		return s, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "b":
 			return s, tea.Batch(
@@ -47,7 +47,7 @@ func TestInstallScreenStatePreservedAcrossTabSwitches(t *testing.T) {
 	}
 
 	for _, r := range "firefox" {
-		model, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		model, _ := a.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
 		a = model.(app)
 	}
 
@@ -81,7 +81,7 @@ func TestBackgroundScreenCommandsStayOwnedByOriginatingScreen(t *testing.T) {
 	}
 
 	var cmd tea.Cmd
-	a, cmd = a.updateScreen(screenUpgrade, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	a, cmd = a.updateScreen(screenUpgrade, tea.KeyPressMsg{Code: 'b'})
 	if cmd == nil {
 		t.Fatal("expected command from stub screen")
 	}
