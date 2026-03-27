@@ -16,9 +16,20 @@ import (
 
 // ── Messages ───────────────────────────────────────────────────────
 
+type detailFetchRole string
+
+const (
+	detailFetchTarget    detailFetchRole = "target"
+	detailFetchInstalled detailFetchRole = "installed"
+)
+
 type packageDetailMsg struct {
-	detail PackageDetail
-	err    error
+	role    detailFetchRole
+	pkgID   string
+	source  string
+	version string
+	detail  PackageDetail
+	err     error
 }
 
 type packageVersionsMsg struct {
@@ -35,10 +46,17 @@ type detailVersionSelectedMsg struct {
 }
 
 // fetchDetail returns a Cmd that fetches package details async.
-func fetchDetail(id, source string) tea.Cmd {
+func fetchDetail(role detailFetchRole, id, source, version string) tea.Cmd {
 	return func() tea.Msg {
-		d, err := showPackage(id, source)
-		return packageDetailMsg{detail: d, err: err}
+		d, err := showPackage(id, source, version)
+		return packageDetailMsg{
+			role:    role,
+			pkgID:   id,
+			source:  source,
+			version: version,
+			detail:  d,
+			err:     err,
+		}
 	}
 }
 
@@ -66,16 +84,21 @@ const (
 type detailPanel struct {
 	state              detailState
 	detail             PackageDetail
+	compareDetail      PackageDetail
 	spinner            spinner.Model
 	scroll             int
 	err                error
+	compareErr         error
 	pkgID              string
 	source             string
 	allowVersionSelect bool
 	selectedVersion    string
+	latestVersion      string
+	installedVersion   string
 	versions           []string
 	versionCursor      int
 	versionsLoading    bool
+	compareLoading     bool
 	selectingVersion   bool
 	versionErr         string
 }
@@ -89,23 +112,84 @@ func newDetailPanel() detailPanel {
 
 // show starts loading details for a package.
 func (p detailPanel) show(pkgID, source string) (detailPanel, tea.Cmd) {
-	return p.showWithVersion(pkgID, source, "", false)
+	return p.showWithVersion(Package{ID: pkgID, Source: source}, "", false)
 }
 
-func (p detailPanel) showWithVersion(pkgID, source, selectedVersion string, allowVersionSelect bool) (detailPanel, tea.Cmd) {
+func (p detailPanel) showWithVersion(pkg Package, selectedVersion string, allowVersionSelect bool) (detailPanel, tea.Cmd) {
+	samePackage := p.pkgID == pkg.ID && p.source == pkg.Source
+
 	p.state = detailLoading
 	p.scroll = 0
 	p.err = nil
-	p.pkgID = pkgID
-	p.source = source
+	p.compareErr = nil
+	p.detail = PackageDetail{}
+	p.compareDetail = PackageDetail{}
+	p.pkgID = pkg.ID
+	p.source = pkg.Source
 	p.allowVersionSelect = allowVersionSelect
 	p.selectedVersion = selectedVersion
-	p.versions = nil
+	p.latestVersion = ""
+	p.installedVersion = ""
+	if allowVersionSelect {
+		if pkg.Available != "" {
+			p.installedVersion = pkg.Version
+			p.latestVersion = pkg.Available
+		} else if pkg.Version != "" {
+			p.latestVersion = pkg.Version
+		}
+	}
+	if !samePackage {
+		p.versions = nil
+	}
 	p.versionCursor = 0
+	if p.selectedVersion != "" {
+		for i, version := range p.versions {
+			if version == p.selectedVersion {
+				p.versionCursor = i
+				break
+			}
+		}
+	}
 	p.versionsLoading = false
+	p.compareLoading = p.installedVersion != ""
 	p.selectingVersion = false
 	p.versionErr = ""
-	return p, tea.Batch(p.spinner.Tick, fetchDetail(pkgID, source))
+
+	cmds := []tea.Cmd{
+		p.spinner.Tick,
+		fetchDetail(detailFetchTarget, p.pkgID, p.source, p.targetVersion()),
+	}
+	return p, tea.Batch(cmds...)
+}
+
+func (p detailPanel) targetVersion() string {
+	if strings.TrimSpace(p.selectedVersion) != "" {
+		return p.selectedVersion
+	}
+	return p.latestVersion
+}
+
+func (p detailPanel) targetVersionLabel() string {
+	if strings.TrimSpace(p.selectedVersion) != "" {
+		return p.selectedVersion
+	}
+	if strings.TrimSpace(p.latestVersion) != "" {
+		return "latest"
+	}
+	return ""
+}
+
+func (p detailPanel) title() string {
+	switch {
+	case p.detail.Name != "":
+		return p.detail.Name
+	case p.compareDetail.Name != "":
+		return p.compareDetail.Name
+	case p.pkgID != "":
+		return p.pkgID
+	default:
+		return "Package Details"
+	}
 }
 
 // visible returns true if the panel is showing.
@@ -122,12 +206,41 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 
 	switch msg := msg.(type) {
 	case packageDetailMsg:
-		if msg.err != nil {
-			p.err = msg.err
-			p.state = detailError
-		} else {
-			p.detail = msg.detail
-			p.state = detailReady
+		if msg.pkgID != p.pkgID || msg.source != p.source {
+			return p, nil, false
+		}
+		switch msg.role {
+		case detailFetchTarget:
+			if msg.version != p.targetVersion() {
+				return p, nil, true
+			}
+			if msg.err != nil {
+				p.err = msg.err
+				p.state = detailError
+			} else {
+				p.detail = msg.detail
+				p.state = detailReady
+				if p.compareLoading {
+					if p.installedVersion == msg.version {
+						p.compareDetail = msg.detail
+						p.compareErr = nil
+						p.compareLoading = false
+					} else {
+						return p, fetchDetail(detailFetchInstalled, p.pkgID, p.source, p.installedVersion), true
+					}
+				}
+			}
+		case detailFetchInstalled:
+			if msg.version != p.installedVersion {
+				return p, nil, true
+			}
+			p.compareLoading = false
+			if msg.err != nil {
+				p.compareErr = msg.err
+			} else {
+				p.compareDetail = msg.detail
+				p.compareErr = nil
+			}
 		}
 		return p, nil, true
 
@@ -243,7 +356,7 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 		}
 
 	case spinner.TickMsg:
-		if p.state == detailLoading || p.versionsLoading {
+		if p.state == detailLoading || p.versionsLoading || p.compareLoading {
 			var cmd tea.Cmd
 			p.spinner, cmd = p.spinner.Update(msg)
 			return p, cmd, true
@@ -277,6 +390,49 @@ func (p detailPanel) helpKeys() []key.Binding {
 	return nil
 }
 
+func appendDetailField(lines *[]string, label, value string) {
+	if value == "" {
+		return
+	}
+	*lines = append(*lines, fmt.Sprintf("  %s  %s",
+		lipgloss.NewStyle().Bold(true).Width(18).Render(label),
+		value))
+}
+
+func appendDetailSection(lines *[]string, heading string, d PackageDetail, includeReleaseNotes bool) {
+	*lines = append(*lines, "")
+	*lines = append(*lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(accent).Render(heading))
+	appendDetailField(lines, "Version", d.Version)
+	appendDetailField(lines, "Publisher", d.Publisher)
+	appendDetailField(lines, "License", d.License)
+	appendDetailField(lines, "Moniker", d.Moniker)
+	if d.Homepage != "" {
+		appendDetailField(lines, "Homepage", lipgloss.NewStyle().Foreground(secondary).Underline(true).Render(d.Homepage))
+	}
+	appendDetailField(lines, "Release Date", d.ReleaseDate)
+	appendDetailField(lines, "Installer", d.InstallerType)
+	if d.Tags != "" {
+		appendDetailField(lines, "Tags", strings.ReplaceAll(d.Tags, "\n", ", "))
+	}
+	appendDetailField(lines, "Copyright", d.Copyright)
+
+	if d.Description != "" {
+		*lines = append(*lines, "")
+		*lines = append(*lines, "  "+lipgloss.NewStyle().Bold(true).Render("Description"))
+		for _, dl := range strings.Split(d.Description, "\n") {
+			*lines = append(*lines, "  "+dl)
+		}
+	}
+
+	if includeReleaseNotes && d.ReleaseNotes != "" {
+		*lines = append(*lines, "")
+		*lines = append(*lines, "  "+lipgloss.NewStyle().Bold(true).Render("Release Notes"))
+		for _, rl := range strings.Split(d.ReleaseNotes, "\n") {
+			*lines = append(*lines, "  "+rl)
+		}
+	}
+}
+
 // view renders the detail panel.
 func (p detailPanel) view(width, height int) string {
 	if p.state == detailHidden {
@@ -285,7 +441,6 @@ func (p detailPanel) view(width, height int) string {
 
 	var b strings.Builder
 
-	// Panel border
 	panelStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(accent).
@@ -304,8 +459,8 @@ func (p detailPanel) view(width, height int) string {
 
 	case detailReady:
 		if p.versionsLoading {
-			title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.detail.Name)
-			if p.pkgID != "" {
+			title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.title())
+			if p.pkgID != "" && p.pkgID != p.title() {
 				title += "  " + helpStyle.Render(p.pkgID)
 			}
 			inner := "  " + title + "\n\n" +
@@ -317,73 +472,48 @@ func (p detailPanel) view(width, height int) string {
 			return p.renderVersionPicker(panelStyle, height)
 		}
 
-		d := p.detail
-
-		// Title
-		title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(d.Name)
-		if d.ID != "" {
-			title += "  " + helpStyle.Render(d.ID)
+		title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.title())
+		if p.pkgID != "" && p.pkgID != p.title() {
+			title += "  " + helpStyle.Render(p.pkgID)
 		}
 		b.WriteString("  " + title + "\n")
 
-		// Build detail lines
 		var lines []string
-		addField := func(label, value string) {
-			if value != "" {
-				lines = append(lines, fmt.Sprintf("  %s  %s",
-					lipgloss.NewStyle().Bold(true).Width(16).Render(label),
-					value))
-			}
+		if p.installedVersion != "" {
+			appendDetailField(&lines, "Installed Version", p.installedVersion)
 		}
-
-		addField("Version", d.Version)
-		addField("Source", d.Source)
+		if p.latestVersion != "" {
+			appendDetailField(&lines, "Latest Available", p.latestVersion)
+		}
 		if p.allowVersionSelect {
-			targetVersion := "latest"
-			if p.selectedVersion != "" {
-				targetVersion = p.selectedVersion
-			}
-			addField("Target Version", targetVersion)
+			appendDetailField(&lines, "Target Version", p.targetVersionLabel())
 		}
-		addField("Publisher", d.Publisher)
-		addField("License", d.License)
-		addField("Moniker", d.Moniker)
-		if d.Homepage != "" {
-			addField("Homepage", lipgloss.NewStyle().Foreground(secondary).Underline(true).Render(d.Homepage))
+		source := p.detail.Source
+		if source == "" {
+			source = p.source
 		}
-		if d.ReleaseDate != "" {
-			addField("Release Date", d.ReleaseDate)
-		}
-		addField("Installer", d.InstallerType)
+		appendDetailField(&lines, "Source", source)
 
-		if d.Tags != "" {
-			tags := strings.ReplaceAll(d.Tags, "\n", ", ")
-			addField("Tags", tags)
+		sectionTitle := "Package Details"
+		if p.allowVersionSelect {
+			sectionTitle = "Target Details"
 		}
-
-		if d.Copyright != "" {
-			addField("Copyright", d.Copyright)
-		}
-
-		// Description (may be multi-line)
-		if d.Description != "" {
-			lines = append(lines, "")
-			lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Render("Description"))
-			for _, dl := range strings.Split(d.Description, "\n") {
-				lines = append(lines, "  "+dl)
+		appendDetailSection(&lines, sectionTitle, p.detail, true)
+		if p.installedVersion != "" {
+			switch {
+			case p.compareLoading:
+				lines = append(lines, "")
+				lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Installed Details"))
+				lines = append(lines, fmt.Sprintf("  %s Loading installed version details...", p.spinner.View()))
+			case p.compareErr != nil:
+				lines = append(lines, "")
+				lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Installed Details"))
+				lines = append(lines, "  "+warnStyle.Render("Unable to load installed version details: "+p.compareErr.Error()))
+			default:
+				appendDetailSection(&lines, "Installed Details", p.compareDetail, false)
 			}
 		}
 
-		// Release notes (may be long)
-		if d.ReleaseNotes != "" {
-			lines = append(lines, "")
-			lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Render("Release Notes"))
-			for _, rl := range strings.Split(d.ReleaseNotes, "\n") {
-				lines = append(lines, "  "+rl)
-			}
-		}
-
-		// Scroll
 		innerHeight := height - 6
 		if innerHeight < 5 {
 			innerHeight = 5
@@ -405,7 +535,6 @@ func (p detailPanel) view(width, height int) string {
 			b.WriteString(lines[i] + "\n")
 		}
 
-		// Help
 		b.WriteString("\n")
 		help := "  ↑↓ scroll • esc close"
 		if p.allowVersionSelect {
@@ -413,10 +542,10 @@ func (p detailPanel) view(width, height int) string {
 			if p.selectedVersion != "" {
 				help = "  ↑↓ scroll • v change version • c latest • esc close"
 			}
-			if d.Homepage != "" {
+			if p.detail.Homepage != "" {
 				help += " • o open homepage"
 			}
-		} else if d.Homepage != "" {
+		} else if p.detail.Homepage != "" {
 			help = "  ↑↓ scroll • o open homepage • esc close"
 		}
 		b.WriteString(helpStyle.Render(help))
@@ -432,15 +561,15 @@ func (p detailPanel) view(width, height int) string {
 
 func (p detailPanel) renderVersionPicker(panelStyle lipgloss.Style, height int) string {
 	var b strings.Builder
-	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.detail.Name)
-	if p.pkgID != "" {
+	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.title())
+	if p.pkgID != "" && p.pkgID != p.title() {
 		title += "  " + helpStyle.Render(p.pkgID)
 	}
 	b.WriteString("  " + title + "\n\n")
 
-	targetVersion := "latest"
-	if p.selectedVersion != "" {
-		targetVersion = p.selectedVersion
+	targetVersion := p.targetVersionLabel()
+	if targetVersion == "" {
+		targetVersion = "latest"
 	}
 	b.WriteString("  " + infoStyle.Render("Choose Target Version") + "\n")
 	b.WriteString("  " + helpStyle.Render("Current: "+targetVersion) + "\n\n")

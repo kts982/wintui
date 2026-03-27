@@ -39,10 +39,10 @@ Portable `winget` manifest files live under [`packaging/winget`](./packaging/win
 ## Features
 
 **Package Management**
-- **Upgrade** — scan for updates, upgrade all or select individual packages
+- **Upgrade** — open directly to the available updates list, select packages or upgrade all, with live streaming logs
 - **Installed** — browse packages across `winget`, `msstore`, and `system` sources with selectable checkboxes
 - **Install** — search and install new packages with live streaming output
-- **Package Details** — view publisher, description, license, release notes, homepage (`i`)
+- **Package Details** — inspect package metadata, choose an explicit target version, and compare installed vs. target upgrade details (`i`, `v`)
 - **Export / Import** — export installed packages to JSON (`e`) and restore on another machine (`m`)
 
 **System Utilities**
@@ -55,6 +55,7 @@ Portable `winget` manifest files live under [`packaging/winget`](./packaging/win
 - Per-tab screen state preserved across tab switches
 - Fuzzy filter (`/`) on package lists
 - Gradient progress bars on all loading states
+- Streaming execution view for install, upgrade, and uninstall operations
 - Cancellable operations (`Esc`)
 - `Ctrl+e` to retry with admin elevation when needed
 - Context-aware help bar
@@ -78,12 +79,14 @@ Portable `winget` manifest files live under [`packaging/winget`](./packaging/win
 | `Enter` | Select / confirm |
 | `/` | Filter list |
 | `i` | Package details |
+| `v` | Choose package version (detail view) / reveal skipped import entries |
+| `c` | Reset selected package version to latest (detail view) |
 | `o` | Open homepage (in detail view) |
 | `r` | Refresh data |
 | `Ctrl+e` | Retry elevated (when offered) |
 | `e` | Export packages (Installed tab) |
 | `m` | Import from export JSON (Installed tab) |
-| `u` | Uninstall selected (Installed tab) |
+| `u` | Upgrade all (Upgrade tab) / uninstall selected (Installed tab) |
 | `Esc` | Cancel / back |
 | `q` | Quit |
 
@@ -94,16 +97,18 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 | Setting | Options |
 |---|---|
 | Install Scope | user / machine / auto |
-| Install Mode | auto / silent / interactive |
+| Action Mode | auto / silent / interactive |
 | Architecture | x64 / x86 / arm64 / auto |
 | Default Source | winget / msstore / auto |
 | Force | skip non-security issues |
 | Allow Reboot | permit reboots during install |
 | Skip Dependencies | don't process dependencies |
 | Purge on Uninstall | delete all package files |
-| Include Unknown | show packages with unknown versions |
+| Include Unknown Versions | show packages with unknown versions |
 
-`Default Source` controls install/search preference; the Installed tab reflects the real installed state.
+`Action Mode` applies to install, upgrade, and uninstall requests where the underlying package supports it.
+
+`Default Source` controls install/search preference only; uninstall works against the installed package database regardless of that setting.
 
 ## Development
 

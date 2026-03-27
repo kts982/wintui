@@ -178,12 +178,13 @@ func shouldRetryUninstallWithoutPurge(err error, output string) bool {
 	return false
 }
 
-func showPackage(id, source string) (PackageDetail, error) {
-	return showPackageCtx(context.Background(), id, source)
+func showPackage(id, source, version string) (PackageDetail, error) {
+	return showPackageCtx(context.Background(), id, source, version)
 }
 
-func showPackageCtx(ctx context.Context, id, source string) (PackageDetail, error) {
+func showPackageCtx(ctx context.Context, id, source, version string) (PackageDetail, error) {
 	args := []string{"show", "--id", id, "--exact"}
+	args = appendVersionArg(args, version)
 	if source == "winget" || source == "msstore" {
 		args = append(args, "--source", source)
 	}

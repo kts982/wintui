@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/key"
@@ -99,5 +100,74 @@ func TestDetailVersionPickerHelpKeys(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("helpKeys() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDetailViewShowsTargetSummaryForInstallSelection(t *testing.T) {
+	p := newDetailPanel()
+	p.state = detailReady
+	p.pkgID = "Notepad++.Notepad++"
+	p.source = "winget"
+	p.allowVersionSelect = true
+	p.latestVersion = "8.9.3"
+	p.selectedVersion = "8.9.2"
+	p.detail = PackageDetail{
+		Name:        "Notepad++",
+		ID:          "Notepad++.Notepad++",
+		Version:     "8.9.2",
+		Source:      "winget",
+		Publisher:   "Notepad++ Team",
+		Description: "Target detail body",
+	}
+
+	got := p.view(120, 28)
+	if !strings.Contains(got, "Latest Available") || !strings.Contains(got, "8.9.3") {
+		t.Fatalf("view() = %q, want latest available summary", got)
+	}
+	if !strings.Contains(got, "Target Version") || !strings.Contains(got, "8.9.2") {
+		t.Fatalf("view() = %q, want target version summary", got)
+	}
+	if !strings.Contains(got, "Target Details") || !strings.Contains(got, "Target detail body") {
+		t.Fatalf("view() = %q, want target detail section", got)
+	}
+}
+
+func TestDetailViewShowsInstalledAndTargetDetailsForUpgrade(t *testing.T) {
+	p := newDetailPanel()
+	p.state = detailReady
+	p.pkgID = "Microsoft.Edge"
+	p.source = "winget"
+	p.allowVersionSelect = true
+	p.installedVersion = "146.0.3856.72"
+	p.latestVersion = "146.0.3856.78"
+	p.detail = PackageDetail{
+		Name:        "Microsoft Edge",
+		ID:          "Microsoft.Edge",
+		Version:     "146.0.3856.78",
+		Source:      "winget",
+		Publisher:   "Microsoft",
+		Description: "Target detail body",
+	}
+	p.compareDetail = PackageDetail{
+		Name:        "Microsoft Edge",
+		ID:          "Microsoft.Edge",
+		Version:     "146.0.3856.72",
+		Source:      "winget",
+		Publisher:   "Microsoft",
+		Description: "Installed detail body",
+	}
+
+	got := p.view(120, 32)
+	if !strings.Contains(got, "Installed Version") || !strings.Contains(got, "146.0.3856.72") {
+		t.Fatalf("view() = %q, want installed version summary", got)
+	}
+	if !strings.Contains(got, "Latest Available") || !strings.Contains(got, "146.0.3856.78") {
+		t.Fatalf("view() = %q, want latest available summary", got)
+	}
+	if !strings.Contains(got, "Target Details") || !strings.Contains(got, "Installed Details") {
+		t.Fatalf("view() = %q, want target and installed detail sections", got)
+	}
+	if !strings.Contains(got, "Target detail body") || !strings.Contains(got, "Installed detail body") {
+		t.Fatalf("view() = %q, want both detail bodies", got)
 	}
 }

@@ -130,6 +130,11 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case detailVersionSelectedMsg:
 		s.setSelectedVersion(msg.pkgID, msg.source, msg.version)
+		if pkg, ok := s.packageByIdentity(msg.pkgID, msg.source); ok {
+			var cmd tea.Cmd
+			s.detail, cmd = s.detail.showWithVersion(pkg, msg.version, true)
+			return s, cmd
+		}
 		return s, nil
 
 	case tea.KeyPressMsg:
@@ -225,12 +230,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			if len(filtered) > 0 && s.cursor >= 0 && s.cursor < len(filtered) {
 				var cmd tea.Cmd
 				pkg := filtered[s.cursor]
-				s.detail, cmd = s.detail.showWithVersion(
-					pkg.ID,
-					pkg.Source,
-					s.selectedVersionFor(pkg),
-					true,
-				)
+				s.detail, cmd = s.detail.showWithVersion(pkg, s.selectedVersionFor(pkg), true)
 				return s, cmd
 			}
 		}
@@ -505,6 +505,15 @@ func (s upgradeScreen) customVersionCount(pkgs []Package) int {
 		}
 	}
 	return count
+}
+
+func (s upgradeScreen) packageByIdentity(id, source string) (Package, bool) {
+	for _, pkg := range s.packages {
+		if pkg.ID == id && pkg.Source == source {
+			return pkg, true
+		}
+	}
+	return Package{}, false
 }
 
 func (s upgradeScreen) filteredSelectionIndex(filtered []Package) int {
