@@ -71,3 +71,7 @@ func checkbox(checked bool) string {
 	}
 	return lipgloss.NewStyle().Foreground(dim).Render("[ ]")
 }
+
+func indentBlock(block string, spaces int) string {
+	return lipgloss.NewStyle().MarginLeft(spaces).Render(block)
+}

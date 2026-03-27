@@ -288,12 +288,34 @@ func appendPreferredSourceArg(args []string, source string) []string {
 // cleanWingetOutput strips progress spinner chars, carriage returns,
 // and noisy lines from winget command output for display.
 func cleanWingetOutput(output string) string {
-	output = strings.ReplaceAll(output, "\r\n", "\n")
-	raw := strings.FieldsFunc(output, func(r rune) bool { return r == '\r' })
-	output = strings.Join(raw, "")
+	var clean []string
+	for _, line := range splitWingetOutputLines(output) {
+		if cleaned, ok := cleanWingetOutputLine(line); ok {
+			clean = append(clean, cleaned)
+		}
+	}
+	return strings.Join(clean, "\n")
+}
 
-	// Noise patterns to skip entirely
-	noisePatterns := []string{
+func streamWingetOutputLines(output string) []string {
+	var lines []string
+	for _, line := range splitWingetOutputLines(output) {
+		if cleaned, ok := cleanWingetStreamLine(line); ok {
+			if len(lines) == 0 || lines[len(lines)-1] != cleaned {
+				lines = append(lines, cleaned)
+			}
+		}
+	}
+	return lines
+}
+
+func splitWingetOutputLines(output string) []string {
+	output = strings.ReplaceAll(output, "\r\n", "\n")
+	return strings.FieldsFunc(output, func(r rune) bool { return r == '\r' || r == '\n' })
+}
+
+func cleanWingetOutputLine(line string) (string, bool) {
+	return filterWingetOutputLine(line, []string{
 		"██", "▒▒",
 		"This application is licensed",
 		"Microsoft is not responsible",
@@ -304,33 +326,37 @@ func cleanWingetOutput(output string) string {
 		"Starting package upgrade",
 		"Starting package uninstall",
 		"Downloading",
-	}
+	})
+}
 
-	lines := strings.Split(output, "\n")
-	var clean []string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || trimmed == "/" || trimmed == "\\" ||
-			trimmed == "-" || trimmed == "|" {
-			continue
-		}
-		// Skip lines that are only dashes (separators)
-		if strings.Trim(trimmed, "-") == "" {
-			continue
-		}
-		skip := false
-		for _, p := range noisePatterns {
-			if strings.Contains(trimmed, p) {
-				skip = true
-				break
-			}
-		}
-		if skip {
-			continue
-		}
-		clean = append(clean, trimmed)
+func cleanWingetStreamLine(line string) (string, bool) {
+	return filterWingetOutputLine(line, []string{
+		"██", "▒▒",
+		"This application is licensed",
+		"Microsoft is not responsible",
+		"nor does it grant any licenses",
+		"Successfully verified installer hash",
+		"Starting package install",
+		"Starting package upgrade",
+		"Starting package uninstall",
+	})
+}
+
+func filterWingetOutputLine(line string, noisePatterns []string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || trimmed == "/" || trimmed == "\\" ||
+		trimmed == "-" || trimmed == "|" {
+		return "", false
 	}
-	return strings.Join(clean, "\n")
+	if strings.Trim(trimmed, "-") == "" {
+		return "", false
+	}
+	for _, p := range noisePatterns {
+		if strings.Contains(trimmed, p) {
+			return "", false
+		}
+	}
+	return trimmed, true
 }
 
 // ── Package detail ─────────────────────────────────────────────────
@@ -570,11 +596,14 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			select {
-			case outChan <- scanner.Text():
-			case <-ctx.Done():
-				errChan <- fmt.Errorf("cancelled")
-				return
+			lines := streamWingetOutputLines(scanner.Text())
+			for _, line := range lines {
+				select {
+				case outChan <- line:
+				case <-ctx.Done():
+					errChan <- fmt.Errorf("cancelled")
+					return
+				}
 			}
 		}
 

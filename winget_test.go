@@ -100,6 +100,27 @@ func TestCleanWingetOutputFixture(t *testing.T) {
 	}
 }
 
+func TestStreamWingetOutputLinesSkipsNoiseButKeepsUsefulStatus(t *testing.T) {
+	raw := strings.Join([]string{
+		"\r   - \r",
+		"This application is licensed to you by its owner.",
+		"Microsoft is not responsible for, nor does it grant any licenses to, third-party packages.",
+		"Downloading https://example.invalid/installer.exe",
+		"Successfully verified installer hash",
+		"Starting package install...",
+		"Installer failed with exit code: 1603",
+	}, "\n")
+
+	got := streamWingetOutputLines(raw)
+	want := []string{
+		"Downloading https://example.invalid/installer.exe",
+		"Installer failed with exit code: 1603",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("streamWingetOutputLines() = %#v, want %#v", got, want)
+	}
+}
+
 func TestActionCommandArgs(t *testing.T) {
 	original := appSettings
 	defer func() { appSettings = original }()

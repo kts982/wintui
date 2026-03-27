@@ -705,7 +705,7 @@ func (s upgradeScreen) view(width, height int) string {
 			vpH = 5
 		}
 		s.vp.SetHeight(vpH)
-		b.WriteString("  " + s.vp.View() + "\n")
+		b.WriteString(indentBlock(s.vp.View(), 2) + "\n")
 
 	case upgradeDone:
 		successCount, failCount := batchResultCounts(s.batchErrs)

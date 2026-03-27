@@ -147,12 +147,12 @@ func (p detailPanel) view(width, height int) string {
 	switch p.state {
 	case detailLoading:
 		inner := fmt.Sprintf("  %s Loading package details...", p.spinner.View())
-		return panelStyle.Render(inner)
+		return indentBlock(panelStyle.Render(inner), 2)
 
 	case detailError:
 		inner := errorStyle.Render("  Error: "+p.err.Error()) + "\n\n" +
 			helpStyle.Render("  esc close")
-		return panelStyle.Render(inner)
+		return indentBlock(panelStyle.Render(inner), 2)
 
 	case detailReady:
 		d := p.detail
@@ -244,7 +244,7 @@ func (p detailPanel) view(width, height int) string {
 		}
 		b.WriteString(helpStyle.Render(help))
 
-		return panelStyle.Render(b.String())
+		return indentBlock(panelStyle.Render(b.String()), 2)
 	}
 
 	return ""

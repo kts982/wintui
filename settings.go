@@ -146,6 +146,11 @@ func (s settingsScreen) view(width, height int) string {
 		fmt.Fprintf(&b, "  %s%s %s  %s\n", cursor, label, valDisplay, desc)
 	}
 
+	sepWidth := width - 6
+	if sepWidth < 12 {
+		sepWidth = 12
+	}
+	b.WriteString(indentBlock(helpStyle.Render(strings.Repeat("─", sepWidth)), 2) + "\n")
 	b.WriteString(s.renderDetailPanel(width, height > 0 && height < 28))
 	b.WriteString("\n\n")
 
@@ -218,7 +223,7 @@ func (s settingsScreen) renderDetailPanel(width int, compact bool) string {
 	if width > 10 {
 		panel = panel.Width(width - 6)
 	}
-	return "  " + panel.Render(strings.Join(lines, "\n"))
+	return indentBlock(panel.Render(strings.Join(lines, "\n")), 2)
 }
 
 func valOrOnOff(def settingDef, val string) string {
