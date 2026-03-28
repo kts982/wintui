@@ -13,6 +13,13 @@ func stripANSI(s string) string {
 	return ansiPattern.ReplaceAllString(s, "")
 }
 
+func withElevatedState(t *testing.T, elevated bool) {
+	t.Helper()
+	original := isElevated
+	isElevated = func() bool { return elevated }
+	t.Cleanup(func() { isElevated = original })
+}
+
 func TestUpgradeDoneViewShowsSummaryAndHint(t *testing.T) {
 	s := newUpgradeScreen()
 	s.state = upgradeDone
@@ -155,6 +162,8 @@ func TestFormatUninstallResultsKeepsFriendlyDecodedError(t *testing.T) {
 }
 
 func TestPackagesDoneViewShowsSoftElevationRetryHintFor1603(t *testing.T) {
+	withElevatedState(t, false)
+
 	s := newPackagesScreen()
 	s.state = packagesDone
 	s.batchTotal = 1
@@ -174,6 +183,8 @@ func TestPackagesDoneViewShowsSoftElevationRetryHintFor1603(t *testing.T) {
 }
 
 func TestPackagesDoneViewOffersBatchRetryForFailedItemsOnly(t *testing.T) {
+	withElevatedState(t, false)
+
 	s := newPackagesScreen()
 	s.state = packagesDone
 	s.batchTotal = 3

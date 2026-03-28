@@ -56,8 +56,9 @@ Portable `winget` manifest files live under [`packaging/winget`](./packaging/win
 - Fuzzy filter (`/`) on package lists
 - Gradient progress bars on all loading states
 - Streaming execution view for install, upgrade, and uninstall operations
+- Post-run log preview with `l` to expand/collapse execution output
 - Cancellable operations (`Esc`)
-- `Ctrl+e` to retry with admin elevation when needed
+- `Ctrl+e` to retry failed elevation-candidate actions; batch retries only rerun failed items
 - Context-aware help bar
 
 ## Usage
@@ -84,6 +85,7 @@ Portable `winget` manifest files live under [`packaging/winget`](./packaging/win
 | `o` | Open homepage (in detail view) |
 | `r` | Refresh data |
 | `Ctrl+e` | Retry elevated (when offered) |
+| `l` | Expand / collapse saved execution log after a run |
 | `e` | Export packages (Installed tab) |
 | `m` | Import from export JSON (Installed tab) |
 | `u` | Upgrade all (Upgrade tab) / uninstall selected (Installed tab) |
