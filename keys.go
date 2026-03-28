@@ -69,6 +69,14 @@ var (
 		key.WithKeys("y"),
 		key.WithHelp("y/n", "confirm"),
 	)
+	keyConfirm = key.NewBinding(
+		key.WithKeys("enter", "y"),
+		key.WithHelp("enter/y", "confirm"),
+	)
+	keyCancel = key.NewBinding(
+		key.WithKeys("esc", "n"),
+		key.WithHelp("esc/n", "cancel"),
+	)
 	keyExport = key.NewBinding(
 		key.WithKeys("e"),
 		key.WithHelp("e", "export"),

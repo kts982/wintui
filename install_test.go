@@ -33,8 +33,8 @@ func TestInstallConfirmViewShowsSelectedTargetVersion(t *testing.T) {
 	s.selectedVersions[packageSourceKey("Notepad++.Notepad++", "winget")] = "8.9.2"
 
 	got := s.view(120, 24)
-	if !strings.Contains(got, "Install ") ||
-		!strings.Contains(got, "Notepad++.Notepad++) version ") ||
+	if !strings.Contains(got, "Notepad++.Notepad++") ||
+		!strings.Contains(got, "Target version:") ||
 		!strings.Contains(got, "8.9.2") {
 		t.Fatalf("view() = %q, want explicit target version in confirm text", got)
 	}

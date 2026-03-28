@@ -48,8 +48,7 @@ func TestInstallDetailHelpOverridesScreenHelp(t *testing.T) {
 
 	got := bindingHelps(s.helpKeys())
 	want := []key.Help{
-		keyUp.Help(),
-		keyDown.Help(),
+		keyScroll.Help(),
 		keyOpen.Help(),
 		keyEsc.Help(),
 	}
@@ -92,6 +91,21 @@ func TestInstallDoneHelpUsesSearchAgain(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("install done help = %#v, want %#v", got, want)
+	}
+}
+
+func TestInstallConfirmHelpUsesModalBindings(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installConfirm
+
+	got := bindingHelps(s.helpKeys())
+	want := []key.Help{
+		keyConfirm.Help(),
+		keyCancel.Help(),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("install confirm help = %#v, want %#v", got, want)
 	}
 }
 
@@ -180,12 +194,55 @@ func TestHealthcheckReadyHelpIncludesRefreshAndTabs(t *testing.T) {
 func TestHealthcheckPgDownAdvancesScroll(t *testing.T) {
 	s := newHealthcheckScreen()
 	s.state = hcReady
+	s.width = 120
+	s.height = 34
+	s.report = healthReport{
+		Sections: []healthSection{
+			{Title: "One", Checks: []healthCheck{{Check: "A", Status: "PASS", Details: "ok"}}},
+		},
+	}
 
 	next, _ := s.update(keyMsg("pgdown"))
 	got := next.(healthcheckScreen)
 
-	if got.scroll != 8 {
-		t.Fatalf("scroll = %d, want 8", got.scroll)
+	if got.scroll != 0 {
+		t.Fatalf("scroll = %d, want 0 for short report", got.scroll)
+	}
+}
+
+func TestHealthcheckScrollStopsAtBottom(t *testing.T) {
+	s := newHealthcheckScreen()
+	s.state = hcReady
+	s.width = 120
+	s.height = 34
+	checks := make([]healthCheck, 0, 40)
+	for i := 0; i < 40; i++ {
+		checks = append(checks, healthCheck{
+			Check:   "Check",
+			Status:  "PASS",
+			Details: "ok",
+		})
+	}
+	s.report = healthReport{
+		Sections: []healthSection{
+			{Title: "Many", Checks: checks},
+		},
+	}
+
+	for i := 0; i < 50; i++ {
+		next, _ := s.update(keyMsg("down"))
+		s = next.(healthcheckScreen)
+	}
+
+	maxScroll := s.maxScroll()
+	if s.scroll != maxScroll {
+		t.Fatalf("scroll = %d, want clamped maxScroll %d", s.scroll, maxScroll)
+	}
+
+	next, _ := s.update(keyMsg("up"))
+	got := next.(healthcheckScreen)
+	if got.scroll != max(0, maxScroll-1) {
+		t.Fatalf("scroll after up = %d, want %d", got.scroll, max(0, maxScroll-1))
 	}
 }
 
@@ -265,6 +322,21 @@ func TestPackagesDoneHelpIncludesRefreshAndTabs(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("packages done help = %#v, want %#v", got, want)
+	}
+}
+
+func TestPackagesConfirmHelpUsesModalBindings(t *testing.T) {
+	s := newPackagesScreen()
+	s.state = packagesConfirmUninstall
+
+	got := bindingHelps(s.helpKeys())
+	want := []key.Help{
+		keyConfirm.Help(),
+		keyCancel.Help(),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("packages confirm help = %#v, want %#v", got, want)
 	}
 }
 
@@ -418,5 +490,20 @@ func TestUpgradeAllShortcutEntersConfirmation(t *testing.T) {
 	}
 	if got.action != "all" {
 		t.Fatalf("action = %q, want %q", got.action, "all")
+	}
+}
+
+func TestUpgradeConfirmHelpUsesModalBindings(t *testing.T) {
+	s := newUpgradeScreen()
+	s.state = upgradeConfirming
+
+	got := bindingHelps(s.helpKeys())
+	want := []key.Help{
+		keyConfirm.Help(),
+		keyCancel.Help(),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("upgrade confirm help = %#v, want %#v", got, want)
 	}
 }

@@ -406,6 +406,8 @@ type healthcheckScreen struct {
 	spinner spinner.Model
 	scroll  int
 	err     error
+	width   int
+	height  int
 }
 
 type healthcheckDoneMsg struct {
@@ -420,6 +422,8 @@ func newHealthcheckScreen() healthcheckScreen {
 	return healthcheckScreen{
 		state:   hcLoading,
 		spinner: sp,
+		width:   80,
+		height:  24,
 	}
 }
 
@@ -442,6 +446,12 @@ func (s healthcheckScreen) reload() (healthcheckScreen, tea.Cmd) {
 
 func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		s.width = msg.Width
+		s.height = msg.Height
+		s = s.clampScroll()
+		return s, nil
+
 	case tea.KeyPressMsg:
 		switch s.state {
 		case hcReady:
@@ -451,7 +461,9 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					s.scroll--
 				}
 			case "down", "j":
-				s.scroll++
+				if s.scroll < s.maxScroll() {
+					s.scroll++
+				}
 			case "pgup":
 				s.scroll -= 8
 				if s.scroll < 0 {
@@ -459,6 +471,9 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 			case "pgdown":
 				s.scroll += 8
+				if s.scroll > s.maxScroll() {
+					s.scroll = s.maxScroll()
+				}
 			case "r":
 				return s.reload()
 			case "esc":
@@ -479,6 +494,7 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		} else {
 			s.report = msg.report
 			s.state = hcReady
+			s = s.clampScroll()
 		}
 		return s, nil
 
@@ -488,6 +504,59 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		return s, cmd
 	}
 	return s, nil
+}
+
+func (s healthcheckScreen) reportLines() []string {
+	var lines []string
+	var recs []string
+	for _, sec := range s.report.Sections {
+		lines = append(lines, "section:"+sec.Title)
+		for _, c := range sec.Checks {
+			lines = append(lines, renderCheckLine(c, s.width))
+			if c.Status != "PASS" && c.Recommendation != "" {
+				recs = appendUnique(recs, c.Recommendation)
+			}
+		}
+		lines = append(lines, "")
+	}
+	if len(recs) > 0 {
+		lines = append(lines, "section:Recommendations")
+		for _, rec := range recs {
+			lines = append(lines, "  "+itemDescStyle.Render("• "+rec))
+		}
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+func (s healthcheckScreen) maxVisibleLines() int {
+	maxVisible := contentAreaHeightForWindow(s.width, s.height, true) - 10
+	if maxVisible < 5 {
+		return 5
+	}
+	return maxVisible
+}
+
+func (s healthcheckScreen) maxScroll() int {
+	if s.state != hcReady {
+		return 0
+	}
+	maxScroll := len(s.reportLines()) - s.maxVisibleLines()
+	if maxScroll < 0 {
+		return 0
+	}
+	return maxScroll
+}
+
+func (s healthcheckScreen) clampScroll() healthcheckScreen {
+	if s.scroll < 0 {
+		s.scroll = 0
+	}
+	maxScroll := s.maxScroll()
+	if s.scroll > maxScroll {
+		s.scroll = maxScroll
+	}
+	return s
 }
 
 func (s healthcheckScreen) view(width, height int) string {
@@ -521,26 +590,14 @@ func (s healthcheckScreen) view(width, height int) string {
 			r.Counts.Total))
 
 		// Build flat list of renderable lines (section headers + checks + recommendations)
-		var lines []string
+		lines := s.reportLines()
 		var recs []string
 		for _, sec := range r.Sections {
-			lines = append(lines, "section:"+sec.Title)
 			for _, c := range sec.Checks {
-				lines = append(lines, renderCheckLine(c, width))
 				if c.Status != "PASS" && c.Recommendation != "" {
 					recs = appendUnique(recs, c.Recommendation)
 				}
 			}
-			lines = append(lines, "") // blank line between sections
-		}
-
-		// Append recommendations at the end
-		if len(recs) > 0 {
-			lines = append(lines, "section:Recommendations")
-			for _, rec := range recs {
-				lines = append(lines, "  "+itemDescStyle.Render("• "+rec))
-			}
-			lines = append(lines, "")
 		}
 
 		if len(recs) > 0 {

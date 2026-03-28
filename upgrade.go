@@ -30,6 +30,8 @@ type startUpgradeBatchMsg struct{}
 
 type upgradeScreen struct {
 	state            upgradeState
+	width            int
+	height           int
 	packages         []Package
 	selected         map[int]bool
 	selectedVersions map[string]string
@@ -70,6 +72,8 @@ func newUpgradeScreen() upgradeScreen {
 	ctx, cancel := context.WithCancel(context.Background())
 	return upgradeScreen{
 		state:            upgradeLoading,
+		width:            80,
+		height:           24,
 		selected:         make(map[int]bool),
 		selectedVersions: make(map[string]string),
 		spinner:          sp,
@@ -117,6 +121,11 @@ func (s upgradeScreen) init() tea.Cmd {
 }
 
 func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
+	if sizeMsg, ok := msg.(tea.WindowSizeMsg); ok {
+		s.width = sizeMsg.Width
+		s.height = sizeMsg.Height
+	}
+
 	// Detail panel gets priority when visible
 	if s.detail.visible() {
 		var cmd tea.Cmd
@@ -128,10 +137,17 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		s.width = msg.Width
+		s.height = msg.Height
+		s.detail = s.detail.withWindowSize(msg.Width, msg.Height)
+		return s, nil
+
 	case detailVersionSelectedMsg:
 		s.setSelectedVersion(msg.pkgID, msg.source, msg.version)
 		if pkg, ok := s.packageByIdentity(msg.pkgID, msg.source); ok {
 			var cmd tea.Cmd
+			s.detail = s.detail.withWindowSize(s.width, s.height)
 			s.detail, cmd = s.detail.showWithVersion(pkg, msg.version, true)
 			return s, cmd
 		}
@@ -230,6 +246,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			if len(filtered) > 0 && s.cursor >= 0 && s.cursor < len(filtered) {
 				var cmd tea.Cmd
 				pkg := filtered[s.cursor]
+				s.detail = s.detail.withWindowSize(s.width, s.height)
 				s.detail, cmd = s.detail.showWithVersion(pkg, s.selectedVersionFor(pkg), true)
 				return s, cmd
 			}
@@ -420,7 +437,7 @@ func (s upgradeScreen) updateSelect(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 
 func (s upgradeScreen) updateConfirm(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 	switch msg.String() {
-	case "y", "Y":
+	case "enter", "y", "Y":
 		s.state = upgradeExecuting
 		s.retryAction = nil
 		s.progress, _ = s.progress.start()
@@ -505,6 +522,118 @@ func (s upgradeScreen) customVersionCount(pkgs []Package) int {
 		}
 	}
 	return count
+}
+
+func (s upgradeScreen) renderSelectingBody(height int) string {
+	var b strings.Builder
+	filtered := s.filter.filterPackages(s.packages)
+	selected := s.selectedCount()
+	b.WriteString(fmt.Sprintf("  %s\n",
+		infoStyle.Render(fmt.Sprintf("%d package(s) with updates available.", len(s.packages)))))
+	filterView := s.filter.view()
+	if filterView != "" {
+		if s.filter.active {
+			b.WriteString(filterView + "\n")
+		} else {
+			b.WriteString(filterView + fmt.Sprintf("  %s",
+				helpStyle.Render(fmt.Sprintf("(%d shown)", len(filtered)))) + "\n")
+		}
+	}
+	if selected > 0 {
+		b.WriteString(fmt.Sprintf("  %s\n",
+			warnStyle.Render(fmt.Sprintf("%d selected — enter to upgrade selected or u to upgrade all", selected))))
+	} else {
+		b.WriteString("  " + helpStyle.Render("space select • a select visible • u upgrade all") + "\n")
+	}
+	b.WriteString("\n")
+	if len(filtered) == 0 {
+		b.WriteString("  " + warnStyle.Render("No packages match the current filter.") + "\n")
+		return b.String()
+	}
+	maxVisible := height - 10
+	if maxVisible < 5 {
+		maxVisible = 5
+	}
+	start, end := scrollWindow(s.cursor, len(filtered), maxVisible)
+	for i := start; i < end; i++ {
+		pkg := filtered[i]
+		cursor := cursorBlankStr
+		style := itemStyle
+		if i == s.cursor {
+			cursor = cursorStr
+			style = itemActiveStyle
+		}
+		origIdx := -1
+		for j, p := range s.packages {
+			if p.ID == pkg.ID {
+				origIdx = j
+				break
+			}
+		}
+		check := checkbox(origIdx >= 0 && s.selected[origIdx])
+		label := fmt.Sprintf("%s  (%s)  %s → %s", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
+		if version := s.selectedVersionFor(pkg); version != "" {
+			label += fmt.Sprintf("  [target %s]", version)
+		}
+		fmt.Fprintf(&b, "  %s%s %s\n", cursor, check, style.Render(label))
+	}
+	return b.String()
+}
+
+func (s upgradeScreen) confirmBackgroundView(height int) string {
+	var b strings.Builder
+	b.WriteString("  " + sectionTitleStyle.Render("Upgrade Packages") + "\n\n")
+	b.WriteString(s.renderSelectingBody(height))
+	return b.String()
+}
+
+func (s upgradeScreen) upgradeConfirmModal() confirmModal {
+	targets := s.packagesForAction()
+	customVersions := s.customVersionCount(targets)
+	body := make([]string, 0, 8)
+	if len(targets) == 1 {
+		pkg := targets[0]
+		body = append(body, infoStyle.Render(pkg.Name))
+		body = append(body, helpStyle.Render(pkg.ID))
+		if version := s.selectedVersionFor(pkg); version != "" {
+			body = append(body, "Target version: "+itemActiveStyle.Render(version))
+		} else {
+			body = append(body, "Latest available: "+itemActiveStyle.Render(pkg.Available))
+		}
+		if pkg.Source != "" {
+			body = append(body, "Source: "+pkg.Source)
+		}
+	} else {
+		body = append(body, infoStyle.Render(fmt.Sprintf("%d package(s) will be upgraded.", len(targets))))
+		for _, item := range summarizeModalItems(packageNames(targets), 3) {
+			body = append(body, "• "+item)
+		}
+		if customVersions > 0 {
+			body = append(body, "", helpStyle.Render(fmt.Sprintf("%d package(s) will use an explicit target version.", customVersions)))
+		}
+	}
+
+	title := "Upgrade Package?"
+	if len(targets) != 1 {
+		title = "Upgrade Packages?"
+	}
+	return confirmModal{
+		title:       title,
+		body:        body,
+		confirmVerb: "upgrade",
+	}
+}
+
+func packageNames(pkgs []Package) []string {
+	names := make([]string, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		if pkg.Name != "" {
+			names = append(names, pkg.Name)
+			continue
+		}
+		names = append(names, pkg.ID)
+	}
+	return names
 }
 
 func (s upgradeScreen) packageByIdentity(id, source string) (Package, bool) {
@@ -706,82 +835,15 @@ func (s upgradeScreen) view(width, height int) string {
 		b.WriteString("\n  " + helpStyle.Render("Press r to scan again or tab to switch screens") + "\n")
 
 	case upgradeSelecting:
-		filtered := s.filter.filterPackages(s.packages)
-		selected := s.selectedCount()
-		b.WriteString(fmt.Sprintf("  %s\n",
-			infoStyle.Render(fmt.Sprintf("%d package(s) with updates available.", len(s.packages)))))
-		filterView := s.filter.view()
-		if filterView != "" {
-			if s.filter.active {
-				b.WriteString(filterView + "\n")
-			} else {
-				b.WriteString(filterView + fmt.Sprintf("  %s",
-					helpStyle.Render(fmt.Sprintf("(%d shown)", len(filtered)))) + "\n")
-			}
-		}
-		if selected > 0 {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				warnStyle.Render(fmt.Sprintf("%d selected — enter to upgrade selected or u to upgrade all", selected))))
-		} else {
-			b.WriteString("  " + helpStyle.Render("space select • a select visible • u upgrade all") + "\n")
-		}
-		b.WriteString("\n")
-		if len(filtered) == 0 {
-			b.WriteString("  " + warnStyle.Render("No packages match the current filter.") + "\n")
-			break
-		}
-		maxVisible := height - 10
-		if maxVisible < 5 {
-			maxVisible = 5
-		}
-		start, end := scrollWindow(s.cursor, len(filtered), maxVisible)
-		for i := start; i < end; i++ {
-			pkg := filtered[i]
-			cursor := cursorBlankStr
-			style := itemStyle
-			if i == s.cursor {
-				cursor = cursorStr
-				style = itemActiveStyle
-			}
-			// Find original index for selection state
-			origIdx := -1
-			for j, p := range s.packages {
-				if p.ID == pkg.ID {
-					origIdx = j
-					break
-				}
-			}
-			check := checkbox(origIdx >= 0 && s.selected[origIdx])
-			label := fmt.Sprintf("%s  (%s)  %s → %s", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
-			if version := s.selectedVersionFor(pkg); version != "" {
-				label += fmt.Sprintf("  [target %s]", version)
-			}
-			fmt.Fprintf(&b, "  %s%s %s\n", cursor, check, style.Render(label))
-		}
+		b.WriteString(s.renderSelectingBody(height))
 
 	case upgradeConfirming:
-		targets := s.packagesForAction()
-		customVersions := s.customVersionCount(targets)
-		if len(targets) == 1 {
-			pkg := targets[0]
-			if version := s.selectedVersionFor(pkg); version != "" {
-				fmt.Fprintf(&b, "  Upgrade %s (%s) to %s?\n\n",
-					itemActiveStyle.Render(pkg.Name), pkg.ID, itemActiveStyle.Render(version))
-			} else {
-				fmt.Fprintf(&b, "  Upgrade %s (%s)?\n\n",
-					itemActiveStyle.Render(pkg.Name), pkg.ID)
-			}
-		} else if s.action == "all" {
-			fmt.Fprintf(&b, "  Upgrade all %d package(s)?\n\n", len(targets))
-		} else {
-			fmt.Fprintf(&b, "  Upgrade %d selected package(s)?\n\n", len(targets))
-		}
-		if customVersions > 0 {
-			b.WriteString("  " + infoStyle.Render(
-				fmt.Sprintf("%d package(s) will use an explicitly selected version.", customVersions),
-			) + "\n\n")
-		}
-		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
+		return renderConfirmModal(
+			s.confirmBackgroundView(height),
+			width,
+			height,
+			s.upgradeConfirmModal(),
+		)
 
 	case upgradeExecuting:
 		if s.batchTotal > 0 {
@@ -917,9 +979,13 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 		}
 		return bindings
 	case upgradeConfirming:
-		return []key.Binding{keyConfirmY}
+		return []key.Binding{keyConfirm, keyCancel}
 	}
 	return []key.Binding{keyTabs}
+}
+
+func (s upgradeScreen) blocksGlobalShortcuts() bool {
+	return s.state == upgradeConfirming
 }
 
 // scrollWindow calculates visible range for long lists.

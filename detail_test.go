@@ -92,8 +92,7 @@ func TestDetailVersionPickerHelpKeys(t *testing.T) {
 
 	got := bindingHelps(p.helpKeys())
 	want := []key.Help{
-		keyUp.Help(),
-		keyDown.Help(),
+		keyScroll.Help(),
 		keyEnter.Help(),
 		keyUseLatest.Help(),
 		keyEsc.Help(),
@@ -132,7 +131,7 @@ func TestDetailViewShowsTargetSummaryForInstallSelection(t *testing.T) {
 	}
 }
 
-func TestDetailViewShowsInstalledAndTargetDetailsForUpgrade(t *testing.T) {
+func TestDetailViewShowsUpgradeSummaryAndTargetDetails(t *testing.T) {
 	p := newDetailPanel()
 	p.state = detailReady
 	p.pkgID = "Microsoft.Edge"
@@ -140,21 +139,14 @@ func TestDetailViewShowsInstalledAndTargetDetailsForUpgrade(t *testing.T) {
 	p.allowVersionSelect = true
 	p.installedVersion = "146.0.3856.72"
 	p.latestVersion = "146.0.3856.78"
+	p.selectedVersion = "146.0.3856.76"
 	p.detail = PackageDetail{
 		Name:        "Microsoft Edge",
 		ID:          "Microsoft.Edge",
-		Version:     "146.0.3856.78",
+		Version:     "146.0.3856.76",
 		Source:      "winget",
 		Publisher:   "Microsoft",
 		Description: "Target detail body",
-	}
-	p.compareDetail = PackageDetail{
-		Name:        "Microsoft Edge",
-		ID:          "Microsoft.Edge",
-		Version:     "146.0.3856.72",
-		Source:      "winget",
-		Publisher:   "Microsoft",
-		Description: "Installed detail body",
 	}
 
 	got := p.view(120, 32)
@@ -164,10 +156,96 @@ func TestDetailViewShowsInstalledAndTargetDetailsForUpgrade(t *testing.T) {
 	if !strings.Contains(got, "Latest Available") || !strings.Contains(got, "146.0.3856.78") {
 		t.Fatalf("view() = %q, want latest available summary", got)
 	}
-	if !strings.Contains(got, "Target Details") || !strings.Contains(got, "Installed Details") {
-		t.Fatalf("view() = %q, want target and installed detail sections", got)
+	if !strings.Contains(got, "Target Version") || !strings.Contains(got, "146.0.3856.76") {
+		t.Fatalf("view() = %q, want target version summary", got)
 	}
-	if !strings.Contains(got, "Target detail body") || !strings.Contains(got, "Installed detail body") {
-		t.Fatalf("view() = %q, want both detail bodies", got)
+	if !strings.Contains(got, "Target Details") || !strings.Contains(got, "Target detail body") {
+		t.Fatalf("view() = %q, want target detail section", got)
+	}
+	if strings.Contains(got, "Installed Details") {
+		t.Fatalf("view() = %q, did not expect installed details section", got)
+	}
+}
+
+func TestDetailViewWrapsLongContentWithoutDroppingBorder(t *testing.T) {
+	p := newDetailPanel()
+	p.state = detailReady
+	p.pkgID = "Mozilla.Firefox"
+	p.source = "winget"
+	p.allowVersionSelect = true
+	p.latestVersion = "149.0"
+	p.detail = PackageDetail{
+		Name:         "Mozilla Firefox",
+		ID:           "Mozilla.Firefox",
+		Version:      "149.0",
+		Source:       "winget",
+		Description:  strings.Repeat("This is a long wrapped description segment. ", 10),
+		ReleaseNotes: strings.Repeat("Release note line with a long sentence that must wrap cleanly. ", 10),
+	}
+
+	got := p.view(72, 18)
+	if !strings.Contains(got, "╰") && !strings.Contains(got, "└") {
+		t.Fatalf("view() = %q, want closing border to remain visible", got)
+	}
+}
+
+func TestDetailScrollStopsAtBottom(t *testing.T) {
+	p := newDetailPanel()
+	p.state = detailReady
+	p.allowVersionSelect = true
+	p.windowWidth = 120
+	p.windowHeight = 34
+	p.detail = PackageDetail{
+		Name:         "Mozilla Firefox",
+		ID:           "Mozilla.Firefox",
+		Version:      "149.0",
+		Source:       "winget",
+		Description:  strings.Repeat("Long detail paragraph. ", 80),
+		ReleaseNotes: strings.Repeat("Release notes line. ", 80),
+	}
+
+	for i := 0; i < 100; i++ {
+		var handled bool
+		p, _, handled = p.update(keyMsg("down"))
+		if !handled {
+			t.Fatal("expected down key to be handled")
+		}
+	}
+
+	maxScroll := p.maxScroll()
+	if p.scroll != maxScroll {
+		t.Fatalf("scroll = %d, want clamped maxScroll %d", p.scroll, maxScroll)
+	}
+
+	next, _, handled := p.update(keyMsg("up"))
+	if !handled {
+		t.Fatal("expected up key to be handled")
+	}
+	if next.scroll != max(0, maxScroll-1) {
+		t.Fatalf("scroll after up = %d, want %d", next.scroll, max(0, maxScroll-1))
+	}
+}
+
+func TestDetailPgDownAdvancesScroll(t *testing.T) {
+	p := newDetailPanel()
+	p.state = detailReady
+	p.allowVersionSelect = true
+	p.windowWidth = 120
+	p.windowHeight = 34
+	p.detail = PackageDetail{
+		Name:         "Mozilla Firefox",
+		ID:           "Mozilla.Firefox",
+		Version:      "149.0",
+		Source:       "winget",
+		Description:  strings.Repeat("Long detail paragraph. ", 80),
+		ReleaseNotes: strings.Repeat("Release notes line. ", 80),
+	}
+
+	next, _, handled := p.update(keyMsg("pgdown"))
+	if !handled {
+		t.Fatal("expected pgdown key to be handled")
+	}
+	if next.scroll != min(8, next.maxScroll()) {
+		t.Fatalf("scroll = %d, want %d", next.scroll, min(8, next.maxScroll()))
 	}
 }

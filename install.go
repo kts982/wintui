@@ -28,6 +28,8 @@ const (
 
 type installScreen struct {
 	state            installState
+	width            int
+	height           int
 	input            textinput.Model
 	spinner          spinner.Model
 	progress         progressBar
@@ -66,6 +68,8 @@ func newInstallScreen() installScreen {
 
 	return installScreen{
 		state:            installInput,
+		width:            80,
+		height:           24,
 		input:            ti,
 		spinner:          sp,
 		progress:         newProgressBar(50),
@@ -98,6 +102,11 @@ func (s installScreen) init() tea.Cmd {
 }
 
 func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
+	if sizeMsg, ok := msg.(tea.WindowSizeMsg); ok {
+		s.width = sizeMsg.Width
+		s.height = sizeMsg.Height
+	}
+
 	// Detail panel gets priority
 	if s.detail.visible() {
 		var cmd tea.Cmd
@@ -109,10 +118,17 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		s.width = msg.Width
+		s.height = msg.Height
+		s.detail = s.detail.withWindowSize(msg.Width, msg.Height)
+		return s, nil
+
 	case detailVersionSelectedMsg:
 		s.setSelectedVersion(msg.pkgID, msg.source, msg.version)
 		if pkg, ok := s.packageByIdentity(msg.pkgID, msg.source); ok {
 			var cmd tea.Cmd
+			s.detail = s.detail.withWindowSize(s.width, s.height)
 			s.detail, cmd = s.detail.showWithVersion(pkg, msg.version, true)
 			return s, cmd
 		}
@@ -184,6 +200,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				if len(s.packages) > 0 {
 					var cmd tea.Cmd
 					pkg := s.packages[s.cursor]
+					s.detail = s.detail.withWindowSize(s.width, s.height)
 					s.detail, cmd = s.detail.showWithVersion(pkg, s.selectedVersionFor(pkg), true)
 					return s, cmd
 				}
@@ -198,7 +215,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 		case installConfirm:
 			switch msg.String() {
-			case "y", "Y":
+			case "enter", "y", "Y":
 				pkg := s.packages[s.cursor]
 				version := s.selectedVersionFor(pkg)
 				s.state = installExecuting
@@ -406,6 +423,63 @@ func (s *installScreen) setSelectedVersion(id, source, version string) {
 	s.selectedVersions[key] = version
 }
 
+func (s installScreen) renderResultsBody(height int) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("  %s\n\n",
+		infoStyle.Render(fmt.Sprintf("%d result(s) found.", len(s.packages)))))
+	maxVisible := height - 8
+	if maxVisible < 5 {
+		maxVisible = 5
+	}
+	start, end := scrollWindow(s.cursor, len(s.packages), maxVisible)
+	for i := start; i < end; i++ {
+		pkg := s.packages[i]
+		cursor := cursorBlankStr
+		style := itemStyle
+		if i == s.cursor {
+			cursor = cursorStr
+			style = itemActiveStyle
+		}
+		label := fmt.Sprintf("%s  (%s)  %s", pkg.Name, pkg.ID, pkg.Version)
+		if pkg.Source != "" {
+			label += fmt.Sprintf("  [%s]", pkg.Source)
+		}
+		if version := s.selectedVersionFor(pkg); version != "" {
+			label += fmt.Sprintf("  → %s", version)
+		}
+		fmt.Fprintf(&b, "  %s%s\n", cursor, style.Render(label))
+	}
+	return b.String()
+}
+
+func (s installScreen) confirmBackgroundView(height int) string {
+	var b strings.Builder
+	b.WriteString("  " + sectionTitleStyle.Render("Install Package") + "\n\n")
+	b.WriteString(s.renderResultsBody(height))
+	return b.String()
+}
+
+func (s installScreen) installConfirmModal() confirmModal {
+	pkg := s.packages[s.cursor]
+	body := []string{
+		infoStyle.Render(pkg.Name),
+		helpStyle.Render(pkg.ID),
+	}
+	if version := s.selectedVersionFor(pkg); version != "" {
+		body = append(body, "Target version: "+itemActiveStyle.Render(version))
+	} else if pkg.Version != "" {
+		body = append(body, "Latest available: "+itemActiveStyle.Render(pkg.Version))
+	}
+	if pkg.Source != "" {
+		body = append(body, "Source: "+pkg.Source)
+	}
+	return confirmModal{
+		title:       "Install Package?",
+		body:        body,
+		confirmVerb: "install",
+	}
+}
+
 func (s installScreen) view(width, height int) string {
 	if s.detail.visible() {
 		return "  " + sectionTitleStyle.Render("Install Package") + "\n" +
@@ -424,42 +498,15 @@ func (s installScreen) view(width, height int) string {
 		b.WriteString("  " + s.progress.view() + "\n")
 
 	case installResults:
-		b.WriteString(fmt.Sprintf("  %s\n\n",
-			infoStyle.Render(fmt.Sprintf("%d result(s) found.", len(s.packages)))))
-		maxVisible := height - 8
-		if maxVisible < 5 {
-			maxVisible = 5
-		}
-		start, end := scrollWindow(s.cursor, len(s.packages), maxVisible)
-		for i := start; i < end; i++ {
-			pkg := s.packages[i]
-			cursor := cursorBlankStr
-			style := itemStyle
-			if i == s.cursor {
-				cursor = cursorStr
-				style = itemActiveStyle
-			}
-			label := fmt.Sprintf("%s  (%s)  %s", pkg.Name, pkg.ID, pkg.Version)
-			if pkg.Source != "" {
-				label += fmt.Sprintf("  [%s]", pkg.Source)
-			}
-			if version := s.selectedVersionFor(pkg); version != "" {
-				label += fmt.Sprintf("  → %s", version)
-			}
-			fmt.Fprintf(&b, "  %s%s\n", cursor, style.Render(label))
-		}
+		b.WriteString(s.renderResultsBody(height))
 
 	case installConfirm:
-		pkg := s.packages[s.cursor]
-		version := s.selectedVersionFor(pkg)
-		if version != "" {
-			b.WriteString(fmt.Sprintf("  Install %s (%s) version %s?\n\n",
-				itemActiveStyle.Render(pkg.Name), pkg.ID, itemActiveStyle.Render(version)))
-		} else {
-			b.WriteString(fmt.Sprintf("  Install %s (%s)?\n\n",
-				itemActiveStyle.Render(pkg.Name), pkg.ID))
-		}
-		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
+		return renderConfirmModal(
+			s.confirmBackgroundView(height),
+			width,
+			height,
+			s.installConfirmModal(),
+		)
 
 	case installExecuting:
 		if pkg, ok := s.currentPackage(); ok {
@@ -537,7 +584,7 @@ func (s installScreen) helpKeys() []key.Binding {
 	case installResults:
 		return []key.Binding{keyUp, keyDown, keyDetails, keyEnter, keyEsc}
 	case installConfirm:
-		return []key.Binding{keyConfirmY}
+		return []key.Binding{keyConfirm, keyCancel}
 	case installDone:
 		if s.retryAction != nil && !isElevated() {
 			return []key.Binding{keyRetryElevated, keySearchAgain, keyEsc, keyTabs}
@@ -545,4 +592,8 @@ func (s installScreen) helpKeys() []key.Binding {
 		return []key.Binding{keySearchAgain, keyEsc, keyTabs}
 	}
 	return []key.Binding{keyTabs}
+}
+
+func (s installScreen) blocksGlobalShortcuts() bool {
+	return s.state == installConfirm
 }

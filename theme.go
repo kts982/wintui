@@ -75,3 +75,23 @@ func checkbox(checked bool) string {
 func indentBlock(block string, spaces int) string {
 	return lipgloss.NewStyle().MarginLeft(spaces).Render(block)
 }
+
+func useCompactHeaderForSize(width, height int) bool {
+	return height < 32 || width < 110
+}
+
+func contentAreaHeightForWindow(width, height int, hasHelp bool) int {
+	chromeHeight := 9
+	if useCompactHeaderForSize(width, height) {
+		chromeHeight = 3
+	}
+	helpHeight := 0
+	if hasHelp {
+		helpHeight = 1
+	}
+	contentHeight := height - chromeHeight - helpHeight - 1
+	if contentHeight < 1 {
+		return 1
+	}
+	return contentHeight
+}

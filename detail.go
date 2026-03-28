@@ -16,15 +16,7 @@ import (
 
 // ── Messages ───────────────────────────────────────────────────────
 
-type detailFetchRole string
-
-const (
-	detailFetchTarget    detailFetchRole = "target"
-	detailFetchInstalled detailFetchRole = "installed"
-)
-
 type packageDetailMsg struct {
-	role    detailFetchRole
 	pkgID   string
 	source  string
 	version string
@@ -46,11 +38,10 @@ type detailVersionSelectedMsg struct {
 }
 
 // fetchDetail returns a Cmd that fetches package details async.
-func fetchDetail(role detailFetchRole, id, source, version string) tea.Cmd {
+func fetchDetail(id, source, version string) tea.Cmd {
 	return func() tea.Msg {
 		d, err := showPackage(id, source, version)
 		return packageDetailMsg{
-			role:    role,
 			pkgID:   id,
 			source:  source,
 			version: version,
@@ -84,11 +75,9 @@ const (
 type detailPanel struct {
 	state              detailState
 	detail             PackageDetail
-	compareDetail      PackageDetail
 	spinner            spinner.Model
 	scroll             int
 	err                error
-	compareErr         error
 	pkgID              string
 	source             string
 	allowVersionSelect bool
@@ -98,16 +87,17 @@ type detailPanel struct {
 	versions           []string
 	versionCursor      int
 	versionsLoading    bool
-	compareLoading     bool
 	selectingVersion   bool
 	versionErr         string
+	windowWidth        int
+	windowHeight       int
 }
 
 func newDetailPanel() detailPanel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
-	return detailPanel{state: detailHidden, spinner: sp}
+	return detailPanel{state: detailHidden, spinner: sp, windowWidth: 80, windowHeight: 24}
 }
 
 // show starts loading details for a package.
@@ -121,9 +111,7 @@ func (p detailPanel) showWithVersion(pkg Package, selectedVersion string, allowV
 	p.state = detailLoading
 	p.scroll = 0
 	p.err = nil
-	p.compareErr = nil
 	p.detail = PackageDetail{}
-	p.compareDetail = PackageDetail{}
 	p.pkgID = pkg.ID
 	p.source = pkg.Source
 	p.allowVersionSelect = allowVersionSelect
@@ -151,13 +139,12 @@ func (p detailPanel) showWithVersion(pkg Package, selectedVersion string, allowV
 		}
 	}
 	p.versionsLoading = false
-	p.compareLoading = p.installedVersion != ""
 	p.selectingVersion = false
 	p.versionErr = ""
 
 	cmds := []tea.Cmd{
 		p.spinner.Tick,
-		fetchDetail(detailFetchTarget, p.pkgID, p.source, p.targetVersion()),
+		fetchDetail(p.pkgID, p.source, p.targetVersion()),
 	}
 	return p, tea.Batch(cmds...)
 }
@@ -179,12 +166,20 @@ func (p detailPanel) targetVersionLabel() string {
 	return ""
 }
 
+func (p detailPanel) withWindowSize(width, height int) detailPanel {
+	if width > 0 {
+		p.windowWidth = width
+	}
+	if height > 0 {
+		p.windowHeight = height
+	}
+	return p.clampScroll()
+}
+
 func (p detailPanel) title() string {
 	switch {
 	case p.detail.Name != "":
 		return p.detail.Name
-	case p.compareDetail.Name != "":
-		return p.compareDetail.Name
 	case p.pkgID != "":
 		return p.pkgID
 	default:
@@ -205,42 +200,23 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		p = p.withWindowSize(msg.Width, msg.Height)
+		return p, nil, true
+
 	case packageDetailMsg:
 		if msg.pkgID != p.pkgID || msg.source != p.source {
 			return p, nil, false
 		}
-		switch msg.role {
-		case detailFetchTarget:
-			if msg.version != p.targetVersion() {
-				return p, nil, true
-			}
-			if msg.err != nil {
-				p.err = msg.err
-				p.state = detailError
-			} else {
-				p.detail = msg.detail
-				p.state = detailReady
-				if p.compareLoading {
-					if p.installedVersion == msg.version {
-						p.compareDetail = msg.detail
-						p.compareErr = nil
-						p.compareLoading = false
-					} else {
-						return p, fetchDetail(detailFetchInstalled, p.pkgID, p.source, p.installedVersion), true
-					}
-				}
-			}
-		case detailFetchInstalled:
-			if msg.version != p.installedVersion {
-				return p, nil, true
-			}
-			p.compareLoading = false
-			if msg.err != nil {
-				p.compareErr = msg.err
-			} else {
-				p.compareDetail = msg.detail
-				p.compareErr = nil
-			}
+		if msg.version != p.targetVersion() {
+			return p, nil, true
+		}
+		if msg.err != nil {
+			p.err = msg.err
+			p.state = detailError
+		} else {
+			p.detail = msg.detail
+			p.state = detailReady
 		}
 		return p, nil, true
 
@@ -294,6 +270,21 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 					p.versionCursor++
 				}
 				return p, nil, true
+			case "pgup":
+				p.versionCursor -= 8
+				if p.versionCursor < 0 {
+					p.versionCursor = 0
+				}
+				return p, nil, true
+			case "pgdown":
+				p.versionCursor += 8
+				if p.versionCursor > len(p.versions)-1 {
+					p.versionCursor = len(p.versions) - 1
+				}
+				if p.versionCursor < 0 {
+					p.versionCursor = 0
+				}
+				return p, nil, true
 			case "enter":
 				if len(p.versions) == 0 {
 					return p, nil, true
@@ -328,7 +319,21 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 			}
 			return p, nil, true
 		case "down", "j":
-			p.scroll++
+			if p.scroll < p.maxScroll() {
+				p.scroll++
+			}
+			return p, nil, true
+		case "pgup":
+			p.scroll -= 8
+			if p.scroll < 0 {
+				p.scroll = 0
+			}
+			return p, nil, true
+		case "pgdown":
+			p.scroll += 8
+			if p.scroll > p.maxScroll() {
+				p.scroll = p.maxScroll()
+			}
 			return p, nil, true
 		case "o":
 			if p.state == detailReady && p.detail.Homepage != "" {
@@ -356,7 +361,7 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 		}
 
 	case spinner.TickMsg:
-		if p.state == detailLoading || p.versionsLoading || p.compareLoading {
+		if p.state == detailLoading || p.versionsLoading {
 			var cmd tea.Cmd
 			p.spinner, cmd = p.spinner.Update(msg)
 			return p, cmd, true
@@ -375,17 +380,17 @@ func (p detailPanel) helpKeys() []key.Binding {
 			return []key.Binding{keyEsc}
 		}
 		if p.selectingVersion {
-			return []key.Binding{keyUp, keyDown, keyEnter, keyUseLatest, keyEsc}
+			return []key.Binding{keyScroll, keyEnter, keyUseLatest, keyEsc}
 		}
 		if p.allowVersionSelect {
-			bindings := []key.Binding{keyUp, keyDown, keyVersion}
+			bindings := []key.Binding{keyScroll, keyVersion}
 			if p.selectedVersion != "" {
 				bindings = append(bindings, keyUseLatest)
 			}
 			bindings = append(bindings, keyOpen, keyEsc)
 			return bindings
 		}
-		return []key.Binding{keyUp, keyDown, keyOpen, keyEsc}
+		return []key.Binding{keyScroll, keyOpen, keyEsc}
 	}
 	return nil
 }
@@ -433,6 +438,82 @@ func appendDetailSection(lines *[]string, heading string, d PackageDetail, inclu
 	}
 }
 
+func detailContentWidth(totalWidth int) int {
+	return max(20, totalWidth-8)
+}
+
+func wrapDetailLines(lines []string, width int) []string {
+	wrapper := lipgloss.NewStyle().Width(width).MaxWidth(width)
+	wrapped := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			wrapped = append(wrapped, "")
+			continue
+		}
+		wrapped = append(wrapped, strings.Split(wrapper.Render(line), "\n")...)
+	}
+	return wrapped
+}
+
+func (p detailPanel) detailLines(totalWidth int) []string {
+	var lines []string
+	if p.installedVersion != "" {
+		appendDetailField(&lines, "Installed Version", p.installedVersion)
+	}
+	if p.latestVersion != "" {
+		appendDetailField(&lines, "Latest Available", p.latestVersion)
+	}
+	if p.allowVersionSelect {
+		appendDetailField(&lines, "Target Version", p.targetVersionLabel())
+	}
+	source := p.detail.Source
+	if source == "" {
+		source = p.source
+	}
+	appendDetailField(&lines, "Source", source)
+
+	sectionTitle := "Package Details"
+	if p.allowVersionSelect {
+		sectionTitle = "Target Details"
+	}
+	appendDetailSection(&lines, sectionTitle, p.detail, true)
+
+	panelWidth := max(24, totalWidth-4)
+	return wrapDetailLines(lines, detailContentWidth(panelWidth))
+}
+
+func (p detailPanel) innerHeight() int {
+	contentHeight := contentAreaHeightForWindow(p.windowWidth, p.windowHeight, true)
+	innerHeight := contentHeight - 6
+	if innerHeight < 5 {
+		return 5
+	}
+	return innerHeight
+}
+
+func (p detailPanel) maxScroll() int {
+	if p.state != detailReady {
+		return 0
+	}
+	totalLines := len(p.detailLines(p.windowWidth))
+	maxScroll := totalLines - p.innerHeight()
+	if maxScroll < 0 {
+		return 0
+	}
+	return maxScroll
+}
+
+func (p detailPanel) clampScroll() detailPanel {
+	if p.scroll < 0 {
+		p.scroll = 0
+	}
+	maxScroll := p.maxScroll()
+	if p.scroll > maxScroll {
+		p.scroll = maxScroll
+	}
+	return p
+}
+
 // view renders the detail panel.
 func (p detailPanel) view(width, height int) string {
 	if p.state == detailHidden {
@@ -441,11 +522,12 @@ func (p detailPanel) view(width, height int) string {
 
 	var b strings.Builder
 
+	panelWidth := max(24, width-4)
 	panelStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(accent).
 		Padding(0, 1).
-		Width(width - 4)
+		Width(panelWidth)
 
 	switch p.state {
 	case detailLoading:
@@ -478,47 +560,13 @@ func (p detailPanel) view(width, height int) string {
 		}
 		b.WriteString("  " + title + "\n")
 
-		var lines []string
-		if p.installedVersion != "" {
-			appendDetailField(&lines, "Installed Version", p.installedVersion)
-		}
-		if p.latestVersion != "" {
-			appendDetailField(&lines, "Latest Available", p.latestVersion)
-		}
-		if p.allowVersionSelect {
-			appendDetailField(&lines, "Target Version", p.targetVersionLabel())
-		}
-		source := p.detail.Source
-		if source == "" {
-			source = p.source
-		}
-		appendDetailField(&lines, "Source", source)
-
-		sectionTitle := "Package Details"
-		if p.allowVersionSelect {
-			sectionTitle = "Target Details"
-		}
-		appendDetailSection(&lines, sectionTitle, p.detail, true)
-		if p.installedVersion != "" {
-			switch {
-			case p.compareLoading:
-				lines = append(lines, "")
-				lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Installed Details"))
-				lines = append(lines, fmt.Sprintf("  %s Loading installed version details...", p.spinner.View()))
-			case p.compareErr != nil:
-				lines = append(lines, "")
-				lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Installed Details"))
-				lines = append(lines, "  "+warnStyle.Render("Unable to load installed version details: "+p.compareErr.Error()))
-			default:
-				appendDetailSection(&lines, "Installed Details", p.compareDetail, false)
-			}
-		}
+		visibleLines := p.detailLines(width)
 
 		innerHeight := height - 6
 		if innerHeight < 5 {
 			innerHeight = 5
 		}
-		totalLines := len(lines)
+		totalLines := len(visibleLines)
 		start := p.scroll
 		if totalLines > innerHeight && start > totalLines-innerHeight {
 			start = totalLines - innerHeight
@@ -532,21 +580,21 @@ func (p detailPanel) view(width, height int) string {
 		}
 
 		for i := start; i < end; i++ {
-			b.WriteString(lines[i] + "\n")
+			b.WriteString(visibleLines[i] + "\n")
 		}
 
 		b.WriteString("\n")
-		help := "  ↑↓ scroll • esc close"
+		help := "  ↑↓/PgUp/PgDn scroll • esc close"
 		if p.allowVersionSelect {
-			help = "  ↑↓ scroll • v choose version • esc close"
+			help = "  ↑↓/PgUp/PgDn scroll • v choose version • esc close"
 			if p.selectedVersion != "" {
-				help = "  ↑↓ scroll • v change version • c latest • esc close"
+				help = "  ↑↓/PgUp/PgDn scroll • v change version • c latest • esc close"
 			}
 			if p.detail.Homepage != "" {
 				help += " • o open homepage"
 			}
 		} else if p.detail.Homepage != "" {
-			help = "  ↑↓ scroll • o open homepage • esc close"
+			help = "  ↑↓/PgUp/PgDn scroll • o open homepage • esc close"
 		}
 		b.WriteString(helpStyle.Render(help))
 		if p.versionErr != "" {
@@ -601,7 +649,7 @@ func (p detailPanel) renderVersionPicker(panelStyle lipgloss.Style, height int) 
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  ↑↓ choose • enter select • c latest • esc back"))
+	b.WriteString(helpStyle.Render("  ↑↓/PgUp/PgDn choose • enter select • c latest • esc back"))
 	return indentBlock(panelStyle.Render(b.String()), 2)
 }
 

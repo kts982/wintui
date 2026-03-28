@@ -35,6 +35,8 @@ var keyUninstall = key.NewBinding(
 
 type packagesScreen struct {
 	state         packagesState
+	width         int
+	height        int
 	table         table.Model
 	tableWidth    int
 	spinner       spinner.Model
@@ -82,6 +84,8 @@ func newPackagesScreen() packagesScreen {
 	ctx, cancel := context.WithCancel(context.Background())
 	return packagesScreen{
 		state:      packagesLoading,
+		width:      80,
+		height:     24,
 		selected:   make(map[string]bool),
 		tableWidth: packagesTableWidth(80),
 		spinner:    sp,
@@ -128,6 +132,11 @@ func (s packagesScreen) init() tea.Cmd {
 }
 
 func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
+	if sizeMsg, ok := msg.(tea.WindowSizeMsg); ok {
+		s.width = sizeMsg.Width
+		s.height = sizeMsg.Height
+	}
+
 	// Detail panel gets priority
 	if s.detail.visible() {
 		var cmd tea.Cmd
@@ -158,6 +167,9 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		s.width = msg.Width
+		s.height = msg.Height
+		s.detail = s.detail.withWindowSize(msg.Width, msg.Height)
 		newWidth := packagesTableWidth(msg.Width)
 		if newWidth != s.tableWidth {
 			s.tableWidth = newWidth
@@ -256,6 +268,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				if row >= 0 && row < len(filtered) {
 					var cmd tea.Cmd
 					pkg := filtered[row]
+					s.detail = s.detail.withWindowSize(s.width, s.height)
 					s.detail, cmd = s.detail.show(pkg.ID, pkg.Source)
 					return s, cmd
 				}
@@ -305,7 +318,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 		case packagesConfirmUninstall:
 			switch msg.String() {
-			case "y", "Y":
+			case "enter", "y", "Y":
 				s.state = packagesUninstalling
 				ctx, cancel := context.WithCancel(context.Background())
 				s.ctx = ctx
@@ -604,15 +617,6 @@ func (s packagesScreen) selectedCount() int {
 	return count
 }
 
-func (s packagesScreen) selectedNames() []string {
-	selected := s.selectedPackages()
-	var names []string
-	for _, pkg := range selected {
-		names = append(names, pkg.Name)
-	}
-	return names
-}
-
 func (s packagesScreen) selectedPackages() []Package {
 	var pkgs []Package
 	for _, pkg := range s.packages {
@@ -621,6 +625,68 @@ func (s packagesScreen) selectedPackages() []Package {
 		}
 	}
 	return pkgs
+}
+
+func (s packagesScreen) renderReadyBody(height int) string {
+	var b strings.Builder
+	filtered := s.filteredPkgs()
+	b.WriteString("  " + infoStyle.Render(packageSummary(s.packages)) + "\n")
+
+	filterView := s.filter.view()
+	if filterView != "" {
+		b.WriteString(filterView + fmt.Sprintf("  %s",
+			helpStyle.Render(fmt.Sprintf("(%d shown)", len(filtered)))) + "\n")
+	}
+
+	selCount := s.selectedCount()
+	if selCount > 0 {
+		b.WriteString(fmt.Sprintf("  %s\n",
+			warnStyle.Render(fmt.Sprintf("%d selected — press u to uninstall or e to export", selCount))))
+	}
+
+	tableH := height - 8
+	if s.filter.query != "" || s.filter.active {
+		tableH -= 2
+	}
+	if selCount > 0 {
+		tableH -= 1
+	}
+	if tableH < 5 {
+		tableH = 5
+	}
+	s.table.SetHeight(tableH)
+	b.WriteString("\n  " + s.table.View() + "\n")
+
+	if s.exportMsg != "" {
+		b.WriteString("  " + successStyle.Render(s.exportMsg) + "\n")
+	}
+	if s.statusMsg != "" {
+		b.WriteString("  " + s.statusMsg + "\n")
+	}
+
+	return b.String()
+}
+
+func (s packagesScreen) confirmBackgroundView(height int) string {
+	var b strings.Builder
+	b.WriteString("  " + sectionTitleStyle.Render("Installed Packages") + "\n\n")
+	b.WriteString(s.renderReadyBody(height))
+	return b.String()
+}
+
+func (s packagesScreen) uninstallConfirmModal() confirmModal {
+	selected := s.selectedPackages()
+	body := []string{
+		infoStyle.Render(fmt.Sprintf("%d package(s) will be removed.", len(selected))),
+	}
+	for _, item := range summarizeModalItems(packageNames(selected), 3) {
+		body = append(body, "• "+item)
+	}
+	return confirmModal{
+		title:       "Uninstall Packages?",
+		body:        body,
+		confirmVerb: "uninstall",
+	}
 }
 
 func clearPackagesFlashAfter(seq int, after time.Duration) tea.Cmd {
@@ -657,50 +723,15 @@ func (s packagesScreen) view(width, height int) string {
 		b.WriteString("\n  " + helpStyle.Render("Press r to reload or tab to switch screens") + "\n")
 
 	case packagesReady:
-		filtered := s.filteredPkgs()
-		b.WriteString("  " + infoStyle.Render(packageSummary(s.packages)) + "\n")
-
-		filterView := s.filter.view()
-		if filterView != "" {
-			b.WriteString(filterView + fmt.Sprintf("  %s",
-				helpStyle.Render(fmt.Sprintf("(%d shown)", len(filtered)))) + "\n")
-		}
-
-		// Selection count
-		selCount := s.selectedCount()
-		if selCount > 0 {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				warnStyle.Render(fmt.Sprintf("%d selected — press u to uninstall or e to export", selCount))))
-		}
-
-		// Dynamically set table height to fill available space
-		tableH := height - 8
-		if s.filter.query != "" || s.filter.active {
-			tableH -= 2
-		}
-		if selCount > 0 {
-			tableH -= 1
-		}
-		if tableH < 5 {
-			tableH = 5
-		}
-		s.table.SetHeight(tableH)
-		b.WriteString("\n  " + s.table.View() + "\n")
-
-		if s.exportMsg != "" {
-			b.WriteString("  " + successStyle.Render(s.exportMsg) + "\n")
-		}
-		if s.statusMsg != "" {
-			b.WriteString("  " + s.statusMsg + "\n")
-		}
+		b.WriteString(s.renderReadyBody(height))
 
 	case packagesConfirmUninstall:
-		names := s.selectedNames()
-		fmt.Fprintf(&b, "  Uninstall %d package(s)?\n\n", len(names))
-		for _, name := range names {
-			b.WriteString("  " + errorStyle.Render("  "+name) + "\n")
-		}
-		b.WriteString("\n  " + warnStyle.Render("Press y to confirm, n to cancel"))
+		return renderConfirmModal(
+			s.confirmBackgroundView(height),
+			width,
+			height,
+			s.uninstallConfirmModal(),
+		)
 
 	case packagesUninstalling:
 		if s.batchTotal > 0 {
@@ -980,7 +1011,11 @@ func (s packagesScreen) helpKeys() []key.Binding {
 		}
 		return bindings
 	case packagesConfirmUninstall:
-		return []key.Binding{keyConfirmY}
+		return []key.Binding{keyConfirm, keyCancel}
 	}
 	return []key.Binding{keyTabs}
+}
+
+func (s packagesScreen) blocksGlobalShortcuts() bool {
+	return s.state == packagesConfirmUninstall
 }

@@ -87,6 +87,10 @@ type screen interface {
 	helpKeys() []key.Binding // keybindings for the help bar
 }
 
+type globalShortcutBlocker interface {
+	blocksGlobalShortcuts() bool
+}
+
 // ── ASCII art header ───────────────────────────────────────────────
 
 var asciiLogo = []string{
@@ -186,6 +190,10 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.height = msg.Height
 
 	case tea.KeyPressMsg:
+		blockGlobalShortcuts := false
+		if blocker, ok := a.activeScreen().(globalShortcutBlocker); ok {
+			blockGlobalShortcuts = blocker.blocksGlobalShortcuts()
+		}
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
 			a.quitting = true
@@ -198,12 +206,21 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		// Number keys switch tabs
 		case "tab":
+			if blockGlobalShortcuts {
+				break
+			}
 			idx := (a.activeTab + 1) % len(tabs)
 			return a.switchTab(idx)
 		case "shift+tab":
+			if blockGlobalShortcuts {
+				break
+			}
 			idx := (a.activeTab - 1 + len(tabs)) % len(tabs)
 			return a.switchTab(idx)
 		case "1", "2", "3", "4", "5", "6", "7":
+			if blockGlobalShortcuts {
+				break
+			}
 			idx := int(msg.String()[0]-'0') - 1
 			if idx >= 0 && idx < len(tabs) {
 				return a.switchTab(idx)
@@ -212,6 +229,9 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
+			if blocker, ok := a.activeScreen().(globalShortcutBlocker); ok && blocker.blocksGlobalShortcuts() {
+				return a.updateScreen(a.currentScreenID(), msg)
+			}
 			// Check if click is on the tab bar row
 			tabRow := lipgloss.Height(a.renderLogo()) // row right after logo
 			if msg.Y == tabRow {
@@ -279,9 +299,13 @@ func (a app) View() tea.View {
 	logo := a.renderLogo()
 	tabBar := a.renderTabBar()
 
-	// Build help bar from screen keybindings
-	a.help.SetWidth(a.width - 4)
-	helpBar := "  " + a.help.ShortHelpView(a.activeScreen().helpKeys())
+	var helpBar string
+	if blocker, ok := a.activeScreen().(globalShortcutBlocker); !ok || !blocker.blocksGlobalShortcuts() {
+		a.help.SetWidth(a.width - 4)
+		if short := a.help.ShortHelpView(a.activeScreen().helpKeys()); strings.TrimSpace(short) != "" {
+			helpBar = "  " + short
+		}
+	}
 
 	chrome := logo + tabBar + "\n"
 	chromeHeight := lipgloss.Height(chrome)
@@ -294,12 +318,20 @@ func (a app) View() tea.View {
 	content := a.activeScreen().view(a.width, contentHeight)
 
 	// Assemble: chrome + content + help at bottom
-	rendered := chrome + content + "\n" + helpBar
+	rendered := chrome + content
+	if helpBar != "" {
+		rendered += "\n" + helpBar
+	}
 	renderedHeight := lipgloss.Height(rendered)
 	if renderedHeight < a.height {
 		// Insert padding before help bar to push it to the bottom
 		pad := a.height - renderedHeight
-		rendered = chrome + content + strings.Repeat("\n", pad+1) + helpBar
+		rendered = chrome + content
+		if helpBar != "" {
+			rendered += strings.Repeat("\n", pad+1) + helpBar
+		} else {
+			rendered += strings.Repeat("\n", pad)
+		}
 	}
 
 	v := tea.NewView(rendered)

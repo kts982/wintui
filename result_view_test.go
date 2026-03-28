@@ -2,9 +2,16 @@ package main
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+func stripANSI(s string) string {
+	return ansiPattern.ReplaceAllString(s, "")
+}
 
 func TestUpgradeDoneViewShowsSummaryAndHint(t *testing.T) {
 	s := newUpgradeScreen()
@@ -54,10 +61,27 @@ func TestUpgradeConfirmViewShowsSelectedTargetVersion(t *testing.T) {
 	s.selectedVersions[packageSourceKey("Neovim.Neovim", "winget")] = "0.11.4"
 
 	got := s.view(120, 24)
-	if !strings.Contains(got, "Upgrade ") ||
-		!strings.Contains(got, "Neovim.Neovim) to ") ||
+	if !strings.Contains(got, "Neovim.Neovim") ||
+		!strings.Contains(got, "Target version:") ||
 		!strings.Contains(got, "0.11.4") {
 		t.Fatalf("view() = %q, want explicit target version in confirm text", got)
+	}
+}
+
+func TestUpgradeConfirmViewUsesModalLayout(t *testing.T) {
+	s := newUpgradeScreen()
+	s.state = upgradeConfirming
+	s.action = "selected"
+	s.packages = []Package{
+		{Name: "Neovim", ID: "Neovim.Neovim", Version: "0.11.5", Available: "0.11.6", Source: "winget"},
+	}
+	s.selected[0] = true
+
+	got := stripANSI(s.view(120, 24))
+	if !strings.Contains(got, "╭") ||
+		!strings.Contains(got, "Upgrade Package") ||
+		!strings.Contains(got, "enter upgrade") {
+		t.Fatalf("view() = %q, want centered modal card and action hint", got)
 	}
 }
 
@@ -99,6 +123,38 @@ func TestPackagesDoneViewShowsSummaryAndHint(t *testing.T) {
 	}
 	if !strings.Contains(got, "Press r to reload or tab to switch screens") {
 		t.Fatalf("view() = %q, want next-step hint", got)
+	}
+}
+
+func TestPackagesConfirmViewUsesModalLayout(t *testing.T) {
+	s := newPackagesScreen()
+	s.state = packagesConfirmUninstall
+	s.packages = []Package{
+		{Name: "Mozilla Firefox", ID: "Mozilla.Firefox"},
+	}
+	s.selected["Mozilla.Firefox"] = true
+	s.rebuildTable()
+
+	got := stripANSI(s.view(120, 24))
+	if !strings.Contains(got, "╭") ||
+		!strings.Contains(got, "Uninstall Packages?") ||
+		!strings.Contains(got, "enter uninstall") {
+		t.Fatalf("view() = %q, want centered modal card and action hint", got)
+	}
+}
+
+func TestInstallConfirmViewUsesModalLayout(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installConfirm
+	s.packages = []Package{
+		{Name: "Notepad++", ID: "Notepad++.Notepad++", Version: "8.9.3", Source: "winget"},
+	}
+
+	got := stripANSI(s.view(120, 24))
+	if !strings.Contains(got, "╭") ||
+		!strings.Contains(got, "Install Package?") ||
+		!strings.Contains(got, "enter install") {
+		t.Fatalf("view() = %q, want centered modal card and action hint", got)
 	}
 }
 
