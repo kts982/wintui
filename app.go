@@ -69,8 +69,8 @@ type packageDataChangedMsg struct {
 }
 
 type filesScannedMsg struct {
-	files []string
-	err   error
+	targets []cleanupTarget
+	err     error
 }
 
 type screenCmdMsg struct {

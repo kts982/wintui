@@ -28,17 +28,24 @@ const (
 )
 
 type cleanupScreen struct {
-	state     cleanupState
-	files     []string
-	cursor    int
-	spinner   spinner.Model
-	progress  progressBar
-	err       error
-	deleted   int
-	failed    int
-	ctx       context.Context
-	cancel    context.CancelFunc
-	cancelled bool
+	state      cleanupState
+	targets    []cleanupTarget
+	cursor     int
+	spinner    spinner.Model
+	progress   progressBar
+	err        error
+	deleted    int
+	failed     int
+	totalBytes int64
+	freedBytes int64
+	ctx        context.Context
+	cancel     context.CancelFunc
+	cancelled  bool
+}
+
+type cleanupTarget struct {
+	path  string
+	bytes int64
 }
 
 func newCleanupScreen() cleanupScreen {
@@ -71,7 +78,7 @@ func scanTempFiles(ctx context.Context) tea.Msg {
 	}
 	tmpDir := os.TempDir()
 	cutoff := time.Now().Add(-7 * 24 * time.Hour)
-	var old []string
+	var old []cleanupTarget
 
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
@@ -87,10 +94,31 @@ func scanTempFiles(ctx context.Context) tea.Msg {
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
-			old = append(old, filepath.Join(tmpDir, e.Name()))
+			path := filepath.Join(tmpDir, e.Name())
+			old = append(old, cleanupTarget{path: path, bytes: cleanupTargetSize(path)})
 		}
 	}
-	return filesScannedMsg{files: old}
+	return filesScannedMsg{targets: old}
+}
+
+func cleanupTargetSize(path string) int64 {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return 0
+	}
+	if !info.IsDir() {
+		return info.Size()
+	}
+
+	var total int64
+	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		total += info.Size()
+		return nil
+	})
+	return total
 }
 
 func (s cleanupScreen) reload() (cleanupScreen, tea.Cmd) {
@@ -98,6 +126,8 @@ func (s cleanupScreen) reload() (cleanupScreen, tea.Cmd) {
 	s.err = nil
 	s.deleted = 0
 	s.failed = 0
+	s.totalBytes = 0
+	s.freedBytes = 0
 	s.cancelled = false
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.progress, _ = s.progress.start()
@@ -129,7 +159,7 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					s.cursor--
 				}
 			case "down", "j":
-				if s.cursor < len(s.files)-1 {
+				if s.cursor < len(s.targets)-1 {
 					s.cursor++
 				}
 			case "enter":
@@ -147,21 +177,23 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.cancelled = false
 				s.ctx, s.cancel = context.WithCancel(context.Background())
 				s.progress, _ = s.progress.start()
-				files := s.files
+				targets := s.targets
 				ctx := s.ctx
 				return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
 					deleted, failed := 0, 0
-					for _, f := range files {
+					var freedBytes int64
+					for _, target := range targets {
 						if ctx.Err() != nil {
-							return cleanupDoneMsg{deleted: deleted, failed: failed, cancelled: true}
+							return cleanupDoneMsg{deleted: deleted, failed: failed, freedBytes: freedBytes, cancelled: true}
 						}
-						if err := os.RemoveAll(f); err != nil {
+						if err := os.RemoveAll(target.path); err != nil {
 							failed++
 						} else {
 							deleted++
+							freedBytes += target.bytes
 						}
 					}
-					return cleanupDoneMsg{deleted: deleted, failed: failed}
+					return cleanupDoneMsg{deleted: deleted, failed: failed, freedBytes: freedBytes}
 				})
 			case "n", "N", "esc":
 				s.state = cleanupReady
@@ -175,10 +207,14 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		s.progress = s.progress.stop()
-		s.files = msg.files
+		s.targets = msg.targets
 		s.err = msg.err
+		s.totalBytes = 0
+		for _, target := range msg.targets {
+			s.totalBytes += target.bytes
+		}
 		s.cancelled = false
-		if msg.err != nil || len(msg.files) == 0 {
+		if msg.err != nil || len(msg.targets) == 0 {
 			s.state = cleanupEmpty
 		} else {
 			s.state = cleanupReady
@@ -192,6 +228,7 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.progress = s.progress.stop()
 		s.deleted = msg.deleted
 		s.failed = msg.failed
+		s.freedBytes = msg.freedBytes
 		s.cancelled = msg.cancelled
 		s.state = cleanupDone
 		return s, nil
@@ -233,7 +270,8 @@ func (s cleanupScreen) view(width, height int) string {
 
 	case cleanupReady:
 		b.WriteString(fmt.Sprintf("  %s\n",
-			warnStyle.Render(fmt.Sprintf("%d item(s) older than 7 days will be removed.", len(s.files)))))
+			warnStyle.Render(fmt.Sprintf("%d item(s) older than 7 days will be removed.", len(s.targets)))))
+		b.WriteString("  " + helpStyle.Render("Estimated reclaimable size: "+formatBytes(s.totalBytes)) + "\n")
 		b.WriteString("  " + helpStyle.Render("Preview of cleanup targets") + "\n\n")
 
 		maxVisible := height - 12
@@ -241,7 +279,7 @@ func (s cleanupScreen) view(width, height int) string {
 			maxVisible = 5
 		}
 		start := s.cursor
-		maxStart := len(s.files) - maxVisible
+		maxStart := len(s.targets) - maxVisible
 		if maxStart < 0 {
 			maxStart = 0
 		}
@@ -249,22 +287,23 @@ func (s cleanupScreen) view(width, height int) string {
 			start = maxStart
 		}
 		end := start + maxVisible
-		if end > len(s.files) {
-			end = len(s.files)
+		if end > len(s.targets) {
+			end = len(s.targets)
 		}
 		for i := start; i < end; i++ {
-			name := filepath.Base(s.files[i])
+			name := filepath.Base(s.targets[i].path)
 			fmt.Fprintf(&b, "  • %s\n", itemStyle.Render(name))
 		}
-		if len(s.files) > maxVisible {
+		if len(s.targets) > maxVisible {
 			b.WriteString(fmt.Sprintf("\n  %s\n",
-				helpStyle.Render(fmt.Sprintf("Showing %d-%d of %d (↑↓ to scroll)", start+1, end, len(s.files)))))
+				helpStyle.Render(fmt.Sprintf("Showing %d-%d of %d (↑↓ to scroll)", start+1, end, len(s.targets)))))
 		}
-		b.WriteString("\n  " + helpStyle.Render(fmt.Sprintf("Press enter to delete all %d item(s).", len(s.files))) + "\n")
+		b.WriteString("\n  " + helpStyle.Render(fmt.Sprintf("Press enter to delete all %d item(s).", len(s.targets))) + "\n")
 
 	case cleanupConfirm:
 		b.WriteString(fmt.Sprintf("  Delete all %d temp item(s)?\n\n",
-			len(s.files)))
+			len(s.targets)))
+		b.WriteString("  " + helpStyle.Render("Estimated reclaimable size: "+formatBytes(s.totalBytes)) + "\n\n")
 		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
 
 	case cleanupExecuting:
@@ -275,9 +314,11 @@ func (s cleanupScreen) view(width, height int) string {
 		if s.cancelled {
 			b.WriteString(fmt.Sprintf("  %s\n",
 				warnStyle.Render(fmt.Sprintf("Cleanup cancelled after deleting %d item(s).", s.deleted))))
+			b.WriteString("  " + helpStyle.Render("Freed "+formatBytes(s.freedBytes)+" before cancellation.") + "\n")
 		} else {
 			b.WriteString(fmt.Sprintf("  %s\n",
 				successStyle.Render(fmt.Sprintf("Deleted %d item(s).", s.deleted))))
+			b.WriteString("  " + helpStyle.Render("Freed "+formatBytes(s.freedBytes)+".") + "\n")
 		}
 		if s.failed > 0 {
 			b.WriteString(fmt.Sprintf("  %s\n",
@@ -287,6 +328,25 @@ func (s cleanupScreen) view(width, height int) string {
 	}
 
 	return b.String()
+}
+
+func formatBytes(bytes int64) string {
+	if bytes <= 0 {
+		return "0 B"
+	}
+
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	value := float64(bytes)
+	unit := 0
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+
+	if unit == 0 || value >= 10 {
+		return fmt.Sprintf("%.0f %s", value, units[unit])
+	}
+	return fmt.Sprintf("%.1f %s", value, units[unit])
 }
 
 func (s cleanupScreen) helpKeys() []key.Binding {
@@ -309,7 +369,8 @@ func (s cleanupScreen) helpKeys() []key.Binding {
 
 // cleanupDoneMsg is sent when temp file deletion completes.
 type cleanupDoneMsg struct {
-	deleted   int
-	failed    int
-	cancelled bool
+	deleted    int
+	failed     int
+	freedBytes int64
+	cancelled  bool
 }
