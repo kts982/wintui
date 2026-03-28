@@ -425,21 +425,16 @@ func (a app) handleSwitchScreen(msg switchScreenMsg) (app, tea.Cmd) {
 }
 
 func (a app) handlePackageDataChanged(msg packageDataChangedMsg) (app, tea.Cmd) {
-	active := a.currentScreenID()
 	var cmds []tea.Cmd
 	for _, id := range []screenID{screenUpgrade, screenPackages} {
 		if id == msg.origin {
 			continue
 		}
-		if id == active {
-			s := createScreen(id)
-			var sizeCmd tea.Cmd
-			s, sizeCmd = a.applyCurrentSize(id, s)
-			a.screens[id] = s
-			cmds = append(cmds, sizeCmd, a.wrapScreenCmd(id, s.init()))
-			continue
-		}
-		delete(a.screens, id)
+		s := createScreen(id)
+		var sizeCmd tea.Cmd
+		s, sizeCmd = a.applyCurrentSize(id, s)
+		a.screens[id] = s
+		cmds = append(cmds, sizeCmd, a.wrapScreenCmd(id, s.init()))
 	}
 	return a, tea.Batch(cmds...)
 }

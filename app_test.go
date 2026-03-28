@@ -117,7 +117,7 @@ func TestBackgroundScreenCommandsStayOwnedByOriginatingScreen(t *testing.T) {
 	}
 }
 
-func TestPackageDataChangedInvalidatesInactiveDataScreens(t *testing.T) {
+func TestPackageDataChangedReloadsInactiveDataScreensInBackground(t *testing.T) {
 	a := app{
 		activeTab: 2, // Install
 		screens: map[screenID]screen{
@@ -129,14 +129,14 @@ func TestPackageDataChangedInvalidatesInactiveDataScreens(t *testing.T) {
 
 	model, cmd := a.Update(packageDataChangedMsg{origin: screenInstall})
 	a = model.(app)
-	if cmd != nil {
-		t.Fatal("expected no reload command when affected tabs are inactive")
+	if cmd == nil {
+		t.Fatal("expected reload command when affected tabs are inactive")
 	}
-	if _, ok := a.screens[screenUpgrade]; ok {
-		t.Fatal("expected upgrade screen to be invalidated")
+	if _, ok := a.screens[screenUpgrade].(upgradeScreen); !ok {
+		t.Fatalf("inactive upgrade screen was not recreated: %#v", a.screens[screenUpgrade])
 	}
-	if _, ok := a.screens[screenPackages]; ok {
-		t.Fatal("expected packages screen to be invalidated")
+	if _, ok := a.screens[screenPackages].(packagesScreen); !ok {
+		t.Fatalf("inactive packages screen was not recreated: %#v", a.screens[screenPackages])
 	}
 }
 
@@ -155,8 +155,8 @@ func TestPackageDataChangedReloadsActiveDataScreen(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected reload command for active data screen")
 	}
-	if _, ok := a.screens[screenUpgrade]; ok {
-		t.Fatal("expected inactive upgrade screen to be invalidated")
+	if _, ok := a.screens[screenUpgrade].(upgradeScreen); !ok {
+		t.Fatalf("inactive upgrade screen was not recreated: %#v", a.screens[screenUpgrade])
 	}
 	if _, ok := a.screens[screenPackages].(packagesScreen); !ok {
 		t.Fatalf("active packages screen was not recreated: %#v", a.screens[screenPackages])
