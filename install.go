@@ -9,7 +9,6 @@ import (
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
-	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
 
 	tea "charm.land/bubbletea/v2"
@@ -39,8 +38,7 @@ type installScreen struct {
 	output           string
 	err              error
 	detail           detailPanel
-	vp               viewport.Model
-	outLines         []string
+	exec             executionLog
 	installOutChan   <-chan string
 	installErrChan   <-chan error
 	ctx              context.Context
@@ -63,9 +61,6 @@ func newInstallScreen() installScreen {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
 
-	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(10))
-	vp.Style = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(accent)
-
 	return installScreen{
 		state:            installInput,
 		width:            80,
@@ -74,8 +69,8 @@ func newInstallScreen() installScreen {
 		spinner:          sp,
 		progress:         newProgressBar(50),
 		detail:           newDetailPanel(),
+		exec:             newExecutionLog(),
 		selectedVersions: make(map[string]string),
-		vp:               vp,
 	}
 }
 
@@ -117,11 +112,18 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 	}
 
+	if s.state == installExecuting {
+		if cmd, handled := s.exec.update(msg); handled {
+			return s, cmd
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
 		s.detail = s.detail.withWindowSize(msg.Width, msg.Height)
+		s.exec.setSize(msg.Width, contentAreaHeightForWindow(msg.Width, msg.Height, true))
 		return s, nil
 
 	case detailVersionSelectedMsg:
@@ -153,7 +155,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 			s.progress = s.progress.stop()
 			s.retryAction = nil
-			s.output = strings.Join(s.outLines, "\n")
+			s.output = s.exec.fullOutput()
 			s.err = fmt.Errorf("cancelled")
 			s.state = installDone
 			return s, nil
@@ -224,8 +226,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.progress, _ = s.progress.start()
 
 				s.installOutChan, s.installErrChan = installPackageStreamCtx(s.ctx, pkg.ID, pkg.Source, version)
-				s.outLines = nil
-				s.vp.SetContent("")
+				s.exec.reset()
 
 				return s, tea.Batch(
 					s.spinner.Tick,
@@ -327,9 +328,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.state != installExecuting {
 			return s, nil
 		}
-		s.outLines = append(s.outLines, string(msg))
-		s.vp.SetContent(strings.Join(s.outLines, "\n"))
-		s.vp.GotoBottom()
+		s.exec.appendLine(string(msg))
 		return s, awaitStream(s.installOutChan, s.installErrChan)
 
 	case streamDoneMsg:
@@ -338,7 +337,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		s.progress = s.progress.stop()
 		s.err = msg.err
-		s.output = strings.Join(s.outLines, "\n")
+		s.output = s.exec.fullOutput()
 		s.state = installDone
 		s.retryAction = nil
 		if msg.err != nil && requiresElevation(msg.err, s.output) && !isElevated() && len(s.packages) > 0 && s.cursor >= 0 && s.cursor < len(s.packages) {
@@ -521,13 +520,7 @@ func (s installScreen) view(width, height int) string {
 			fmt.Fprintf(&b, "  %s Installing...\n\n", s.spinner.View())
 		}
 		b.WriteString("  " + s.progress.view() + "\n")
-		s.vp.SetWidth(width - 8)
-		vpH := height - 12
-		if vpH < 5 {
-			vpH = 5
-		}
-		s.vp.SetHeight(vpH)
-		b.WriteString(indentBlock(s.vp.View(), 2) + "\n")
+		b.WriteString(s.exec.view(width, height) + "\n")
 
 	case installDone:
 		if s.err != nil {
@@ -579,10 +572,12 @@ func (s installScreen) helpKeys() []key.Binding {
 			return []key.Binding{keySearch, keyEscClear}
 		}
 		return []key.Binding{keySearch}
-	case installSearching, installExecuting:
+	case installSearching:
 		return []key.Binding{keyEscCancel}
+	case installExecuting:
+		return s.exec.helpKeys()
 	case installResults:
-		return []key.Binding{keyUp, keyDown, keyDetails, keyEnter, keyEsc}
+		return []key.Binding{keyScroll, keyDetails, keyEnter, keyEsc}
 	case installConfirm:
 		return []key.Binding{keyConfirm, keyCancel}
 	case installDone:

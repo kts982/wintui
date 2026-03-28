@@ -36,7 +36,8 @@ func TestUpgradeExecutingViewShowsLogViewport(t *testing.T) {
 	s.batchTotal = 2
 	s.batchCurrent = 0
 	s.batchName = "Mozilla.Firefox"
-	s.vp.SetContent("== Mozilla Firefox ==\nDownloading installer")
+	s.exec.appendSection("== Mozilla Firefox ==")
+	s.exec.appendLine("Downloading installer")
 
 	got := s.view(120, 24)
 	if !strings.Contains(got, "Upgrading 1 of 2: Mozilla.Firefox") {
@@ -91,7 +92,8 @@ func TestPackagesUninstallingViewShowsLogViewport(t *testing.T) {
 	s.batchTotal = 2
 	s.batchCurrent = 0
 	s.batchName = "Mozilla Firefox"
-	s.vp.SetContent("== Mozilla Firefox ==\nRemoving package files")
+	s.exec.appendSection("== Mozilla Firefox ==")
+	s.exec.appendLine("Removing package files")
 
 	got := s.view(120, 24)
 	if !strings.Contains(got, "Uninstalling 1 of 2: Mozilla Firefox") {

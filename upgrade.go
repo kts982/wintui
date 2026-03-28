@@ -9,7 +9,6 @@ import (
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
-	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
 
 	tea "charm.land/bubbletea/v2"
@@ -56,9 +55,7 @@ type upgradeScreen struct {
 	batchErr         error
 	launchRetry      *retryRequest
 	retryAction      *retryRequest
-	vp               viewport.Model
-	outLines         []string
-	currentLines     []string
+	exec             executionLog
 	upgradeOut       <-chan string
 	upgradeErr       <-chan error
 }
@@ -67,8 +64,6 @@ func newUpgradeScreen() upgradeScreen {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
-	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(10))
-	vp.Style = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(accent)
 	ctx, cancel := context.WithCancel(context.Background())
 	return upgradeScreen{
 		state:            upgradeLoading,
@@ -79,10 +74,10 @@ func newUpgradeScreen() upgradeScreen {
 		spinner:          sp,
 		progress:         newProgressBar(50),
 		detail:           newDetailPanel(),
+		exec:             newExecutionLog(),
 		filter:           newListFilter(),
 		ctx:              ctx,
 		cancel:           cancel,
-		vp:               vp,
 	}
 }
 
@@ -136,11 +131,18 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 	}
 
+	if s.state == upgradeExecuting {
+		if cmd, handled := s.exec.update(msg); handled {
+			return s, cmd
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
 		s.detail = s.detail.withWindowSize(msg.Width, msg.Height)
+		s.exec.setSize(msg.Width, contentAreaHeightForWindow(msg.Width, msg.Height, true))
 		return s, nil
 
 	case detailVersionSelectedMsg:
@@ -324,18 +326,14 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.state != upgradeExecuting {
 			return s, nil
 		}
-		line := string(msg)
-		s.currentLines = append(s.currentLines, line)
-		s.outLines = append(s.outLines, line)
-		s.vp.SetContent(strings.Join(s.outLines, "\n"))
-		s.vp.GotoBottom()
+		s.exec.appendLine(string(msg))
 		return s, awaitStream(s.upgradeOut, s.upgradeErr)
 
 	case streamDoneMsg:
 		if s.state != upgradeExecuting {
 			return s, nil
 		}
-		output := strings.Join(s.currentLines, "\n")
+		output := s.exec.currentOutput()
 		s.batchOutputs = append(s.batchOutputs, output)
 		s.batchErrs = append(s.batchErrs, msg.err)
 		if msg.err != nil {
@@ -461,9 +459,7 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 		s.batchOutputs = nil
 		s.batchErrs = nil
 		s.batchErr = nil
-		s.outLines = nil
-		s.currentLines = nil
-		s.vp.SetContent("")
+		s.exec.reset()
 		s.progress.active = false // don't use indeterminate animation for batch
 		s.progress.percent = 0
 
@@ -778,10 +774,6 @@ func (s *upgradeScreen) startUpgradeStream(index int) tea.Cmd {
 		return nil
 	}
 	s.batchCurrent = index
-	s.currentLines = nil
-	if len(s.outLines) > 0 {
-		s.outLines = append(s.outLines, "")
-	}
 	label := s.packageLabel(s.batchIDs[index])
 	targetVersion := ""
 	if index < len(s.batchVersions) {
@@ -799,9 +791,7 @@ func (s *upgradeScreen) startUpgradeStream(index int) tea.Cmd {
 		header += " -> " + targetVersion
 	}
 	header += " =="
-	s.outLines = append(s.outLines, header)
-	s.vp.SetContent(strings.Join(s.outLines, "\n"))
-	s.vp.GotoBottom()
+	s.exec.appendSection(header)
 	s.upgradeOut, s.upgradeErr = upgradePackageStreamCtx(
 		s.ctx,
 		s.batchIDs[index],
@@ -853,13 +843,7 @@ func (s upgradeScreen) view(width, height int) string {
 			fmt.Fprintf(&b, "  %s Upgrading packages...\n\n", s.spinner.View())
 		}
 		b.WriteString("  " + s.progress.view() + "\n")
-		s.vp.SetWidth(width - 8)
-		vpH := height - 12
-		if vpH < 5 {
-			vpH = 5
-		}
-		s.vp.SetHeight(vpH)
-		b.WriteString(indentBlock(s.vp.View(), 2) + "\n")
+		b.WriteString(s.exec.view(width, height) + "\n")
 
 	case upgradeDone:
 		successCount, failCount := batchResultCounts(s.batchErrs)
@@ -938,8 +922,10 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 		return s.detail.helpKeys()
 	}
 	switch s.state {
-	case upgradeLoading, upgradeExecuting:
+	case upgradeLoading:
 		return []key.Binding{keyEscCancel}
+	case upgradeExecuting:
+		return s.exec.helpKeys()
 	case upgradeEmpty, upgradeDone:
 		if s.retryAction != nil && !isElevated() {
 			return []key.Binding{keyRetryElevated, keyRefresh, keyTabs}
@@ -948,7 +934,7 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 	case upgradeSelecting:
 		if s.filter.active {
 			filtered := s.filter.filterPackages(s.packages)
-			bindings := []key.Binding{keyUp, keyDown}
+			bindings := []key.Binding{keyScroll}
 			if len(filtered) > 0 {
 				bindings = append(bindings, keyToggle)
 			}
@@ -957,14 +943,16 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 		}
 		filtered := s.filter.filterPackages(s.packages)
 		selected := s.selectedCount()
-		bindings := []key.Binding{keyUp, keyDown}
+		bindings := []key.Binding{keyScroll}
 		if s.filter.query != "" {
 			bindings = append(bindings, keyFilterEdit)
 		} else {
 			bindings = append(bindings, keyFilter)
 		}
 		if len(filtered) > 0 {
-			bindings = append(bindings, keyToggleAll)
+			if !useCompactHelp(s.width) {
+				bindings = append(bindings, keyToggleAll)
+			}
 			bindings = append(bindings, keyToggle, keyDetails)
 		}
 		if len(s.packages) > 0 {
@@ -973,7 +961,9 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 		if selected > 0 {
 			bindings = append(bindings, keyUpgradeSelected)
 		}
-		bindings = append(bindings, keyRefresh)
+		if !useCompactHelp(s.width) || (selected == 0 && s.filter.query == "") {
+			bindings = append(bindings, keyRefresh)
+		}
 		if s.filter.query != "" || selected > 0 {
 			bindings = append(bindings, keyEscClear)
 		}

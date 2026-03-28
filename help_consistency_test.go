@@ -2,8 +2,10 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 )
@@ -14,6 +16,12 @@ func bindingHelps(bindings []key.Binding) []key.Help {
 		helps[i] = binding.Help()
 	}
 	return helps
+}
+
+func shortHelp(width int, bindings []key.Binding) string {
+	h := help.New()
+	h.SetWidth(width)
+	return h.ShortHelpView(bindings)
 }
 
 func keyMsg(keyName string) tea.KeyPressMsg {
@@ -271,14 +279,10 @@ func TestPackagesFilteredHelpShowsClearInsteadOfBack(t *testing.T) {
 
 	got := bindingHelps(s.helpKeys())
 	want := []key.Help{
-		keyUp.Help(),
-		keyDown.Help(),
+		keyScroll.Help(),
 		keyFilterEdit.Help(),
 		keyToggle.Help(),
 		keyDetails.Help(),
-		keyExport.Help(),
-		keyImport.Help(),
-		keyRefresh.Help(),
 		keyEscClear.Help(),
 	}
 
@@ -296,12 +300,8 @@ func TestPackagesFilteredEmptyHelpHidesRowActions(t *testing.T) {
 
 	got := bindingHelps(s.helpKeys())
 	want := []key.Help{
-		keyUp.Help(),
-		keyDown.Help(),
+		keyScroll.Help(),
 		keyFilterEdit.Help(),
-		keyExport.Help(),
-		keyImport.Help(),
-		keyRefresh.Help(),
 		keyEscClear.Help(),
 	}
 
@@ -348,19 +348,43 @@ func TestUpgradeFilteredHelpMatchesAvailableActions(t *testing.T) {
 
 	got := bindingHelps(s.helpKeys())
 	want := []key.Help{
-		keyUp.Help(),
-		keyDown.Help(),
+		keyScroll.Help(),
 		keyFilterEdit.Help(),
-		keyToggleAll.Help(),
 		keyToggle.Help(),
 		keyDetails.Help(),
 		keyUpgradeAll.Help(),
-		keyRefresh.Help(),
 		keyEscClear.Help(),
 	}
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("upgrade filtered help = %#v, want %#v", got, want)
+	}
+}
+
+func TestPackagesCompactHelpAvoidsEllipsis(t *testing.T) {
+	s := newPackagesScreen()
+	s.width = 120
+	s.state = packagesReady
+	s.packages = []Package{{Name: "Git", ID: "Git.Git", Version: "1.0", Source: "winget"}}
+	s.filter.query = "git"
+	s.rebuildTable()
+
+	got := shortHelp(116, s.helpKeys())
+	if strings.Contains(got, "…") {
+		t.Fatalf("short help = %q, did not expect truncation", got)
+	}
+}
+
+func TestUpgradeCompactHelpAvoidsEllipsis(t *testing.T) {
+	s := newUpgradeScreen()
+	s.width = 120
+	s.state = upgradeSelecting
+	s.packages = []Package{{Name: "GitHub CLI", ID: "GitHub.cli", Version: "1.0", Available: "1.1", Source: "winget"}}
+	s.filter.query = "git"
+
+	got := shortHelp(116, s.helpKeys())
+	if strings.Contains(got, "…") {
+		t.Fatalf("short help = %q, did not expect truncation", got)
 	}
 }
 

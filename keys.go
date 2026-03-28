@@ -105,6 +105,10 @@ var (
 		key.WithKeys("up", "down", "pgup", "pgdown"),
 		key.WithHelp("↑↓/pg", "scroll"),
 	)
+	keyFollow = key.NewBinding(
+		key.WithKeys("f", "end"),
+		key.WithHelp("f/end", "follow"),
+	)
 	keySearch = key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "search"),

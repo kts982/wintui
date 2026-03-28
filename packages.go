@@ -11,7 +11,6 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
-	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
 
 	tea "charm.land/bubbletea/v2"
@@ -54,9 +53,7 @@ type packagesScreen struct {
 	cancel        context.CancelFunc
 	launchRetry   *retryRequest
 	retryAction   *retryRequest
-	vp            viewport.Model
-	outLines      []string
-	currentLines  []string
+	exec          executionLog
 	uninstallOut  <-chan string
 	uninstallErr  <-chan error
 	batchPackages []Package
@@ -79,8 +76,6 @@ func newPackagesScreen() packagesScreen {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
-	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(10))
-	vp.Style = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(accent)
 	ctx, cancel := context.WithCancel(context.Background())
 	return packagesScreen{
 		state:      packagesLoading,
@@ -93,9 +88,9 @@ func newPackagesScreen() packagesScreen {
 		detail:     newDetailPanel(),
 		importFlow: newImportModel(),
 		filter:     newListFilter(),
+		exec:       newExecutionLog(),
 		ctx:        ctx,
 		cancel:     cancel,
-		vp:         vp,
 	}
 }
 
@@ -165,19 +160,26 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 	}
 
+	if s.state == packagesUninstalling {
+		if cmd, handled := s.exec.update(msg); handled {
+			return s, cmd
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
 		s.detail = s.detail.withWindowSize(msg.Width, msg.Height)
+		s.exec.setSize(msg.Width, contentAreaHeightForWindow(msg.Width, msg.Height, true))
 		newWidth := packagesTableWidth(msg.Width)
 		if newWidth != s.tableWidth {
 			s.tableWidth = newWidth
-			if s.state == packagesReady {
-				cursor := s.table.Cursor()
-				s.rebuildTable()
-				s.table.SetCursor(clampTableCursor(cursor, len(s.table.Rows())))
-			}
+		}
+		if s.state == packagesReady {
+			cursor := s.table.Cursor()
+			s.rebuildTable()
+			ensureTableCursorVisible(&s.table, clampTableCursor(cursor, len(s.table.Rows())))
 		}
 		return s, nil
 
@@ -334,9 +336,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.batchErrs = nil
 				s.batchErr = nil
 				s.batchName = ""
-				s.outLines = nil
-				s.currentLines = nil
-				s.vp.SetContent("")
+				s.exec.reset()
 				s.progress.active = false
 				s.progress.percent = 0
 				return s, tea.Batch(s.spinner.Tick, func() tea.Msg { return startPackagesUninstallMsg{} })
@@ -378,7 +378,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.packages = deduplicatePackages(msg.packages)
 		s.selected = make(map[string]bool)
 		filtered := s.filter.filterPackages(s.packages)
-		s.table = buildSelectableTable(filtered, s.selected, s.tableWidth, 30)
+		s.table = buildSelectableTable(filtered, s.selected, s.tableWidth, s.readyTableHeight())
 		s.state = packagesReady
 		return s, nil
 
@@ -395,18 +395,14 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.state != packagesUninstalling {
 			return s, nil
 		}
-		line := string(msg)
-		s.currentLines = append(s.currentLines, line)
-		s.outLines = append(s.outLines, line)
-		s.vp.SetContent(strings.Join(s.outLines, "\n"))
-		s.vp.GotoBottom()
+		s.exec.appendLine(string(msg))
 		return s, awaitStream(s.uninstallOut, s.uninstallErr)
 
 	case streamDoneMsg:
 		if s.state != packagesUninstalling {
 			return s, nil
 		}
-		output := strings.Join(s.currentLines, "\n")
+		output := s.exec.currentOutput()
 		s.batchOutputs = append(s.batchOutputs, output)
 		s.batchErrs = append(s.batchErrs, msg.err)
 		if msg.err != nil {
@@ -517,7 +513,7 @@ func (s packagesScreen) filteredPkgs() []Package {
 
 func (s *packagesScreen) rebuildTable() {
 	filtered := s.filter.filterPackages(s.packages)
-	s.table = buildSelectableTable(filtered, s.selected, s.tableWidth, 30)
+	s.table = buildSelectableTable(filtered, s.selected, s.tableWidth, s.readyTableHeight())
 }
 
 func (s packagesScreen) reload() (packagesScreen, tea.Cmd) {
@@ -535,9 +531,7 @@ func (s packagesScreen) reload() (packagesScreen, tea.Cmd) {
 	s.batchCurrent = 0
 	s.batchTotal = 0
 	s.batchName = ""
-	s.outLines = nil
-	s.currentLines = nil
-	s.vp.SetContent("")
+	s.exec.reset()
 	s.flashSeq++
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.progress, _ = s.progress.start()
@@ -558,18 +552,12 @@ func (s *packagesScreen) startUninstallStream(index int) tea.Cmd {
 	pkg := s.batchPackages[index]
 	label := uninstallPackageLabel(pkg)
 	s.batchName = label
-	s.currentLines = nil
-	if len(s.outLines) > 0 {
-		s.outLines = append(s.outLines, "")
-	}
 	header := "== " + label
 	if pkg.ID != "" && pkg.ID != label {
 		header += " (" + pkg.ID + ")"
 	}
 	header += " =="
-	s.outLines = append(s.outLines, header)
-	s.vp.SetContent(strings.Join(s.outLines, "\n"))
-	s.vp.GotoBottom()
+	s.exec.appendSection(header)
 	s.uninstallOut, s.uninstallErr = uninstallPackageStreamCtx(s.ctx, pkg)
 	return awaitStream(s.uninstallOut, s.uninstallErr)
 }
@@ -627,6 +615,21 @@ func (s packagesScreen) selectedPackages() []Package {
 	return pkgs
 }
 
+func (s packagesScreen) readyTableHeight() int {
+	contentHeight := contentAreaHeightForWindow(s.width, s.height, true)
+	tableH := contentHeight - 8
+	if s.filter.query != "" || s.filter.active {
+		tableH -= 2
+	}
+	if s.selectedCount() > 0 {
+		tableH -= 1
+	}
+	if tableH < 5 {
+		return 5
+	}
+	return tableH
+}
+
 func (s packagesScreen) renderReadyBody(height int) string {
 	var b strings.Builder
 	filtered := s.filteredPkgs()
@@ -644,16 +647,7 @@ func (s packagesScreen) renderReadyBody(height int) string {
 			warnStyle.Render(fmt.Sprintf("%d selected — press u to uninstall or e to export", selCount))))
 	}
 
-	tableH := height - 8
-	if s.filter.query != "" || s.filter.active {
-		tableH -= 2
-	}
-	if selCount > 0 {
-		tableH -= 1
-	}
-	if tableH < 5 {
-		tableH = 5
-	}
+	tableH := s.readyTableHeight()
 	s.table.SetHeight(tableH)
 	b.WriteString("\n  " + s.table.View() + "\n")
 
@@ -741,13 +735,7 @@ func (s packagesScreen) view(width, height int) string {
 			fmt.Fprintf(&b, "  %s Uninstalling...\n\n", s.spinner.View())
 		}
 		b.WriteString("  " + s.progress.view() + "\n")
-		s.vp.SetWidth(width - 8)
-		vpH := height - 12
-		if vpH < 5 {
-			vpH = 5
-		}
-		s.vp.SetHeight(vpH)
-		b.WriteString(indentBlock(s.vp.View(), 2) + "\n")
+		b.WriteString(s.exec.view(width, height) + "\n")
 
 	case packagesDone:
 		successCount, failCount := batchResultCounts(s.batchErrs)
@@ -968,6 +956,11 @@ func clampTableCursor(cursor, rowCount int) int {
 	return cursor
 }
 
+func ensureTableCursorVisible(t *table.Model, cursor int) {
+	t.SetCursor(cursor)
+	t.MoveDown(0)
+}
+
 func (s packagesScreen) helpKeys() []key.Binding {
 	if s.importFlow.active {
 		return s.importFlow.helpKeys()
@@ -977,6 +970,9 @@ func (s packagesScreen) helpKeys() []key.Binding {
 	}
 	switch s.state {
 	case packagesLoading, packagesUninstalling:
+		if s.state == packagesUninstalling {
+			return s.exec.helpKeys()
+		}
 		return []key.Binding{keyEscCancel}
 	case packagesEmpty:
 		return []key.Binding{keyRefresh, keyTabs}
@@ -987,10 +983,16 @@ func (s packagesScreen) helpKeys() []key.Binding {
 		return []key.Binding{keyRefresh, keyTabs}
 	case packagesReady:
 		if s.filter.active {
-			return []key.Binding{keyUp, keyDown, keyApply, keyEsc}
+			filtered := s.filteredPkgs()
+			bindings := []key.Binding{keyScroll}
+			if len(filtered) > 0 {
+				bindings = append(bindings, keyToggle)
+			}
+			return append(bindings, keyApply, keyEsc)
 		}
 		filtered := s.filteredPkgs()
-		bindings := []key.Binding{keyUp, keyDown}
+		selected := s.selectedCount()
+		bindings := []key.Binding{keyScroll}
 		if s.filter.query != "" {
 			bindings = append(bindings, keyFilterEdit)
 		} else {
@@ -999,15 +1001,20 @@ func (s packagesScreen) helpKeys() []key.Binding {
 		if len(filtered) > 0 {
 			bindings = append(bindings, keyToggle, keyDetails)
 		}
-		bindings = append(bindings, keyExport, keyImport, keyRefresh)
-		if s.filter.query != "" || s.selectedCount() > 0 {
+		if selected > 0 {
+			bindings = append(bindings, keyUninstall)
+		}
+		if !useCompactHelp(s.width) {
+			bindings = append(bindings, keyExport, keyImport)
+		}
+		if !useCompactHelp(s.width) || (s.filter.query == "" && selected == 0) {
+			bindings = append(bindings, keyRefresh)
+		}
+		if s.filter.query != "" || selected > 0 {
 			bindings = append(bindings, keyEscClear)
 		}
 		if s.retryAction != nil && !isElevated() {
 			bindings = append(bindings, keyRetryElevated)
-		}
-		if s.selectedCount() > 0 {
-			bindings = append(bindings, keyUninstall)
 		}
 		return bindings
 	case packagesConfirmUninstall:

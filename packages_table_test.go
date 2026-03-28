@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/table"
@@ -75,6 +77,30 @@ func TestPackagesResizeRebuildsTableAndPreservesCursor(t *testing.T) {
 	}
 	if !containsString(extractColumnTitles(got.table.Columns()), "Source") {
 		t.Fatalf("resized table did not add Source column: %v", extractColumnTitles(got.table.Columns()))
+	}
+}
+
+func TestPackagesSmallTerminalKeepsSelectedRowVisible(t *testing.T) {
+	s := newPackagesScreen()
+	s.state = packagesReady
+	for i := 0; i < 40; i++ {
+		s.packages = append(s.packages, Package{
+			Name:    fmt.Sprintf("Package %02d", i),
+			ID:      fmt.Sprintf("pkg.%02d", i),
+			Version: "1.0",
+			Source:  "winget",
+		})
+	}
+	next, _ := s.update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	s = next.(packagesScreen)
+	s.rebuildTable()
+	ensureTableCursorVisible(&s.table, 25)
+
+	next, _ = s.update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	got := next.(packagesScreen)
+	view := got.table.View()
+	if !strings.Contains(view, "Package 25") {
+		t.Fatalf("table view = %q, want selected row to remain visible on small terminal", view)
 	}
 }
 
