@@ -340,7 +340,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.state != upgradeExecuting {
 			return s, nil
 		}
-		s.exec.appendLine(string(msg))
+		s.exec.appendLine(normalizeActionStreamLine(retryOpUpgrade, string(msg)))
 		return s, awaitStream(s.upgradeOut, s.upgradeErr)
 
 	case streamDoneMsg:
@@ -1062,7 +1062,7 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 }
 
 func (s upgradeScreen) blocksGlobalShortcuts() bool {
-	return s.state == upgradeConfirming
+	return s.state == upgradeConfirming || s.detail.visible()
 }
 
 // scrollWindow calculates visible range for long lists.

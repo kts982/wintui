@@ -340,7 +340,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.state != installExecuting {
 			return s, nil
 		}
-		s.exec.appendLine(string(msg))
+		s.exec.appendLine(normalizeActionStreamLine(retryOpInstall, string(msg)))
 		return s, awaitStream(s.installOutChan, s.installErrChan)
 
 	case streamDoneMsg:
@@ -619,5 +619,5 @@ func (s installScreen) helpKeys() []key.Binding {
 }
 
 func (s installScreen) blocksGlobalShortcuts() bool {
-	return s.state == installConfirm
+	return s.state == installConfirm || s.detail.visible()
 }

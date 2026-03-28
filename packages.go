@@ -411,7 +411,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.state != packagesUninstalling {
 			return s, nil
 		}
-		s.exec.appendLine(string(msg))
+		s.exec.appendLine(normalizeActionStreamLine(retryOpUninstall, string(msg)))
 		return s, awaitStream(s.uninstallOut, s.uninstallErr)
 
 	case streamDoneMsg:
@@ -1080,5 +1080,5 @@ func (s packagesScreen) helpKeys() []key.Binding {
 }
 
 func (s packagesScreen) blocksGlobalShortcuts() bool {
-	return s.state == packagesConfirmUninstall
+	return s.state == packagesConfirmUninstall || s.detail.visible()
 }

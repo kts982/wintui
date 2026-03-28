@@ -388,6 +388,45 @@ func filterWingetOutputLine(line string, noisePatterns []string) (string, bool) 
 	return trimmed, true
 }
 
+func normalizeActionStreamLine(action retryOp, line string) string {
+	trimmed := strings.TrimSpace(line)
+	lower := strings.ToLower(trimmed)
+	const prefix = " failed with exit code:"
+
+	var label string
+	switch {
+	case strings.HasPrefix(lower, "install"+prefix):
+		label = "install"
+	case strings.HasPrefix(lower, "upgrade"+prefix):
+		label = "upgrade"
+	case strings.HasPrefix(lower, "uninstall"+prefix):
+		label = "uninstall"
+	default:
+		switch action {
+		case retryOpUpgrade:
+			switch lower {
+			case "successfully uninstalled":
+				return "Removed previous version"
+			case "successfully installed":
+				return "Installed updated version"
+			}
+		}
+		return line
+	}
+
+	suffix := trimmed[len(label):]
+	switch action {
+	case retryOpInstall:
+		return "Install" + suffix
+	case retryOpUpgrade:
+		return "Upgrade" + suffix
+	case retryOpUninstall:
+		return "Uninstall" + suffix
+	default:
+		return line
+	}
+}
+
 // ── Package detail ─────────────────────────────────────────────────
 
 // PackageDetail holds extended info from `winget show`.

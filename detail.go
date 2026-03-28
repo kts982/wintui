@@ -256,6 +256,7 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 				p.versionsLoading = false
 				return p, nil, true
 			}
+			return p, nil, true
 		}
 
 		if p.selectingVersion {
@@ -359,6 +360,7 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 				}, true
 			}
 		}
+		return p, nil, true
 
 	case spinner.TickMsg:
 		if p.state == detailLoading || p.versionsLoading {

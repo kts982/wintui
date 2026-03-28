@@ -39,3 +39,28 @@ func TestInstallConfirmViewShowsSelectedTargetVersion(t *testing.T) {
 		t.Fatalf("view() = %q, want explicit target version in confirm text", got)
 	}
 }
+
+func TestInstallDetailOverlayConsumesEnter(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installResults
+	s.packages = []Package{
+		{Name: "Neovim", ID: "Neovim.Neovim", Version: "0.11.6", Source: "winget"},
+	}
+	s.detail.state = detailReady
+	s.detail.pkgID = "Neovim.Neovim"
+	s.detail.source = "winget"
+	s.detail.detail = PackageDetail{Name: "Neovim", ID: "Neovim.Neovim"}
+
+	next, cmd := s.update(keyMsg("enter"))
+	got := next.(installScreen)
+
+	if cmd != nil {
+		t.Fatalf("update() returned unexpected cmd while detail overlay was open")
+	}
+	if got.state != installResults {
+		t.Fatalf("state = %v, want installResults", got.state)
+	}
+	if !got.detail.visible() {
+		t.Fatal("detail overlay closed unexpectedly")
+	}
+}

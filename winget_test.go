@@ -169,6 +169,32 @@ func TestLikelyBenefitsFromElevationTreats1603AsSoftRetryCandidate(t *testing.T)
 	}
 }
 
+func TestNormalizeActionStreamLineUsesUserActionContext(t *testing.T) {
+	got := normalizeActionStreamLine(retryOpUpgrade, "Uninstall failed with exit code: 1603")
+	want := "Upgrade failed with exit code: 1603"
+	if got != want {
+		t.Fatalf("normalizeActionStreamLine() = %q, want %q", got, want)
+	}
+
+	got = normalizeActionStreamLine(retryOpInstall, "Upgrade failed with exit code: 1603")
+	want = "Install failed with exit code: 1603"
+	if got != want {
+		t.Fatalf("normalizeActionStreamLine() = %q, want %q", got, want)
+	}
+
+	got = normalizeActionStreamLine(retryOpUpgrade, "Successfully uninstalled")
+	want = "Removed previous version"
+	if got != want {
+		t.Fatalf("normalizeActionStreamLine() = %q, want %q", got, want)
+	}
+
+	got = normalizeActionStreamLine(retryOpUpgrade, "Successfully installed")
+	want = "Installed updated version"
+	if got != want {
+		t.Fatalf("normalizeActionStreamLine() = %q, want %q", got, want)
+	}
+}
+
 type fixedErr string
 
 func (e fixedErr) Error() string { return string(e) }

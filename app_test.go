@@ -243,3 +243,21 @@ func TestConfirmModalBlocksGlobalTabSwitchShortcuts(t *testing.T) {
 		t.Fatalf("activeTab = %d, want %d", got.activeTab, 2)
 	}
 }
+
+func TestDetailOverlayBlocksGlobalTabSwitchShortcuts(t *testing.T) {
+	a := app{
+		activeTab: 2, // Install
+		screens: map[screenID]screen{
+			screenInstall: installScreen{
+				detail: detailPanel{state: detailReady},
+			},
+		},
+	}
+
+	model, _ := a.Update(tea.KeyPressMsg{Code: '2', Text: "2"})
+	got := model.(app)
+
+	if got.activeTab != 2 {
+		t.Fatalf("activeTab = %d, want %d", got.activeTab, 2)
+	}
+}
