@@ -144,9 +144,28 @@ func TestStreamWingetOutputLinesSkipsNoiseButKeepsUsefulStatus(t *testing.T) {
 func TestFriendlyWingetErrorMapsKnownUpgradeCode(t *testing.T) {
 	err := friendlyWingetError(assertErr("exit status 0x8a15002b"), "", "")
 	got := err.Error()
-	want := "install technology differs from installed version (package manages its own updates)"
+	want := "install technology differs from installed version (package manages its own updates) (0x8a15002b)"
 	if got != want {
 		t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
+	}
+}
+
+func TestFriendlyWingetErrorMapsInstallerExitCode(t *testing.T) {
+	err := friendlyWingetError(assertErr("exit status 1"), "", "Installer failed with exit code: 1603")
+	got := err.Error()
+	want := "installer failed with a fatal error (1603)"
+	if got != want {
+		t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
+	}
+}
+
+func TestLikelyBenefitsFromElevationTreats1603AsSoftRetryCandidate(t *testing.T) {
+	err := assertErr("installer failed with a fatal error (1603)")
+	if !likelyBenefitsFromElevation(err, "Uninstall failed with exit code: 1603") {
+		t.Fatal("likelyBenefitsFromElevation() = false, want true for 1603")
+	}
+	if requiresElevation(err, "Uninstall failed with exit code: 1603") {
+		t.Fatal("requiresElevation() = true, did not want hard elevation requirement for 1603")
 	}
 }
 

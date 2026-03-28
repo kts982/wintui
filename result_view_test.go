@@ -20,10 +20,16 @@ func TestUpgradeDoneViewShowsSummaryAndHint(t *testing.T) {
 	s.batchIDs = []string{"Git.Git", "Mozilla.Firefox"}
 	s.batchErrs = []error{nil, errors.New("boom")}
 	s.batchOutputs = []string{"", "installer failed with exit code 1"}
+	s.exec.appendSection("== Mozilla.Firefox ==")
+	s.exec.appendLine("Installer failed with exit code: 1603")
+	s.exec.setDoneExpanded(true)
 
 	got := s.view(120, 24)
 	if !strings.Contains(got, "Upgrade finished: 1 succeeded, 1 failed") {
 		t.Fatalf("view() = %q, want upgrade result summary", got)
+	}
+	if !strings.Contains(got, "Execution log — press l to hide") {
+		t.Fatalf("view() = %q, want expandable execution log", got)
 	}
 	if !strings.Contains(got, "Press r to rescan or tab to switch screens") {
 		t.Fatalf("view() = %q, want next-step hint", got)
@@ -118,13 +124,96 @@ func TestPackagesDoneViewShowsSummaryAndHint(t *testing.T) {
 	s.batchErrs = []error{nil, errors.New("boom")}
 	s.batchOutputs = []string{"", "installer failed with exit code 1"}
 	s.output = formatUninstallResults(s.batchPackages, s.batchErrs, s.batchOutputs)
+	s.exec.appendSection("== Neovim ==")
+	s.exec.appendLine("Installer failed with exit code: 1603")
+	s.exec.setDoneExpanded(false)
 
 	got := s.view(120, 24)
 	if !strings.Contains(got, "Uninstall finished: 1 succeeded, 1 failed") {
 		t.Fatalf("view() = %q, want uninstall result summary", got)
 	}
+	if !strings.Contains(got, "Log preview — press l to expand") {
+		t.Fatalf("view() = %q, want collapsed log preview", got)
+	}
 	if !strings.Contains(got, "Press r to reload or tab to switch screens") {
 		t.Fatalf("view() = %q, want next-step hint", got)
+	}
+}
+
+func TestFormatUninstallResultsKeepsFriendlyDecodedError(t *testing.T) {
+	pkgs := []Package{{Name: "Neovim", ID: "Neovim.Neovim"}}
+	errs := []error{errors.New("installer failed with a fatal error (1603)")}
+	outputs := []string{"Uninstall failed with exit code: 1603"}
+
+	got := formatUninstallResults(pkgs, errs, outputs)
+	if !strings.Contains(got, "installer failed with a fatal error (1603)") {
+		t.Fatalf("formatUninstallResults() = %q, want decoded error to remain visible", got)
+	}
+	if strings.Contains(got, "Uninstall failed with exit code: 1603") {
+		t.Fatalf("formatUninstallResults() = %q, did not want raw exit line to override decoded error", got)
+	}
+}
+
+func TestPackagesDoneViewShowsSoftElevationRetryHintFor1603(t *testing.T) {
+	s := newPackagesScreen()
+	s.state = packagesDone
+	s.batchTotal = 1
+	s.batchPackages = []Package{{Name: "Neovim", ID: "Neovim.Neovim", Source: "winget"}}
+	s.batchErrs = []error{errors.New("installer failed with a fatal error (1603)")}
+	s.batchOutputs = []string{"Uninstall failed with exit code: 1603"}
+	s.err = s.batchErrs[0]
+	s.retryAction = &retryRequest{Op: retryOpUninstall, ID: "Neovim.Neovim", Name: "Neovim", Source: "winget"}
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Retrying elevated may help remove packages blocked by permissions or services.") {
+		t.Fatalf("view() = %q, want soft elevation retry hint", got)
+	}
+	if strings.Contains(got, "Some packages require administrator privileges.") {
+		t.Fatalf("view() = %q, did not want hard admin requirement hint", got)
+	}
+}
+
+func TestPackagesDoneViewOffersBatchRetryForFailedItemsOnly(t *testing.T) {
+	s := newPackagesScreen()
+	s.state = packagesDone
+	s.batchTotal = 3
+	s.batchPackages = []Package{
+		{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget"},
+		{Name: "Neovim", ID: "Neovim.Neovim", Source: "winget"},
+		{Name: "Git", ID: "Git.Git", Source: "winget"},
+	}
+	s.batchErrs = []error{
+		nil,
+		errors.New("installer failed with a fatal error (1603)"),
+		nil,
+	}
+	s.batchOutputs = []string{
+		"",
+		"Uninstall failed with exit code: 1603",
+		"",
+	}
+	s.retryAction = newRetryRequest(retryOpUninstall, failedUninstallRetryItems(s.batchPackages, s.batchErrs, s.batchOutputs))
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Press ctrl+e to retry failed items elevated") {
+		t.Fatalf("view() = %q, want failed-items retry hint", got)
+	}
+}
+
+func TestInstallDoneViewShowsCollapsedLogPreview(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installDone
+	s.packages = []Package{{Name: "Notepad++", ID: "Notepad++.Notepad++", Source: "winget"}}
+	s.exec.appendSection("== Notepad++ ==")
+	s.exec.appendLine("Successfully installed")
+	s.exec.setDoneExpanded(false)
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Notepad++ installed successfully") {
+		t.Fatalf("view() = %q, want install success summary", got)
+	}
+	if !strings.Contains(got, "Log preview — press l to expand") {
+		t.Fatalf("view() = %q, want collapsed log preview", got)
 	}
 }
 

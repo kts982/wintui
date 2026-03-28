@@ -52,6 +52,31 @@ func TestExecutionLogFollowShortcutReturnsToBottom(t *testing.T) {
 	}
 }
 
+func TestExecutionLogDoneToggleExpandsAndHandlesScroll(t *testing.T) {
+	log := newExecutionLog()
+	log.setSize(120, 24)
+	for i := 0; i < 30; i++ {
+		log.appendLine("line")
+	}
+	log.setDoneExpanded(false)
+
+	_, handled := log.doneUpdate(keyMsg("l"))
+	if !handled {
+		t.Fatal("expected log toggle to be handled")
+	}
+	if !log.expanded {
+		t.Fatal("expected done log to expand")
+	}
+
+	_, handled = log.doneUpdate(keyMsg("pgup"))
+	if !handled {
+		t.Fatal("expected scroll in expanded done view to be handled")
+	}
+	if log.follow {
+		t.Fatal("expected follow mode to pause after scrolling done log")
+	}
+}
+
 func TestInstallWindowSizeUsesContentHeightForExecutionLog(t *testing.T) {
 	s := newInstallScreen()
 

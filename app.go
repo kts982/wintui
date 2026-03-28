@@ -458,7 +458,7 @@ func (a app) handleSwitchScreen(msg switchScreenMsg) (app, tea.Cmd) {
 
 func (a app) handlePackageDataChanged(msg packageDataChangedMsg) (app, tea.Cmd) {
 	var cmds []tea.Cmd
-	for _, id := range []screenID{screenUpgrade, screenPackages} {
+	for _, id := range packageRefreshOrder(msg.origin) {
 		if id == msg.origin {
 			continue
 		}
@@ -468,7 +468,14 @@ func (a app) handlePackageDataChanged(msg packageDataChangedMsg) (app, tea.Cmd) 
 		a.screens[id] = s
 		cmds = append(cmds, sizeCmd, a.wrapScreenCmd(id, s.init()))
 	}
-	return a, tea.Batch(cmds...)
+	return a, tea.Sequence(cmds...)
+}
+
+func packageRefreshOrder(origin screenID) []screenID {
+	if origin == screenInstall {
+		return []screenID{screenPackages, screenUpgrade}
+	}
+	return []screenID{screenUpgrade, screenPackages}
 }
 
 func (a app) updateScreen(id screenID, msg tea.Msg) (app, tea.Cmd) {

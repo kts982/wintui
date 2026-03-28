@@ -16,18 +16,9 @@ func relaunchElevatedRetry(req retryRequest) error {
 		return err
 	}
 
-	args := []string{
-		"--retry-op", string(req.Op),
-		"--id", req.ID,
-	}
-	if req.Name != "" {
-		args = append(args, "--name", req.Name)
-	}
-	if req.Source != "" {
-		args = append(args, "--source", req.Source)
-	}
-	if req.Version != "" {
-		args = append(args, "--package-version", req.Version)
+	args, err := req.startupArgs()
+	if err != nil {
+		return err
 	}
 
 	verb, err := windows.UTF16PtrFromString("runas")

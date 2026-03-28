@@ -109,6 +109,10 @@ var (
 		key.WithKeys("f", "end"),
 		key.WithHelp("f/end", "follow"),
 	)
+	keyLog = key.NewBinding(
+		key.WithKeys("l"),
+		key.WithHelp("l", "log"),
+	)
 	keySearch = key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "search"),

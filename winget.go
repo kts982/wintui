@@ -232,13 +232,16 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 		"0x80073d28": "installer requires administrator privileges (try running as admin)",
 		"0x80073cf3": "package install failed (conflicting package)",
 		"0x80073d02": "installation blocked by a running process",
+		"1603":       "installer failed with a fatal error",
+		"1618":       "another installation is already in progress",
+		"1638":       "another version of this product is already installed",
+		"3010":       "installer completed and a restart is required",
+		"1641":       "installer initiated a restart",
 	}
 
-	for code, desc := range replacements {
-		if strings.Contains(msg, code) {
-			msg = desc
-			break
-		}
+	code, desc := matchKnownWingetErrorCode(strings.Join([]string{msg, stderr, stdout}, "\n"), replacements)
+	if code != "" {
+		msg = fmt.Sprintf("%s (%s)", desc, code)
 	}
 
 	// Check stdout for admin-related errors when the top-level code is generic.
@@ -251,6 +254,16 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 		return fmt.Errorf("%s: %s", msg, stderr)
 	}
 	return fmt.Errorf("%s", msg)
+}
+
+func matchKnownWingetErrorCode(text string, replacements map[string]string) (string, string) {
+	lower := strings.ToLower(text)
+	for code, desc := range replacements {
+		if strings.Contains(lower, strings.ToLower(code)) {
+			return code, desc
+		}
+	}
+	return "", ""
 }
 
 // requiresElevation reports whether a winget error/output indicates the action
@@ -276,8 +289,17 @@ func requiresElevation(err error, output string) bool {
 	return false
 }
 
-func elevationRetryHint() string {
-	return "Press Ctrl+e to relaunch elevated, or run WinTUI in an elevated terminal and retry."
+// likelyBenefitsFromElevation reports whether retrying elevated is worth offering
+// even when the failure is not a confirmed admin-only winget error.
+func likelyBenefitsFromElevation(err error, output string) bool {
+	if err == nil {
+		return false
+	}
+	if requiresElevation(err, output) {
+		return true
+	}
+	lower := strings.ToLower(err.Error() + "\n" + output)
+	return strings.Contains(lower, "1603") || strings.Contains(lower, "0x80070643")
 }
 
 func appendPreferredSourceArg(args []string, source string) []string {

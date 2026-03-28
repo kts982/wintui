@@ -84,15 +84,23 @@ func newUpgradeScreen() upgradeScreen {
 func newUpgradeScreenWithRetry(req retryRequest) upgradeScreen {
 	s := newUpgradeScreen()
 	s.state = upgradeExecuting
-	s.batchIDs = []string{req.ID}
-	s.batchSources = []string{req.Source}
-	s.batchVersions = []string{req.Version}
-	s.batchTotal = 1
-	s.batchName = req.ID
-	s.launchRetry = &req
-	if req.Version != "" {
-		s.selectedVersions[packageSourceKey(req.ID, req.Source)] = req.Version
+	items := req.items()
+	s.batchIDs = make([]string, 0, len(items))
+	s.batchSources = make([]string, 0, len(items))
+	s.batchVersions = make([]string, 0, len(items))
+	for _, item := range items {
+		s.batchIDs = append(s.batchIDs, item.ID)
+		s.batchSources = append(s.batchSources, item.Source)
+		s.batchVersions = append(s.batchVersions, item.Version)
+		if item.Version != "" {
+			s.selectedVersions[packageSourceKey(item.ID, item.Source)] = item.Version
+		}
 	}
+	s.batchTotal = len(items)
+	if len(items) > 0 {
+		s.batchName = items[0].ID
+	}
+	s.launchRetry = &req
 	return s
 }
 
@@ -133,6 +141,11 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 	if s.state == upgradeExecuting {
 		if cmd, handled := s.exec.update(msg); handled {
+			return s, cmd
+		}
+	}
+	if s.state == upgradeDone {
+		if cmd, handled := s.exec.doneUpdate(msg); handled {
 			return s, cmd
 		}
 	}
@@ -224,6 +237,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					s.batchErrs,
 					s.batchOutputs,
 				)
+				s.exec.setDoneExpanded(true)
 			}
 			return s, nil
 		}
@@ -351,23 +365,16 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.output = formatBatchResults(s.batchIDs, s.batchErrs, s.batchOutputs)
 		s.err = s.batchErr
 		s.state = upgradeDone
+		s.exec.setDoneExpanded(s.batchErr != nil)
 		s.retryAction = nil
-		if s.batchTotal == 1 && s.batchErr != nil && len(s.batchOutputs) == 1 &&
-			requiresElevation(s.batchErr, s.batchOutputs[0]) && !isElevated() {
-			source := ""
-			if len(s.batchSources) > 0 {
-				source = s.batchSources[0]
-			}
-			version := ""
-			if len(s.batchVersions) > 0 {
-				version = s.batchVersions[0]
-			}
-			s.retryAction = &retryRequest{
-				Op:      retryOpUpgrade,
-				ID:      s.batchIDs[0],
-				Source:  source,
-				Version: version,
-			}
+		if !isElevated() {
+			s.retryAction = newRetryRequest(retryOpUpgrade, failedUpgradeRetryItems(
+				s.batchIDs,
+				s.batchSources,
+				s.batchVersions,
+				s.batchErrs,
+				s.batchOutputs,
+			))
 		}
 		cache.invalidate()
 		return s, func() tea.Msg { return packageDataChangedMsg{origin: screenUpgrade} }
@@ -704,7 +711,8 @@ func formatBatchResults(ids []string, errs []error, outputs []string) string {
 				reason = "requires administrator privileges; retry from an elevated terminal"
 			}
 			detail := extractFailReason(outputs[i])
-			if detail != "" && !requiresElevation(errs[i], outputs[i]) {
+			if detail != "" && !requiresElevation(errs[i], outputs[i]) &&
+				!sameFailureCode(reason, detail) {
 				reason = detail
 			}
 			b.WriteString(errorStyle.Render("  ✗ ") + id + "\n")
@@ -738,6 +746,33 @@ func batchRequiresElevation(errs []error, outputs []string) bool {
 	return false
 }
 
+func failedUpgradeRetryItems(ids, sources, versions []string, errs []error, outputs []string) []retryItem {
+	var items []retryItem
+	for i, err := range errs {
+		if !likelyBenefitsFromElevation(err, valueAt(outputs, i)) {
+			continue
+		}
+		id := valueAt(ids, i)
+		if id == "" {
+			continue
+		}
+		items = append(items, retryItem{
+			ID:      id,
+			Source:  valueAt(sources, i),
+			Version: valueAt(versions, i),
+		})
+	}
+	return items
+}
+
+func valueAt[T any](values []T, index int) T {
+	var zero T
+	if index < 0 || index >= len(values) {
+		return zero
+	}
+	return values[index]
+}
+
 func (s upgradeScreen) packageLabel(id string) string {
 	for _, pkg := range s.packages {
 		if pkg.ID == id {
@@ -764,6 +799,35 @@ func extractFailReason(output string) string {
 		if strings.Contains(lower, "failed with exit code") ||
 			strings.Contains(lower, "installer failed") {
 			return trimmed
+		}
+	}
+	return ""
+}
+
+func sameFailureCode(a, b string) bool {
+	codeA := extractFailureCode(a)
+	codeB := extractFailureCode(b)
+	return codeA != "" && codeA == codeB
+}
+
+func extractFailureCode(s string) string {
+	lower := strings.ToLower(s)
+	for _, field := range strings.Fields(lower) {
+		field = strings.Trim(field, "():,.;[]")
+		if strings.HasPrefix(field, "0x") && len(field) > 2 {
+			return field
+		}
+		if len(field) >= 3 && len(field) <= 5 {
+			allDigits := true
+			for _, r := range field {
+				if r < '0' || r > '9' {
+					allDigits = false
+					break
+				}
+			}
+			if allDigits {
+				return field
+			}
 		}
 	}
 	return ""
@@ -866,8 +930,19 @@ func (s upgradeScreen) view(width, height int) string {
 				) + "\n")
 			}
 			if requiresElevation(s.err, s.output) || batchRequiresElevation(s.batchErrs, s.batchOutputs) {
-				b.WriteString("  " + helpStyle.Render("Some packages require administrator privileges.") + "\n")
-				b.WriteString("  " + helpStyle.Render(elevationRetryHint()) + "\n\n")
+				b.WriteString("  " + helpStyle.Render("Some failed packages require administrator privileges.") + "\n")
+				if s.retryAction != nil && !isElevated() {
+					if warning := retryWarningText(s.retryAction); warning != "" {
+						b.WriteString("  " + helpStyle.Render(warning) + "\n")
+					}
+					b.WriteString("  " + helpStyle.Render(retryHintText(s.retryAction)) + "\n")
+				}
+				b.WriteString("\n")
+			} else if s.retryAction != nil && !isElevated() {
+				if warning := retryWarningText(s.retryAction); warning != "" {
+					b.WriteString("  " + helpStyle.Render(warning) + "\n")
+				}
+				b.WriteString("  " + helpStyle.Render(retryHintText(s.retryAction)) + "\n\n")
 			} else {
 				b.WriteString("\n")
 			}
@@ -881,8 +956,14 @@ func (s upgradeScreen) view(width, height int) string {
 			if s.output == "" && (s.batchTotal == 0 || (successCount == 0 && failCount == 0)) {
 				if requiresElevation(s.err, s.output) || batchRequiresElevation(s.batchErrs, s.batchOutputs) {
 					b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n")
-					b.WriteString("  " + helpStyle.Render("Some packages require administrator privileges.") + "\n")
-					b.WriteString("  " + helpStyle.Render(elevationRetryHint()) + "\n\n")
+					b.WriteString("  " + helpStyle.Render("Some failed packages require administrator privileges.") + "\n")
+					if s.retryAction != nil && !isElevated() {
+						if warning := retryWarningText(s.retryAction); warning != "" {
+							b.WriteString("  " + helpStyle.Render(warning) + "\n")
+						}
+						b.WriteString("  " + helpStyle.Render(retryHintText(s.retryAction)) + "\n")
+					}
+					b.WriteString("\n")
 				} else if !strings.Contains(strings.ToLower(s.err.Error()), "cancelled") {
 					b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n\n")
 				}
@@ -907,8 +988,11 @@ func (s upgradeScreen) view(width, height int) string {
 				b.WriteString(line + "\n")
 			}
 		}
+		if logView := s.exec.doneView(width, height, 18); logView != "" {
+			b.WriteString("\n" + logView + "\n")
+		}
 		if s.retryAction != nil && !isElevated() {
-			b.WriteString("\n  " + helpStyle.Render("Press ctrl+e to retry elevated, r to rescan, or tab to switch screens") + "\n")
+			b.WriteString("\n  " + helpStyle.Render("Press ctrl+e to retry failed items elevated, r to rescan, or tab to switch screens") + "\n")
 		} else {
 			b.WriteString("\n  " + helpStyle.Render("Press r to rescan or tab to switch screens") + "\n")
 		}
@@ -927,10 +1011,13 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 	case upgradeExecuting:
 		return s.exec.helpKeys()
 	case upgradeEmpty, upgradeDone:
+		bindings := append([]key.Binding(nil), s.exec.doneHelpKeys()...)
 		if s.retryAction != nil && !isElevated() {
-			return []key.Binding{keyRetryElevated, keyRefresh, keyTabs}
+			bindings = append(bindings, keyRetryElevated, keyRefresh, keyTabs)
+			return bindings
 		}
-		return []key.Binding{keyRefresh, keyTabs}
+		bindings = append(bindings, keyRefresh, keyTabs)
+		return bindings
 	case upgradeSelecting:
 		if s.filter.active {
 			filtered := s.filter.filterPackages(s.packages)

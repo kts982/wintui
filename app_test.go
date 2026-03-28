@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -127,8 +128,7 @@ func TestPackageDataChangedReloadsInactiveDataScreensInBackground(t *testing.T) 
 		},
 	}
 
-	model, cmd := a.Update(packageDataChangedMsg{origin: screenInstall})
-	a = model.(app)
+	_, cmd := a.Update(packageDataChangedMsg{origin: screenInstall})
 	if cmd == nil {
 		t.Fatal("expected reload command when affected tabs are inactive")
 	}
@@ -150,8 +150,7 @@ func TestPackageDataChangedReloadsActiveDataScreen(t *testing.T) {
 		},
 	}
 
-	model, cmd := a.Update(packageDataChangedMsg{origin: screenInstall})
-	a = model.(app)
+	_, cmd := a.Update(packageDataChangedMsg{origin: screenInstall})
 	if cmd == nil {
 		t.Fatal("expected reload command for active data screen")
 	}
@@ -160,6 +159,27 @@ func TestPackageDataChangedReloadsActiveDataScreen(t *testing.T) {
 	}
 	if _, ok := a.screens[screenPackages].(packagesScreen); !ok {
 		t.Fatalf("active packages screen was not recreated: %#v", a.screens[screenPackages])
+	}
+}
+
+func TestPackageDataChangedUsesSequentialRefreshAfterInstall(t *testing.T) {
+	a := app{
+		activeTab: 2, // Install
+		screens: map[screenID]screen{
+			screenUpgrade:  stubScreen{},
+			screenInstall:  stubScreen{},
+			screenPackages: stubScreen{},
+		},
+	}
+
+	_, cmd := a.Update(packageDataChangedMsg{origin: screenInstall})
+	if cmd == nil {
+		t.Fatal("expected refresh command")
+	}
+
+	msg := cmd()
+	if got := fmt.Sprintf("%T", msg); got != "tea.sequenceMsg" {
+		t.Fatalf("refresh command type = %s, want tea.sequenceMsg", got)
 	}
 }
 

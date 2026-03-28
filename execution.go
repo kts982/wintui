@@ -11,10 +11,11 @@ import (
 )
 
 type executionLog struct {
-	vp      viewport.Model
-	lines   []string
-	current []string
-	follow  bool
+	vp       viewport.Model
+	lines    []string
+	current  []string
+	follow   bool
+	expanded bool
 }
 
 func newExecutionLog() executionLog {
@@ -32,6 +33,7 @@ func (l *executionLog) reset() {
 	l.lines = nil
 	l.current = nil
 	l.follow = true
+	l.expanded = false
 	l.vp.SetContent("")
 	l.vp.GotoTop()
 }
@@ -59,12 +61,38 @@ func (l executionLog) currentOutput() string {
 	return strings.Join(l.current, "\n")
 }
 
+func (l executionLog) hasOutput() bool {
+	return len(l.lines) > 0
+}
+
+func (l *executionLog) setDoneExpanded(expanded bool) {
+	l.expanded = expanded && l.hasOutput()
+	if l.expanded {
+		l.follow = true
+		l.vp.GotoBottom()
+	}
+}
+
 func (l executionLog) helpKeys() []key.Binding {
 	bindings := []key.Binding{keyScroll}
 	if !l.follow {
 		bindings = append(bindings, keyFollow)
 	}
 	bindings = append(bindings, keyEscCancel)
+	return bindings
+}
+
+func (l executionLog) doneHelpKeys() []key.Binding {
+	if !l.hasOutput() {
+		return nil
+	}
+	bindings := []key.Binding{keyLog}
+	if l.expanded {
+		bindings = append(bindings, keyScroll)
+		if !l.follow {
+			bindings = append(bindings, keyFollow)
+		}
+	}
 	return bindings
 }
 
@@ -92,6 +120,24 @@ func (l *executionLog) update(msg tea.Msg) (tea.Cmd, bool) {
 	return nil, false
 }
 
+func (l *executionLog) doneUpdate(msg tea.Msg) (tea.Cmd, bool) {
+	if !l.hasOutput() {
+		return nil, false
+	}
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "l" {
+		l.expanded = !l.expanded
+		if l.expanded {
+			l.follow = true
+			l.vp.GotoBottom()
+		}
+		return nil, true
+	}
+	if l.expanded {
+		return l.update(msg)
+	}
+	return nil, false
+}
+
 func (l *executionLog) setSize(width, height int) {
 	l.vp.SetWidth(width - 8)
 	vpH := height - 12
@@ -103,6 +149,35 @@ func (l *executionLog) setSize(width, height int) {
 
 func (l executionLog) view(width, height int) string {
 	return indentBlock(l.vp.View(), 2)
+}
+
+func (l executionLog) doneView(width, height, reserve int) string {
+	if !l.hasOutput() {
+		return ""
+	}
+
+	log := l
+	log.vp.SetWidth(width - 8)
+
+	if !log.expanded {
+		previewHeight := min(6, max(4, len(log.lines)))
+		log.vp.SetHeight(previewHeight)
+		log.vp.GotoBottom()
+		var b strings.Builder
+		b.WriteString("  " + helpStyle.Render("Log preview — press l to expand") + "\n")
+		b.WriteString(indentBlock(log.vp.View(), 2))
+		return b.String()
+	}
+
+	vpH := height - reserve
+	if vpH < 5 {
+		vpH = 5
+	}
+	log.vp.SetHeight(vpH)
+	var b strings.Builder
+	b.WriteString("  " + helpStyle.Render("Execution log — press l to hide") + "\n")
+	b.WriteString(indentBlock(log.vp.View(), 2))
+	return b.String()
 }
 
 func (l *executionLog) sync() {

@@ -79,8 +79,9 @@ func newInstallScreenWithRetry(req retryRequest) installScreen {
 	s.state = installExecuting
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.launchRetry = &req
-	if req.Version != "" {
-		s.selectedVersions[packageSourceKey(req.ID, req.Source)] = req.Version
+	items := req.items()
+	if len(items) > 0 && items[0].Version != "" {
+		s.selectedVersions[packageSourceKey(items[0].ID, items[0].Source)] = items[0].Version
 	}
 	return s
 }
@@ -88,8 +89,13 @@ func newInstallScreenWithRetry(req retryRequest) installScreen {
 func (s installScreen) init() tea.Cmd {
 	if s.launchRetry != nil {
 		req := *s.launchRetry
+		items := req.items()
+		if len(items) == 0 {
+			return nil
+		}
+		item := items[0]
 		return tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
-			out, err := installPackageSourceCtx(s.ctx, req.ID, req.Source, req.Version)
+			out, err := installPackageSourceCtx(s.ctx, item.ID, item.Source, item.Version)
 			return commandDoneMsg{output: out, err: err}
 		})
 	}
@@ -114,6 +120,11 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 	if s.state == installExecuting {
 		if cmd, handled := s.exec.update(msg); handled {
+			return s, cmd
+		}
+	}
+	if s.state == installDone {
+		if cmd, handled := s.exec.doneUpdate(msg); handled {
 			return s, cmd
 		}
 	}
@@ -158,6 +169,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.output = s.exec.fullOutput()
 			s.err = fmt.Errorf("cancelled")
 			s.state = installDone
+			s.exec.setDoneExpanded(true)
 			return s, nil
 		}
 
@@ -306,7 +318,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.err = msg.err
 		s.state = installDone
 		s.retryAction = nil
-		if msg.err != nil && requiresElevation(msg.err, msg.output) && !isElevated() && s.launchRetry == nil {
+		if msg.err != nil && likelyBenefitsFromElevation(msg.err, msg.output) && !isElevated() && s.launchRetry == nil {
 			if len(s.packages) > 0 && s.cursor >= 0 && s.cursor < len(s.packages) {
 				pkg := s.packages[s.cursor]
 				s.retryAction = &retryRequest{
@@ -339,8 +351,9 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.err = msg.err
 		s.output = s.exec.fullOutput()
 		s.state = installDone
+		s.exec.setDoneExpanded(msg.err != nil)
 		s.retryAction = nil
-		if msg.err != nil && requiresElevation(msg.err, s.output) && !isElevated() && len(s.packages) > 0 && s.cursor >= 0 && s.cursor < len(s.packages) {
+		if msg.err != nil && likelyBenefitsFromElevation(msg.err, s.output) && !isElevated() && len(s.packages) > 0 && s.cursor >= 0 && s.cursor < len(s.packages) {
 			pkg := s.packages[s.cursor]
 			s.retryAction = &retryRequest{
 				Op:      retryOpInstall,
@@ -533,7 +546,17 @@ func (s installScreen) view(width, height int) string {
 				b.WriteString("  " + helpStyle.Render(strings.Join(meta, "  ")) + "\n")
 			}
 			if requiresElevation(s.err, s.output) {
-				b.WriteString("  " + helpStyle.Render(elevationRetryHint()) + "\n")
+				if s.retryAction != nil && !isElevated() {
+					if warning := retryWarningText(s.retryAction); warning != "" {
+						b.WriteString("  " + helpStyle.Render(warning) + "\n")
+					}
+					b.WriteString("  " + helpStyle.Render(retryHintText(s.retryAction)) + "\n")
+				}
+			} else if s.retryAction != nil && !isElevated() {
+				if warning := retryWarningText(s.retryAction); warning != "" {
+					b.WriteString("  " + helpStyle.Render(warning) + "\n")
+				}
+				b.WriteString("  " + helpStyle.Render(retryHintText(s.retryAction)) + "\n")
 			}
 		} else if s.output != "" && len(s.packages) == 0 {
 			b.WriteString("  " + warnStyle.Render(s.output) + "\n")
@@ -555,6 +578,9 @@ func (s installScreen) view(width, height int) string {
 			} else {
 				b.WriteString("  " + successStyle.Render("Installation complete!") + "\n")
 			}
+		}
+		if logView := s.exec.doneView(width, height, 14); logView != "" {
+			b.WriteString("\n" + logView + "\n")
 		}
 		b.WriteString("\n  " + helpStyle.Render("Press r to search again or esc to leave") + "\n")
 	}
@@ -581,10 +607,13 @@ func (s installScreen) helpKeys() []key.Binding {
 	case installConfirm:
 		return []key.Binding{keyConfirm, keyCancel}
 	case installDone:
+		bindings := append([]key.Binding(nil), s.exec.doneHelpKeys()...)
 		if s.retryAction != nil && !isElevated() {
-			return []key.Binding{keyRetryElevated, keySearchAgain, keyEsc, keyTabs}
+			bindings = append(bindings, keyRetryElevated, keySearchAgain, keyEsc, keyTabs)
+			return bindings
 		}
-		return []key.Binding{keySearchAgain, keyEsc, keyTabs}
+		bindings = append(bindings, keySearchAgain, keyEsc, keyTabs)
+		return bindings
 	}
 	return []key.Binding{keyTabs}
 }
