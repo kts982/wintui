@@ -8,6 +8,7 @@
 A terminal user interface for **winget** (Windows Package Manager), built with Go and the [Charmbracelet](https://charm.sh) TUI libraries.
 
 Browse, install, upgrade, and manage Windows packages without leaving the terminal.
+WinTUI also includes a headless CLI mode for scripts and a built-in auto-elevation helper that can keep a batch moving with a single UAC prompt.
 
 ![WinTUI demo](demo.gif)
 
@@ -59,7 +60,7 @@ Portable `winget` manifest files live under [`packaging/winget`](./packaging/win
 - Streaming execution view for install, upgrade, and uninstall operations
 - Post-run log preview with `l` to expand/collapse execution output
 - Cancellable operations (`Esc`)
-- `Ctrl+e` to retry failed elevation-candidate actions; batch retries only rerun failed items
+- Built-in `Auto Elevate` support for hard admin-required actions, plus `Ctrl+e` to retry failed elevation-candidate actions; batch retries only rerun failed items
 - Context-aware help bar
 
 ## Usage
@@ -83,6 +84,10 @@ Portable `winget` manifest files live under [`packaging/winget`](./packaging/win
 .\wintui.exe --check --json
 .\wintui.exe --list --json > packages.json
 ```
+
+Further documentation:
+- [CLI reference](docs/cli.md)
+- [Elevation and retry behavior](docs/elevation.md)
 
 ## Keyboard Shortcuts
 
@@ -129,6 +134,10 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 `Default Source` controls install/search preference only; uninstall works against the installed package database regardless of that setting.
 
 `Auto Elevate` tries the built-in elevated helper automatically for hard permission errors. When a run still fails, `Ctrl+e` retries only the failed elevation-candidate items.
+
+For deeper behavior details and examples, see:
+- [CLI reference](docs/cli.md)
+- [Elevation and retry behavior](docs/elevation.md)
 
 ## Development
 
