@@ -5,6 +5,7 @@ import (
 	"os"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/spf13/cobra"
 )
 
 // Set by GoReleaser via ldflags.
@@ -14,23 +15,67 @@ var (
 	date    = "unknown"
 )
 
+var (
+	retryOpVal   string
+	retryID      string
+	retryName    string
+	retrySource  string
+	retryVersion string
+	retryBatch   string
+)
+
+var rootCmd = &cobra.Command{
+	Use:   "wintui",
+	Short: "WinTUI - A terminal UI for winget",
+	Long:  `A modern, interactive terminal user interface for the Windows Package Manager (winget).`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Version check is handled by Cobra's built-in version flag if we set it
+		// but we want to use our custom format or handle it specifically.
+
+		var req *retryRequest
+		if retryOpVal != "" {
+			req = &retryRequest{Op: retryOp(retryOpVal)}
+			if retryBatch != "" {
+				items, err := decodeRetryItems(retryBatch)
+				if err != nil {
+					return fmt.Errorf("invalid retry batch: %w", err)
+				}
+				req.Items = items
+			} else {
+				req.ID = retryID
+				req.Name = retryName
+				req.Source = retrySource
+				req.Version = retryVersion
+			}
+			if !req.valid() {
+				return fmt.Errorf("invalid retry request")
+			}
+		}
+
+		// Load settings from config file
+		appSettings = LoadSettings()
+
+		p := tea.NewProgram(newApp(req))
+		_, err := p.Run()
+		return err
+	},
+}
+
+func init() {
+	rootCmd.Version = fmt.Sprintf("%s (%s) built %s", version, commit, date)
+	rootCmd.Flags().StringVar(&retryOpVal, "retry-op", "", "Operation to retry")
+	rootCmd.Flags().StringVar(&retryID, "id", "", "Package ID to retry")
+	rootCmd.Flags().StringVar(&retryName, "name", "", "Package name to retry")
+	rootCmd.Flags().StringVar(&retrySource, "source", "", "Package source to retry")
+	rootCmd.Flags().StringVar(&retryVersion, "package-version", "", "Package version to retry")
+	rootCmd.Flags().StringVar(&retryBatch, "retry-batch", "", "Base64 encoded batch retry data")
+
+	// Compatibility with old -v flag
+	rootCmd.Flags().BoolP("version", "v", false, "show version")
+}
+
 func main() {
-	showVersion, retryReq, err := parseStartupArgs(os.Args[1:])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if showVersion {
-		fmt.Printf("wintui %s (%s) built %s\n", version, commit, date)
-		return
-	}
-
-	// Load settings from config file
-	appSettings = LoadSettings()
-
-	p := tea.NewProgram(newApp(retryReq))
-	if _, err := p.Run(); err != nil {
+	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

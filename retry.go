@@ -3,9 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
-	"flag"
 	"fmt"
-	"io"
 )
 
 type retryOp string
@@ -16,99 +14,79 @@ const (
 	retryOpUninstall retryOp = "uninstall"
 )
 
-type retryRequest struct {
-	Op      retryOp
-	ID      string
-	Name    string
-	Source  string
-	Version string
-	Items   []retryItem
-}
-
 type retryItem struct {
 	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Source  string `json:"source"`
+	Version string `json:"version"`
+}
+
+type retryRequest struct {
+	Op retryOp `json:"op"`
+	// Single package
+	ID      string `json:"id,omitempty"`
 	Name    string `json:"name,omitempty"`
 	Source  string `json:"source,omitempty"`
 	Version string `json:"version,omitempty"`
-}
-
-func (r retryRequest) valid() bool {
-	switch r.Op {
-	case retryOpInstall, retryOpUpgrade, retryOpUninstall:
-		items := r.items()
-		if len(items) == 0 {
-			return false
-		}
-		for _, item := range items {
-			if item.ID == "" {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-func (r retryRequest) items() []retryItem {
-	if len(r.Items) > 0 {
-		return append([]retryItem(nil), r.Items...)
-	}
-	if r.ID == "" {
-		return nil
-	}
-	return []retryItem{{
-		ID:      r.ID,
-		Name:    r.Name,
-		Source:  r.Source,
-		Version: r.Version,
-	}}
+	// Batch
+	Items []retryItem `json:"items,omitempty"`
 }
 
 func (r retryRequest) isBatch() bool {
-	return len(r.items()) > 1
+	return len(r.Items) > 0
+}
+
+func (r retryRequest) valid() bool {
+	if r.isBatch() {
+		return true
+	}
+	return r.ID != "" && r.Op != ""
 }
 
 func (r retryRequest) startupArgs() ([]string, error) {
 	args := []string{"--retry-op", string(r.Op)}
-	items := r.items()
-	if len(items) > 1 {
-		payload, err := encodeRetryItems(items)
+	if r.isBatch() {
+		batch, err := encodeRetryItems(r.Items)
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, "--retry-batch", payload)
-		return args, nil
-	}
-	if len(items) == 1 {
-		item := items[0]
-		args = append(args, "--id", item.ID)
-		if item.Name != "" {
-			args = append(args, "--name", item.Name)
+		args = append(args, "--retry-batch", batch)
+	} else {
+		args = append(args, "--id", r.ID)
+		if r.Name != "" {
+			args = append(args, "--name", r.Name)
 		}
-		if item.Source != "" {
-			args = append(args, "--source", item.Source)
+		if r.Source != "" {
+			args = append(args, "--source", r.Source)
 		}
-		if item.Version != "" {
-			args = append(args, "--package-version", item.Version)
+		if r.Version != "" {
+			args = append(args, "--package-version", r.Version)
 		}
 	}
 	return args, nil
 }
 
-func newRetryRequest(op retryOp, items []retryItem) *retryRequest {
-	if len(items) == 0 {
+func newRetryRequest(op retryOp, pkgs []Package) *retryRequest {
+	if len(pkgs) == 0 {
 		return nil
 	}
-	if len(items) == 1 {
-		item := items[0]
+	if len(pkgs) == 1 {
 		return &retryRequest{
 			Op:      op,
-			ID:      item.ID,
-			Name:    item.Name,
-			Source:  item.Source,
-			Version: item.Version,
+			ID:      pkgs[0].ID,
+			Name:    pkgs[0].Name,
+			Source:  pkgs[0].Source,
+			Version: pkgs[0].Version,
 		}
+	}
+	items := make([]retryItem, 0, len(pkgs))
+	for _, p := range pkgs {
+		items = append(items, retryItem{
+			ID:      p.ID,
+			Name:    p.Name,
+			Source:  p.Source,
+			Version: p.Version,
+		})
 	}
 	return &retryRequest{
 		Op:    op,
@@ -158,48 +136,6 @@ func retryWarningText(req *retryRequest) string {
 	default:
 		return ""
 	}
-}
-
-func parseStartupArgs(args []string) (bool, *retryRequest, error) {
-	fs := flag.NewFlagSet("wintui", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
-	showVersion := fs.Bool("version", false, "")
-	shortVersion := fs.Bool("v", false, "")
-	retryOpVal := fs.String("retry-op", "", "")
-	retryID := fs.String("id", "", "")
-	retryName := fs.String("name", "", "")
-	retrySource := fs.String("source", "", "")
-	retryVersion := fs.String("package-version", "", "")
-	retryBatch := fs.String("retry-batch", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return false, nil, err
-	}
-	if *showVersion || *shortVersion {
-		return true, nil, nil
-	}
-	if *retryOpVal == "" {
-		return false, nil, nil
-	}
-
-	req := &retryRequest{Op: retryOp(*retryOpVal)}
-	if *retryBatch != "" {
-		items, err := decodeRetryItems(*retryBatch)
-		if err != nil {
-			return false, nil, fmt.Errorf("invalid retry batch: %w", err)
-		}
-		req.Items = items
-	} else {
-		req.ID = *retryID
-		req.Name = *retryName
-		req.Source = *retrySource
-		req.Version = *retryVersion
-	}
-	if !req.valid() {
-		return false, nil, fmt.Errorf("invalid retry request")
-	}
-	return false, req, nil
 }
 
 func tabForRetry(req retryRequest) int {

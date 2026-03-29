@@ -663,11 +663,14 @@ func extractPackage(line string, cols []colPos) Package {
 
 // -- Streaming command execution ------------------------------------
 
-func awaitStream(outChan <-chan string, errChan <-chan error) tea.Cmd {
+func awaitStream(args []string, outChan <-chan string, errChan <-chan error) tea.Cmd {
 	return func() tea.Msg {
 		line, ok := <-outChan
 		if !ok {
-			return streamDoneMsg{err: <-errChan}
+			return streamDoneMsg{
+				err:       <-errChan,
+				retryArgs: args,
+			}
 		}
 		return streamMsg(line)
 	}
@@ -742,17 +745,57 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 	return outChan, errChan
 }
 
-func installPackageStreamCtx(ctx context.Context, id, source, version string) (<-chan string, <-chan error) {
+func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string, <-chan error) {
+	// 1. Try running normally (non-elevated)
+	outChan, errChan := runWingetStreamCtx(ctx, false, args...)
+	
+	// Create a proxy channel so we can switch to elevated if needed
+	proxyOut := make(chan string)
+	proxyErr := make(chan error, 1)
+
+	go func() {
+		defer close(proxyOut)
+		defer close(proxyErr)
+
+		var lines []string
+		for line := range outChan {
+			lines = append(lines, line)
+			proxyOut <- line
+		}
+
+		err := <-errChan
+		if err != nil && (requiresElevation(err, strings.Join(lines, "\n")) || isElevated()) {
+			// If already elevated, the error is real. If not, try elevated.
+			if !isElevated() && appSettings.AutoElevate {
+				proxyOut <- "Elevation required. Requesting..."
+				eOut, eErr := globalElevator.runCommandElevated(args...)
+				for line := range eOut {
+					proxyOut <- line
+				}
+				proxyErr <- <-eErr
+				return
+			}
+		}
+		proxyErr <- err
+	}()
+
+	return proxyOut, proxyErr
+}
+
+func installPackageStreamCtx(ctx context.Context, id, source, version string) ([]string, <-chan string, <-chan error) {
 	args := installCommandArgs(id, source, version)
-	return runWingetStreamCtx(ctx, false, args...)
+	out, err := runActionSmartStreamCtx(ctx, args...)
+	return args, out, err
 }
 
-func upgradePackageStreamCtx(ctx context.Context, id, source, version string) (<-chan string, <-chan error) {
+func upgradePackageStreamCtx(ctx context.Context, id, source, version string) ([]string, <-chan string, <-chan error) {
 	args := upgradeCommandArgs(id, source, version)
-	return runWingetStreamCtx(ctx, false, args...)
+	out, err := runActionSmartStreamCtx(ctx, args...)
+	return args, out, err
 }
 
-func uninstallPackageStreamCtx(ctx context.Context, pkg Package) (<-chan string, <-chan error) {
+func uninstallPackageStreamCtx(ctx context.Context, pkg Package) ([]string, <-chan string, <-chan error) {
+	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall)
 	outChan := make(chan string)
 	errChan := make(chan error, 1)
 
@@ -761,7 +804,7 @@ func uninstallPackageStreamCtx(ctx context.Context, pkg Package) (<-chan string,
 		defer close(errChan)
 
 		runAttempt := func(includePurge bool) (string, error, bool) {
-			streamOut, streamErr := runWingetStreamCtx(ctx, false, uninstallCommandArgs(pkg, includePurge)...)
+			streamOut, streamErr := runActionSmartStreamCtx(ctx, uninstallCommandArgs(pkg, includePurge)...)
 			var lines []string
 			for line := range streamOut {
 				lines = append(lines, line)
@@ -795,5 +838,5 @@ func uninstallPackageStreamCtx(ctx context.Context, pkg Package) (<-chan string,
 		errChan <- err
 	}()
 
-	return outChan, errChan
+	return args, outChan, errChan
 }

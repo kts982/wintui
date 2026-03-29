@@ -51,11 +51,10 @@ type packagesScreen struct {
 	filter        listFilter
 	ctx           context.Context
 	cancel        context.CancelFunc
-	launchRetry   *retryRequest
-	retryAction   *retryRequest
 	exec          executionLog
 	uninstallOut  <-chan string
 	uninstallErr  <-chan error
+	retryArgs     []string
 	batchPackages []Package
 	batchOutputs  []string
 	batchErrs     []error
@@ -94,34 +93,7 @@ func newPackagesScreen() packagesScreen {
 	}
 }
 
-func newPackagesScreenWithRetry(req retryRequest) packagesScreen {
-	s := newPackagesScreen()
-	s.state = packagesUninstalling
-	items := req.items()
-	s.batchPackages = make([]Package, 0, len(items))
-	for _, item := range items {
-		s.batchPackages = append(s.batchPackages, Package{
-			Name:   item.Name,
-			ID:     item.ID,
-			Source: item.Source,
-		})
-	}
-	s.batchTotal = len(items)
-	if len(items) > 0 {
-		s.batchName = items[0].ID
-	}
-	s.progress.active = false
-	s.progress.percent = 0
-	s.launchRetry = &req
-	return s
-}
-
 func (s packagesScreen) init() tea.Cmd {
-	if s.launchRetry != nil {
-		return tea.Batch(s.spinner.Tick, func() tea.Msg {
-			return startPackagesUninstallMsg{}
-		})
-	}
 	if pkgs, ok := cache.getInstalled(); ok {
 		return func() tea.Msg {
 			return packagesLoadedMsg{packages: pkgs}
@@ -228,6 +200,23 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s.reload()
 		}
 
+		if msg.String() == "ctrl+e" && s.state == packagesDone {
+			if s.err != nil && requiresElevation(s.err, s.output) && len(s.retryArgs) > 0 {
+				s.state = packagesUninstalling
+				s.progress, _ = s.progress.start()
+				s.exec.reset()
+				s.exec.appendSection("== Retrying Elevated ==")
+				out, err := globalElevator.runCommandElevated(s.retryArgs...)
+				s.uninstallOut = out
+				s.uninstallErr = err
+				return s, tea.Batch(
+					s.spinner.Tick,
+					tickProgress(),
+					awaitStream(s.retryArgs, s.uninstallOut, s.uninstallErr),
+				)
+			}
+		}
+
 		// Cancel
 		if msg.String() == "esc" && (s.state == packagesLoading || s.state == packagesUninstalling) {
 			if s.cancel != nil {
@@ -245,7 +234,6 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 			} else {
 				s.progress = s.progress.stop()
-				s.retryAction = nil
 				s.err = fmt.Errorf("cancelled")
 				s.output = formatUninstallResults(s.batchPackages[:len(s.batchErrs)], s.batchErrs, s.batchOutputs)
 				s.selected = make(map[string]bool)
@@ -258,14 +246,6 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		switch s.state {
 		case packagesReady:
 			switch msg.String() {
-			case "ctrl+e":
-				if s.retryAction != nil && !isElevated() {
-					if err := relaunchElevatedRetry(*s.retryAction); err != nil {
-						s.statusMsg = errorStyle.Render("Failed to relaunch elevated: " + err.Error())
-						return s, nil
-					}
-					return s, tea.Quit
-				}
 			case "/":
 				s.filter = s.filter.activate()
 				return s, textinput.Blink
@@ -324,16 +304,6 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 		case packagesEmpty:
 		case packagesDone:
-			switch msg.String() {
-			case "ctrl+e":
-				if s.retryAction != nil && !isElevated() {
-					if err := relaunchElevatedRetry(*s.retryAction); err != nil {
-						s.err = fmt.Errorf("failed to relaunch elevated: %w", err)
-						return s, nil
-					}
-					return s, tea.Quit
-				}
-			}
 		case packagesConfirmUninstall:
 			switch msg.String() {
 			case "enter", "y", "Y":
@@ -341,7 +311,6 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				ctx, cancel := context.WithCancel(context.Background())
 				s.ctx = ctx
 				s.cancel = cancel
-				s.retryAction = nil
 				s.output = ""
 				s.err = nil
 				s.statusMsg = ""
@@ -412,12 +381,13 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		s.exec.appendLine(normalizeActionStreamLine(retryOpUninstall, string(msg)))
-		return s, awaitStream(s.uninstallOut, s.uninstallErr)
+		return s, awaitStream(s.retryArgs, s.uninstallOut, s.uninstallErr)
 
 	case streamDoneMsg:
 		if s.state != packagesUninstalling {
 			return s, nil
 		}
+		s.retryArgs = msg.retryArgs
 		output := s.exec.currentOutput()
 		s.batchOutputs = append(s.batchOutputs, output)
 		s.batchErrs = append(s.batchErrs, msg.err)
@@ -437,14 +407,6 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.err = s.batchErr
 		s.state = packagesDone
 		s.exec.setDoneExpanded(s.batchErr != nil)
-		s.retryAction = nil
-		if !isElevated() {
-			s.retryAction = newRetryRequest(retryOpUninstall, failedUninstallRetryItems(
-				s.batchPackages,
-				s.batchErrs,
-				s.batchOutputs,
-			))
-		}
 		s.selected = make(map[string]bool)
 		successCount, _ := batchResultCounts(s.batchErrs)
 		if successCount > 0 {
@@ -542,7 +504,6 @@ func (s packagesScreen) reload() (packagesScreen, tea.Cmd) {
 	s.statusMsg = ""
 	s.output = ""
 	s.err = nil
-	s.retryAction = nil
 	s.batchPackages = nil
 	s.batchOutputs = nil
 	s.batchErrs = nil
@@ -577,8 +538,8 @@ func (s *packagesScreen) startUninstallStream(index int) tea.Cmd {
 	}
 	header += " =="
 	s.exec.appendSection(header)
-	s.uninstallOut, s.uninstallErr = uninstallPackageStreamCtx(s.ctx, pkg)
-	return awaitStream(s.uninstallOut, s.uninstallErr)
+	s.retryArgs, s.uninstallOut, s.uninstallErr = uninstallPackageStreamCtx(s.ctx, pkg)
+	return awaitStream(s.retryArgs, s.uninstallOut, s.uninstallErr)
 }
 
 func uninstallPackageLabel(pkg Package) string {
@@ -589,25 +550,6 @@ func uninstallPackageLabel(pkg Package) string {
 		return pkg.ID
 	}
 	return "Package"
-}
-
-func failedUninstallRetryItems(pkgs []Package, errs []error, outputs []string) []retryItem {
-	var items []retryItem
-	for i, err := range errs {
-		if !likelyBenefitsFromElevation(err, valueAt(outputs, i)) {
-			continue
-		}
-		pkg := valueAt(pkgs, i)
-		if pkg.ID == "" {
-			continue
-		}
-		items = append(items, retryItem{
-			ID:     pkg.ID,
-			Name:   pkg.Name,
-			Source: pkg.Source,
-		})
-	}
-	return items
 }
 
 func formatUninstallResults(pkgs []Package, errs []error, outputs []string) string {
@@ -793,29 +735,21 @@ func (s packagesScreen) view(width, height int) string {
 				b.WriteString("\n")
 			}
 		} else if failCount > 0 {
-			b.WriteString("  " + warnStyle.Render(
-				fmt.Sprintf("Uninstall finished: %d succeeded, %d failed", successCount, failCount),
-			) + "\n")
-			if successCount > 0 {
-				b.WriteString("  " + helpStyle.Render(
-					fmt.Sprintf("%d package(s) were removed before the run completed.", successCount),
-				) + "\n")
-			}
-			if batchRequiresElevation(s.batchErrs, s.batchOutputs) {
-				b.WriteString("  " + helpStyle.Render("Some failed packages require administrator privileges.") + "\n")
-				if s.retryAction != nil && !isElevated() {
-					if warning := retryWarningText(s.retryAction); warning != "" {
-						b.WriteString("  " + helpStyle.Render(warning) + "\n")
-					}
-					b.WriteString("  " + helpStyle.Render(retryHintText(s.retryAction)) + "\n")
+			if s.batchTotal == 1 && s.err != nil {
+				b.WriteString("  " + errorStyle.Render("Error: "+s.err.Error()) + "\n")
+				if requiresElevation(s.err, s.output) && !appSettings.AutoElevate {
+					b.WriteString("  " + warnStyle.Render("This action requires administrator privileges.") + "\n")
 				}
 				b.WriteString("\n")
-			} else if s.retryAction != nil && !isElevated() {
-				if warning := retryWarningText(s.retryAction); warning != "" {
-					b.WriteString("  " + helpStyle.Render(warning) + "\n")
-				}
-				b.WriteString("  " + helpStyle.Render(retryHintText(s.retryAction)) + "\n\n")
 			} else {
+				b.WriteString("  " + warnStyle.Render(
+					fmt.Sprintf("Uninstall finished: %d succeeded, %d failed", successCount, failCount),
+				) + "\n")
+				if successCount > 0 {
+					b.WriteString("  " + helpStyle.Render(
+						fmt.Sprintf("%d package(s) were removed before the run completed.", successCount),
+					) + "\n")
+				}
 				b.WriteString("\n")
 			}
 		} else {
@@ -841,11 +775,7 @@ func (s packagesScreen) view(width, height int) string {
 		if logView := s.exec.doneView(width, height, 18); logView != "" {
 			b.WriteString("\n" + logView + "\n")
 		}
-		if s.retryAction != nil && !isElevated() {
-			b.WriteString("\n  " + helpStyle.Render("Press ctrl+e to retry failed items elevated, r to reload, or tab to switch screens") + "\n")
-		} else {
-			b.WriteString("\n  " + helpStyle.Render("Press r to reload or tab to switch screens") + "\n")
-		}
+		b.WriteString("\n  " + helpStyle.Render("Press r to reload or tab to switch screens") + "\n")
 	}
 
 	return b.String()
@@ -1031,9 +961,8 @@ func (s packagesScreen) helpKeys() []key.Binding {
 		return []key.Binding{keyRefresh, keyTabs}
 	case packagesDone:
 		bindings := append([]key.Binding(nil), s.exec.doneHelpKeys()...)
-		if s.retryAction != nil && !isElevated() {
-			bindings = append(bindings, keyRetryElevated, keyRefresh, keyTabs)
-			return bindings
+		if s.err != nil && requiresElevation(s.err, s.output) && !appSettings.AutoElevate {
+			bindings = append(bindings, keyRetryElevated)
 		}
 		bindings = append(bindings, keyRefresh, keyTabs)
 		return bindings
@@ -1068,9 +997,6 @@ func (s packagesScreen) helpKeys() []key.Binding {
 		}
 		if s.filter.query != "" || selected > 0 {
 			bindings = append(bindings, keyEscClear)
-		}
-		if s.retryAction != nil && !isElevated() {
-			bindings = append(bindings, keyRetryElevated)
 		}
 		return bindings
 	case packagesConfirmUninstall:

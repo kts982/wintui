@@ -21,6 +21,10 @@ func relaunchElevatedRetry(req retryRequest) error {
 		return err
 	}
 
+	return relaunchAsAdmin(exe, args)
+}
+
+func relaunchAsAdmin(exe string, args []string) error {
 	verb, err := windows.UTF16PtrFromString("runas")
 	if err != nil {
 		return err
@@ -42,7 +46,7 @@ func relaunchElevatedRetry(req retryRequest) error {
 		uintptr(unsafe.Pointer(file)),
 		uintptr(unsafe.Pointer(params)),
 		0,
-		1,
+		1, // SW_SHOWNORMAL
 	)
 	if r1 <= 32 {
 		if callErr != syscall.Errno(0) {

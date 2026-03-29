@@ -53,11 +53,10 @@ type upgradeScreen struct {
 	batchOutputs     []string
 	batchErrs        []error
 	batchErr         error
-	launchRetry      *retryRequest
-	retryAction      *retryRequest
 	exec             executionLog
 	upgradeOut       <-chan string
 	upgradeErr       <-chan error
+	retryArgs        []string
 }
 
 func newUpgradeScreen() upgradeScreen {
@@ -81,33 +80,7 @@ func newUpgradeScreen() upgradeScreen {
 	}
 }
 
-func newUpgradeScreenWithRetry(req retryRequest) upgradeScreen {
-	s := newUpgradeScreen()
-	s.state = upgradeExecuting
-	items := req.items()
-	s.batchIDs = make([]string, 0, len(items))
-	s.batchSources = make([]string, 0, len(items))
-	s.batchVersions = make([]string, 0, len(items))
-	for _, item := range items {
-		s.batchIDs = append(s.batchIDs, item.ID)
-		s.batchSources = append(s.batchSources, item.Source)
-		s.batchVersions = append(s.batchVersions, item.Version)
-		if item.Version != "" {
-			s.selectedVersions[packageSourceKey(item.ID, item.Source)] = item.Version
-		}
-	}
-	s.batchTotal = len(items)
-	if len(items) > 0 {
-		s.batchName = items[0].ID
-	}
-	s.launchRetry = &req
-	return s
-}
-
 func (s upgradeScreen) init() tea.Cmd {
-	if s.launchRetry != nil {
-		return tea.Batch(s.spinner.Tick, func() tea.Msg { return startUpgradeBatchMsg{} })
-	}
 	// Check cache first
 	if pkgs, ok := cache.getUpgradeable(); ok {
 		return func() tea.Msg {
@@ -221,7 +194,6 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.cancel()
 			}
 			s.progress = s.progress.stop()
-			s.retryAction = nil
 			if s.state == upgradeLoading {
 				s.err = fmt.Errorf("cancelled")
 				if len(s.packages) > 0 {
@@ -244,7 +216,6 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		// Refresh with r
 		if msg.String() == "r" && (s.state == upgradeSelecting || s.state == upgradeEmpty || s.state == upgradeDone) {
 			cache.invalidate()
-			s.retryAction = nil
 			s.state = upgradeLoading
 			s.ctx, s.cancel = context.WithCancel(context.Background())
 			s.progress, _ = s.progress.start()
@@ -255,6 +226,22 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 				return packagesLoadedMsg{packages: pkgs, err: err}
 			})
+		}
+		if msg.String() == "ctrl+e" && s.state == upgradeDone {
+			if s.err != nil && requiresElevation(s.err, s.output) && len(s.retryArgs) > 0 {
+				s.state = upgradeExecuting
+				s.progress, _ = s.progress.start()
+				s.exec.reset()
+				s.exec.appendSection("== Retrying Elevated ==")
+				out, err := globalElevator.runCommandElevated(s.retryArgs...)
+				s.upgradeOut = out
+				s.upgradeErr = err
+				return s, tea.Batch(
+					s.spinner.Tick,
+					tickProgress(),
+					awaitStream(s.retryArgs, s.upgradeOut, s.upgradeErr),
+				)
+			}
 		}
 		// Show details
 		if (msg.String() == "i" || msg.String() == "d") && s.state == upgradeSelecting {
@@ -273,13 +260,6 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case upgradeConfirming:
 			return s.updateConfirm(msg)
 		case upgradeDone, upgradeEmpty:
-			if msg.String() == "ctrl+e" && s.retryAction != nil && !isElevated() {
-				if err := relaunchElevatedRetry(*s.retryAction); err != nil {
-					s.err = fmt.Errorf("failed to relaunch elevated: %w", err)
-					return s, nil
-				}
-				return s, tea.Quit
-			}
 			if msg.String() == "enter" {
 				return s, func() tea.Msg { return switchScreenMsg(screenUpgrade) }
 			}
@@ -304,7 +284,6 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		s.progress = s.progress.stop()
-		s.retryAction = nil
 		s.packages = msg.packages
 		s.selected = make(map[int]bool)
 		s.selectedVersions = make(map[string]string)
@@ -341,12 +320,13 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		s.exec.appendLine(normalizeActionStreamLine(retryOpUpgrade, string(msg)))
-		return s, awaitStream(s.upgradeOut, s.upgradeErr)
+		return s, awaitStream(s.retryArgs, s.upgradeOut, s.upgradeErr)
 
 	case streamDoneMsg:
 		if s.state != upgradeExecuting {
 			return s, nil
 		}
+		s.retryArgs = msg.retryArgs
 		output := s.exec.currentOutput()
 		s.batchOutputs = append(s.batchOutputs, output)
 		s.batchErrs = append(s.batchErrs, msg.err)
@@ -366,16 +346,6 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.err = s.batchErr
 		s.state = upgradeDone
 		s.exec.setDoneExpanded(s.batchErr != nil)
-		s.retryAction = nil
-		if !isElevated() {
-			s.retryAction = newRetryRequest(retryOpUpgrade, failedUpgradeRetryItems(
-				s.batchIDs,
-				s.batchSources,
-				s.batchVersions,
-				s.batchErrs,
-				s.batchOutputs,
-			))
-		}
 		cache.invalidate()
 		return s, func() tea.Msg { return packageDataChangedMsg{origin: screenUpgrade} }
 
@@ -444,7 +414,6 @@ func (s upgradeScreen) updateConfirm(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 	switch msg.String() {
 	case "enter", "y", "Y":
 		s.state = upgradeExecuting
-		s.retryAction = nil
 		s.progress, _ = s.progress.start()
 		ctx, cancel := context.WithCancel(context.Background())
 		s.cancel = cancel
@@ -733,38 +702,6 @@ func batchResultCounts(errs []error) (successCount, failCount int) {
 	return successCount, failCount
 }
 
-func batchRequiresElevation(errs []error, outputs []string) bool {
-	for i, err := range errs {
-		output := ""
-		if i < len(outputs) {
-			output = outputs[i]
-		}
-		if requiresElevation(err, output) {
-			return true
-		}
-	}
-	return false
-}
-
-func failedUpgradeRetryItems(ids, sources, versions []string, errs []error, outputs []string) []retryItem {
-	var items []retryItem
-	for i, err := range errs {
-		if !likelyBenefitsFromElevation(err, valueAt(outputs, i)) {
-			continue
-		}
-		id := valueAt(ids, i)
-		if id == "" {
-			continue
-		}
-		items = append(items, retryItem{
-			ID:      id,
-			Source:  valueAt(sources, i),
-			Version: valueAt(versions, i),
-		})
-	}
-	return items
-}
-
 func valueAt[T any](values []T, index int) T {
 	var zero T
 	if index < 0 || index >= len(values) {
@@ -856,13 +793,13 @@ func (s *upgradeScreen) startUpgradeStream(index int) tea.Cmd {
 	}
 	header += " =="
 	s.exec.appendSection(header)
-	s.upgradeOut, s.upgradeErr = upgradePackageStreamCtx(
+	s.retryArgs, s.upgradeOut, s.upgradeErr = upgradePackageStreamCtx(
 		s.ctx,
 		s.batchIDs[index],
 		s.batchSources[index],
 		targetVersion,
 	)
-	return awaitStream(s.upgradeOut, s.upgradeErr)
+	return awaitStream(s.retryArgs, s.upgradeOut, s.upgradeErr)
 }
 
 func (s upgradeScreen) view(width, height int) string {
@@ -921,29 +858,21 @@ func (s upgradeScreen) view(width, height int) string {
 			b.WriteString("  " + successStyle.Render(s.packageLabel(s.batchIDs[0])+" upgraded successfully") + "\n")
 			b.WriteString("  " + helpStyle.Render(s.batchIDs[0]) + "\n\n")
 		} else if failCount > 0 {
-			b.WriteString("  " + warnStyle.Render(
-				fmt.Sprintf("Upgrade finished: %d succeeded, %d failed", successCount, failCount),
-			) + "\n")
-			if successCount > 0 {
-				b.WriteString("  " + helpStyle.Render(
-					fmt.Sprintf("%d package(s) were upgraded before the run completed.", successCount),
-				) + "\n")
-			}
-			if requiresElevation(s.err, s.output) || batchRequiresElevation(s.batchErrs, s.batchOutputs) {
-				b.WriteString("  " + helpStyle.Render("Some failed packages require administrator privileges.") + "\n")
-				if s.retryAction != nil && !isElevated() {
-					if warning := retryWarningText(s.retryAction); warning != "" {
-						b.WriteString("  " + helpStyle.Render(warning) + "\n")
-					}
-					b.WriteString("  " + helpStyle.Render(retryHintText(s.retryAction)) + "\n")
+			if s.batchTotal == 1 && s.err != nil {
+				b.WriteString("  " + errorStyle.Render("Error: "+s.err.Error()) + "\n")
+				if requiresElevation(s.err, s.output) && !appSettings.AutoElevate {
+					b.WriteString("  " + warnStyle.Render("This action requires administrator privileges.") + "\n")
 				}
 				b.WriteString("\n")
-			} else if s.retryAction != nil && !isElevated() {
-				if warning := retryWarningText(s.retryAction); warning != "" {
-					b.WriteString("  " + helpStyle.Render(warning) + "\n")
-				}
-				b.WriteString("  " + helpStyle.Render(retryHintText(s.retryAction)) + "\n\n")
 			} else {
+				b.WriteString("  " + warnStyle.Render(
+					fmt.Sprintf("Upgrade finished: %d succeeded, %d failed", successCount, failCount),
+				) + "\n")
+				if successCount > 0 {
+					b.WriteString("  " + helpStyle.Render(
+						fmt.Sprintf("%d package(s) were upgraded before the run completed.", successCount),
+					) + "\n")
+				}
 				b.WriteString("\n")
 			}
 		} else {
@@ -954,17 +883,7 @@ func (s upgradeScreen) view(width, height int) string {
 
 		if s.err != nil {
 			if s.output == "" && (s.batchTotal == 0 || (successCount == 0 && failCount == 0)) {
-				if requiresElevation(s.err, s.output) || batchRequiresElevation(s.batchErrs, s.batchOutputs) {
-					b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n")
-					b.WriteString("  " + helpStyle.Render("Some failed packages require administrator privileges.") + "\n")
-					if s.retryAction != nil && !isElevated() {
-						if warning := retryWarningText(s.retryAction); warning != "" {
-							b.WriteString("  " + helpStyle.Render(warning) + "\n")
-						}
-						b.WriteString("  " + helpStyle.Render(retryHintText(s.retryAction)) + "\n")
-					}
-					b.WriteString("\n")
-				} else if !strings.Contains(strings.ToLower(s.err.Error()), "cancelled") {
+				if !strings.Contains(strings.ToLower(s.err.Error()), "cancelled") {
 					b.WriteString("  " + warnStyle.Render("Completed with errors") + "\n\n")
 				}
 			}
@@ -991,11 +910,7 @@ func (s upgradeScreen) view(width, height int) string {
 		if logView := s.exec.doneView(width, height, 18); logView != "" {
 			b.WriteString("\n" + logView + "\n")
 		}
-		if s.retryAction != nil && !isElevated() {
-			b.WriteString("\n  " + helpStyle.Render("Press ctrl+e to retry failed items elevated, r to rescan, or tab to switch screens") + "\n")
-		} else {
-			b.WriteString("\n  " + helpStyle.Render("Press r to rescan or tab to switch screens") + "\n")
-		}
+		b.WriteString("\n  " + helpStyle.Render("Press r to rescan or tab to switch screens") + "\n")
 	}
 
 	return b.String()
@@ -1012,9 +927,8 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 		return s.exec.helpKeys()
 	case upgradeEmpty, upgradeDone:
 		bindings := append([]key.Binding(nil), s.exec.doneHelpKeys()...)
-		if s.retryAction != nil && !isElevated() {
-			bindings = append(bindings, keyRetryElevated, keyRefresh, keyTabs)
-			return bindings
+		if s.state == upgradeDone && s.err != nil && requiresElevation(s.err, s.output) && !appSettings.AutoElevate {
+			bindings = append(bindings, keyRetryElevated)
 		}
 		bindings = append(bindings, keyRefresh, keyTabs)
 		return bindings

@@ -61,7 +61,8 @@ type commandDoneMsg struct {
 type streamMsg string
 
 type streamDoneMsg struct {
-	err error
+	err       error
+	retryArgs []string
 }
 
 type packageDataChangedMsg struct {
@@ -157,19 +158,8 @@ func newApp(retryReq *retryRequest) app {
 	}
 	if retryReq != nil {
 		a.activeTab = tabForRetry(*retryReq)
-		switch retryReq.Op {
-		case retryOpInstall:
-			a.screens[tabs[a.activeTab].id] = newInstallScreenWithRetry(*retryReq)
-		case retryOpUpgrade:
-			a.screens[tabs[a.activeTab].id] = newUpgradeScreenWithRetry(*retryReq)
-		case retryOpUninstall:
-			a.screens[tabs[a.activeTab].id] = newPackagesScreenWithRetry(*retryReq)
-		default:
-			a.screens[tabs[a.activeTab].id] = createScreen(tabs[a.activeTab].id)
-		}
-	} else {
-		a.screens[tabs[0].id] = createScreen(tabs[0].id)
 	}
+	a.screens[tabs[a.activeTab].id] = createScreen(tabs[a.activeTab].id)
 	return a
 }
 
