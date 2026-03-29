@@ -21,6 +21,11 @@ type retryItem struct {
 	Version string `json:"version"`
 }
 
+type elevationRetryInfo struct {
+	req  *retryRequest
+	hard bool
+}
+
 type retryRequest struct {
 	Op retryOp `json:"op"`
 	// Single package
@@ -34,6 +39,16 @@ type retryRequest struct {
 
 func (r retryRequest) isBatch() bool {
 	return len(r.Items) > 0
+}
+
+func (r retryRequest) items() []retryItem {
+	if r.isBatch() {
+		return r.Items
+	}
+	if r.ID != "" {
+		return []retryItem{{ID: r.ID, Name: r.Name, Source: r.Source, Version: r.Version}}
+	}
+	return nil
 }
 
 func (r retryRequest) valid() bool {
@@ -66,27 +81,32 @@ func (r retryRequest) startupArgs() ([]string, error) {
 	return args, nil
 }
 
-func newRetryRequest(op retryOp, pkgs []Package) *retryRequest {
-	if len(pkgs) == 0 {
+func newRetryItem(pkg Package, version string) retryItem {
+	return retryItem{
+		ID:      pkg.ID,
+		Name:    pkg.Name,
+		Source:  pkg.Source,
+		Version: version,
+	}
+}
+
+func newRetryRequestForPackage(op retryOp, pkg Package, version string) *retryRequest {
+	return newRetryRequestFromItems(op, []retryItem{newRetryItem(pkg, version)})
+}
+
+func newRetryRequestFromItems(op retryOp, items []retryItem) *retryRequest {
+	if len(items) == 0 {
 		return nil
 	}
-	if len(pkgs) == 1 {
+	if len(items) == 1 {
+		item := items[0]
 		return &retryRequest{
 			Op:      op,
-			ID:      pkgs[0].ID,
-			Name:    pkgs[0].Name,
-			Source:  pkgs[0].Source,
-			Version: pkgs[0].Version,
+			ID:      item.ID,
+			Name:    item.Name,
+			Source:  item.Source,
+			Version: item.Version,
 		}
-	}
-	items := make([]retryItem, 0, len(pkgs))
-	for _, p := range pkgs {
-		items = append(items, retryItem{
-			ID:      p.ID,
-			Name:    p.Name,
-			Source:  p.Source,
-			Version: p.Version,
-		})
 	}
 	return &retryRequest{
 		Op:    op,

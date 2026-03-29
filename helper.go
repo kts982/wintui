@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/user"
 	"time"
 
 	"github.com/Microsoft/go-winio"
@@ -17,9 +18,9 @@ import (
 var pipeName string
 
 type helperRequest struct {
-	Action  string   `json:"action"`
-	Args    []string `json:"args"`
-	NonInt  bool     `json:"non_interactive"`
+	Action string   `json:"action"`
+	Args   []string `json:"args"`
+	NonInt bool     `json:"non_interactive"`
 }
 
 type helperResponse struct {
@@ -74,7 +75,7 @@ func handleHelperConnection(conn net.Conn) error {
 
 		// Execute the winget command
 		err = executeWingetForHelper(conn, req)
-		
+
 		// Send final status
 		if err != nil {
 			sendHelperResponse(conn, "error", err.Error())
@@ -106,10 +107,18 @@ func sendHelperResponse(w io.Writer, typ, data string) {
 
 func startElevatedHelper(ctx context.Context, pipeID string) (net.Listener, error) {
 	pipePath := `\\.\pipe\` + pipeID
-	// SDDL: Allow Authenticated Users (AU) Generic All (GA) access.
-	// This allows the non-elevated TUI to connect to the elevated listener.
+
+	u, err := user.Current()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current user: %w", err)
+	}
+
+	// SDDL: Allow the current user's SID Generic All (GA) access.
+	// This ensures only the user who spawned the TUI can connect to the pipe.
+	sddl := fmt.Sprintf("D:P(A;;GA;;;%s)", u.Uid)
+
 	config := &winio.PipeConfig{
-		SecurityDescriptor: "D:P(A;;GA;;;AU)",
+		SecurityDescriptor: sddl,
 	}
 	ln, err := winio.ListenPipe(pipePath, config)
 	if err != nil {
@@ -119,7 +128,7 @@ func startElevatedHelper(ctx context.Context, pipeID string) (net.Listener, erro
 	// Launch ourselves elevated
 	exe, _ := os.Executable()
 	args := []string{"helper", "--pipe", pipeID}
-	
+
 	err = relaunchElevatedWithArgs(exe, args)
 	if err != nil {
 		ln.Close()

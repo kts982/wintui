@@ -14,27 +14,39 @@ import (
 
 type elevationManager struct {
 	mu     sync.Mutex
+	initMu sync.Mutex
 	ln     net.Listener
 	conn   net.Conn
 	pipeID string
 }
 
 var globalElevator = &elevationManager{}
+var (
+	startElevatedHelperFunc = startElevatedHelper
+	helperAcceptTimeout     = 60 * time.Second
+)
 
 func (m *elevationManager) ensureHelper() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.initMu.Lock()
+	defer m.initMu.Unlock()
 
+	m.mu.Lock()
 	if m.conn != nil {
+		m.mu.Unlock()
 		return nil
 	}
+	m.mu.Unlock()
 
-	m.pipeID = "wintui-" + uuid.New().String()
-	ln, err := startElevatedHelper(context.Background(), m.pipeID)
+	pipeID := "wintui-" + uuid.New().String()
+	ln, err := startElevatedHelperFunc(context.Background(), pipeID)
 	if err != nil {
 		return err
 	}
+
+	m.mu.Lock()
+	m.pipeID = pipeID
 	m.ln = ln
+	m.mu.Unlock()
 
 	// Wait for helper to connect
 	// Set a timeout so we don't hang forever if UAC is cancelled
@@ -54,25 +66,28 @@ func (m *elevationManager) ensureHelper() error {
 	select {
 	case err := <-errChan:
 		return err
-	case <-time.After(60 * time.Second): // Long timeout for UAC
-		m.ln.Close()
-		m.ln = nil
+	case <-time.After(helperAcceptTimeout):
+		m.mu.Lock()
+		if m.ln != nil {
+			m.ln.Close()
+			m.ln = nil
+		}
+		m.mu.Unlock()
 		return fmt.Errorf("timeout waiting for elevated helper (UAC cancelled?)")
 	}
 }
 
-func (m *elevationManager) runCommandElevated(args ...string) (<-chan string, <-chan error) {
+func (m *elevationManager) runCommandElevated(args ...string) (<-chan string, <-chan error, error) {
+	if err := m.ensureHelper(); err != nil {
+		return nil, nil, err
+	}
+
 	outChan := make(chan string)
 	errChan := make(chan error, 1)
 
 	go func() {
 		defer close(outChan)
 		defer close(errChan)
-
-		if err := m.ensureHelper(); err != nil {
-			errChan <- err
-			return
-		}
 
 		m.mu.Lock()
 		conn := m.conn
@@ -81,7 +96,7 @@ func (m *elevationManager) runCommandElevated(args ...string) (<-chan string, <-
 		req := helperRequest{
 			Action: "winget",
 			Args:   args,
-			NonInt: true,
+			NonInt: false,
 		}
 		b, _ := json.Marshal(req)
 		conn.Write(b)
@@ -116,5 +131,5 @@ func (m *elevationManager) runCommandElevated(args ...string) (<-chan string, <-
 		}
 	}()
 
-	return outChan, errChan
+	return outChan, errChan, nil
 }

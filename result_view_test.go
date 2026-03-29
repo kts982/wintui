@@ -8,11 +8,11 @@ import (
 
 func TestFormatInstallResults(t *testing.T) {
 	tests := []struct {
-		name     string
-		err      error
-		output   string
-		want     string
-		notWant  string
+		name    string
+		err     error
+		output  string
+		want    string
+		notWant string
 	}{
 		{
 			name:   "success",
@@ -41,7 +41,7 @@ func TestFormatInstallResults(t *testing.T) {
 			s.err = tt.err
 			s.output = tt.output
 			s.packages = []Package{{Name: "App", ID: "App.ID"}}
-			
+
 			got := s.view(100, 20)
 			if !strings.Contains(got, tt.want) {
 				t.Errorf("view() = %q, want %q", got, tt.want)
@@ -62,7 +62,7 @@ func TestFormatUpgradeResults(t *testing.T) {
 	s.batchVersions = []string{"1.0.0"}
 	s.batchErrs = []error{nil}
 	s.batchOutputs = []string{"Successfully upgraded"}
-	
+
 	got := s.view(100, 20)
 	if !strings.Contains(got, "upgraded successfully") {
 		t.Errorf("view() = %q, want 'upgraded successfully'", got)
@@ -76,7 +76,7 @@ func TestFormatUninstallResults(t *testing.T) {
 	s.batchPackages = []Package{{Name: "Firefox", ID: "Mozilla.Firefox"}}
 	s.batchErrs = []error{nil}
 	s.batchOutputs = []string{"Successfully uninstalled"}
-	
+
 	got := s.view(100, 20)
 	if !strings.Contains(got, "uninstalled successfully") {
 		t.Errorf("view() = %q, want 'uninstalled successfully'", got)
@@ -113,5 +113,50 @@ func TestInstallDoneViewShowsCollapsedLogPreview(t *testing.T) {
 	got := s.view(100, 20)
 	if !strings.Contains(got, "Log preview — press l to expand") {
 		t.Errorf("view() = %q, want log preview hint", got)
+	}
+}
+
+func TestUpgradeDoneViewShowsBatchRetryHintForFailedElevationCandidates(t *testing.T) {
+	s := newUpgradeScreen()
+	s.state = upgradeDone
+	s.batchTotal = 2
+	s.batchIDs = []string{"Pkg.One", "Pkg.Two"}
+	s.batchSources = []string{"winget", "winget"}
+	s.batchVersions = []string{"1.0.0", ""}
+	s.batchErrs = []error{errors.New("installer failed with a fatal error (1603)"), nil}
+	s.batchOutputs = []string{"Upgrade failed with exit code: 1603", ""}
+	s.err = s.batchErrs[0]
+	s.packages = []Package{
+		{Name: "One", ID: "Pkg.One", Source: "winget"},
+		{Name: "Two", ID: "Pkg.Two", Source: "winget"},
+	}
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Retrying elevated may change installer behavior for some packages.") {
+		t.Fatalf("view() = %q, want upgrade retry warning", got)
+	}
+	if !strings.Contains(got, "Press Ctrl+e to relaunch elevated and retry the failed package.") {
+		t.Fatalf("view() = %q, want upgrade retry hint", got)
+	}
+}
+
+func TestUninstallDoneViewShowsBatchRetryHintForFailedElevationCandidates(t *testing.T) {
+	s := newPackagesScreen()
+	s.state = packagesDone
+	s.batchTotal = 2
+	s.batchPackages = []Package{
+		{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget"},
+		{Name: "Neovim", ID: "Neovim.Neovim", Source: "winget"},
+	}
+	s.batchErrs = []error{nil, errors.New("installer failed with a fatal error (1603)")}
+	s.batchOutputs = []string{"", "Uninstall failed with exit code: 1603"}
+	s.err = s.batchErrs[1]
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Retrying elevated may help remove packages blocked by permissions or services.") {
+		t.Fatalf("view() = %q, want uninstall retry warning", got)
+	}
+	if !strings.Contains(got, "Press Ctrl+e to relaunch elevated and retry the failed package.") {
+		t.Fatalf("view() = %q, want uninstall retry hint", got)
 	}
 }

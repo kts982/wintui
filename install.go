@@ -42,6 +42,7 @@ type installScreen struct {
 	installOutChan   <-chan string
 	installErrChan   <-chan error
 	retryArgs        []string
+	forceElevated    bool
 	ctx              context.Context
 	cancel           context.CancelFunc
 }
@@ -105,6 +106,23 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case startRetryMsg:
+		if msg.req.Op == retryOpInstall {
+			items := msg.req.items()
+			if len(items) > 0 {
+				item := items[0]
+				s.state = installExecuting
+				s.ctx, s.cancel = context.WithCancel(context.Background())
+				if item.Version != "" {
+					s.selectedVersions[packageSourceKey(item.ID, item.Source)] = item.Version
+				}
+				s.packages = []Package{{ID: item.ID, Name: item.Name, Source: item.Source, Version: item.Version}}
+				s.exec.appendSection("== " + item.Name + " ==")
+				s.retryArgs, s.installOutChan, s.installErrChan = installPackageStreamCtx(s.ctx, item.ID, item.Source, item.Version)
+				return s, tea.Batch(s.spinner.Tick, tickProgress(), awaitStream(s.retryArgs, s.installOutChan, s.installErrChan))
+			}
+		}
+
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
@@ -222,19 +240,8 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 		case installDone:
 			if msg.String() == "ctrl+e" {
-				if s.err != nil && requiresElevation(s.err, s.output) && len(s.retryArgs) > 0 {
-					s.state = installExecuting
-					s.progress, _ = s.progress.start()
-					s.exec.reset()
-					s.exec.appendSection("== Retrying Elevated ==")
-					out, err := globalElevator.runCommandElevated(s.retryArgs...)
-					s.installOutChan = out
-					s.installErrChan = err
-					return s, tea.Batch(
-						s.spinner.Tick,
-						tickProgress(),
-						awaitStream(s.retryArgs, s.installOutChan, s.installErrChan),
-					)
+				if next, cmd, handled := s.beginElevatedRetry(); handled {
+					return next, cmd
 				}
 			}
 			if msg.String() == "r" {
@@ -316,6 +323,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.retryArgs = msg.retryArgs
 		s.output = s.exec.fullOutput()
 		s.state = installDone
+		s.forceElevated = false
 		s.exec.setDoneExpanded(msg.err != nil)
 		cache.invalidate()
 		if msg.err == nil {
@@ -375,6 +383,69 @@ func (s *installScreen) setSelectedVersion(id, source, version string) {
 		return
 	}
 	s.selectedVersions[key] = version
+}
+
+func (s installScreen) retryInfo() elevationRetryInfo {
+	if isElevated() {
+		return elevationRetryInfo{}
+	}
+	pkg, ok := s.currentPackage()
+	if !ok {
+		return elevationRetryInfo{}
+	}
+	classification := classifyElevationRetry(s.err, s.output)
+	if classification == elevationRetryNone {
+		return elevationRetryInfo{}
+	}
+	return elevationRetryInfo{
+		req:  newRetryRequestForPackage(retryOpInstall, pkg, s.selectedVersionFor(pkg)),
+		hard: classification == elevationRetryHard,
+	}
+}
+
+func (s installScreen) beginElevatedRetry() (screen, tea.Cmd, bool) {
+	info := s.retryInfo()
+	if info.req == nil {
+		return s, nil, false
+	}
+
+	if err := globalElevator.ensureHelper(); err != nil {
+		if launchErr := relaunchElevatedRetry(*info.req); launchErr != nil {
+			s.err = fmt.Errorf("elevation helper failed: %v", err)
+			return s, nil, true
+		}
+		s.err = fmt.Errorf("launched separate elevated window: %v", err)
+		return s, nil, true
+	}
+
+	pkg, _ := s.currentPackage()
+	version := s.selectedVersionFor(pkg)
+	s.state = installExecuting
+	s.progress, _ = s.progress.start()
+	s.exec.reset()
+	s.exec.appendSection("== Retrying Elevated ==")
+	s.forceElevated = true
+	args, out, errCh, initErr := installPackageElevatedStreamCtx(pkg.ID, pkg.Source, version)
+	if initErr != nil {
+		if launchErr := relaunchElevatedRetry(*info.req); launchErr != nil {
+			s.state = installDone
+			s.err = fmt.Errorf("elevation helper failed: %v", initErr)
+			s.forceElevated = false
+			return s, nil, true
+		}
+		s.state = installDone
+		s.err = fmt.Errorf("launched separate elevated window: %v", initErr)
+		s.forceElevated = false
+		return s, nil, true
+	}
+	s.retryArgs = args
+	s.installOutChan = out
+	s.installErrChan = errCh
+	return s, tea.Batch(
+		s.spinner.Tick,
+		tickProgress(),
+		awaitStream(s.retryArgs, s.installOutChan, s.installErrChan),
+	), true
 }
 
 func (s installScreen) renderResultsBody(height int) string {
@@ -480,8 +551,13 @@ func (s installScreen) view(width, height int) string {
 	case installDone:
 		if s.err != nil {
 			b.WriteString("  " + errorStyle.Render("Error: "+s.err.Error()) + "\n")
-			if requiresElevation(s.err, s.output) && !appSettings.AutoElevate {
-				b.WriteString("  " + warnStyle.Render("This action requires administrator privileges.") + "\n")
+			if info := s.retryInfo(); info.req != nil {
+				if info.hard {
+					b.WriteString("  " + warnStyle.Render("This action requires administrator privileges.") + "\n")
+				} else {
+					b.WriteString("  " + warnStyle.Render(retryWarningText(info.req)) + "\n")
+				}
+				b.WriteString("  " + helpStyle.Render(retryHintText(info.req)) + "\n")
 			}
 			if pkg, ok := s.currentPackage(); ok {
 				meta := []string{fmt.Sprintf("%s  (%s)", pkg.Name, pkg.ID)}
@@ -540,7 +616,7 @@ func (s installScreen) helpKeys() []key.Binding {
 		return []key.Binding{keyConfirm, keyCancel}
 	case installDone:
 		bindings := append([]key.Binding(nil), s.exec.doneHelpKeys()...)
-		if s.err != nil && requiresElevation(s.err, s.output) && !appSettings.AutoElevate {
+		if info := s.retryInfo(); info.req != nil {
 			bindings = append(bindings, keyRetryElevated)
 		}
 		bindings = append(bindings, keySearchAgain, keyEsc, keyTabs)

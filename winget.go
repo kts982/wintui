@@ -14,11 +14,11 @@ import (
 
 // Package holds parsed package info from winget output.
 type Package struct {
-	Name      string
-	ID        string
-	Version   string
-	Available string
-	Source    string
+	Name      string `json:"name"`
+	ID        string `json:"id"`
+	Version   string `json:"version"`
+	Available string `json:"available,omitempty"`
+	Source    string `json:"source,omitempty"`
 }
 
 // FilterValue satisfies the bubbles list.Item interface (used for filtering).
@@ -300,6 +300,27 @@ func likelyBenefitsFromElevation(err error, output string) bool {
 	}
 	lower := strings.ToLower(err.Error() + "\n" + output)
 	return strings.Contains(lower, "1603") || strings.Contains(lower, "0x80070643")
+}
+
+type elevationRetryKind int
+
+const (
+	elevationRetryNone elevationRetryKind = iota
+	elevationRetrySoft
+	elevationRetryHard
+)
+
+func classifyElevationRetry(err error, output string) elevationRetryKind {
+	if err == nil {
+		return elevationRetryNone
+	}
+	if requiresElevation(err, output) {
+		return elevationRetryHard
+	}
+	if likelyBenefitsFromElevation(err, output) {
+		return elevationRetrySoft
+	}
+	return elevationRetryNone
 }
 
 func appendPreferredSourceArg(args []string, source string) []string {
@@ -677,6 +698,9 @@ func awaitStream(args []string, outChan <-chan string, errChan <-chan error) tea
 }
 
 func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string) (<-chan string, <-chan error) {
+	if ctx == nil {
+		panic("runWingetStreamCtx: ctx is nil! args: " + strings.Join(args, " "))
+	}
 	outChan := make(chan string)
 	errChan := make(chan error, 1)
 
@@ -748,7 +772,7 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string, <-chan error) {
 	// 1. Try running normally (non-elevated)
 	outChan, errChan := runWingetStreamCtx(ctx, false, args...)
-	
+
 	// Create a proxy channel so we can switch to elevated if needed
 	proxyOut := make(chan string)
 	proxyErr := make(chan error, 1)
@@ -764,17 +788,19 @@ func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string
 		}
 
 		err := <-errChan
-		if err != nil && (requiresElevation(err, strings.Join(lines, "\n")) || isElevated()) {
-			// If already elevated, the error is real. If not, try elevated.
-			if !isElevated() && appSettings.AutoElevate {
-				proxyOut <- "Elevation required. Requesting..."
-				eOut, eErr := globalElevator.runCommandElevated(args...)
-				for line := range eOut {
-					proxyOut <- line
-				}
-				proxyErr <- <-eErr
+		if err != nil && requiresElevation(err, strings.Join(lines, "\n")) && !isElevated() && appSettings.AutoElevate {
+			proxyOut <- "Elevation required. Requesting..."
+			eOut, eErr, initErr := globalElevator.runCommandElevated(args...)
+			if initErr != nil {
+				proxyOut <- fmt.Sprintf("Automatic elevation failed: %v", initErr)
+				proxyErr <- err
 				return
 			}
+			for line := range eOut {
+				proxyOut <- line
+			}
+			proxyErr <- <-eErr
+			return
 		}
 		proxyErr <- err
 	}()
@@ -788,10 +814,22 @@ func installPackageStreamCtx(ctx context.Context, id, source, version string) ([
 	return args, out, err
 }
 
+func installPackageElevatedStreamCtx(id, source, version string) ([]string, <-chan string, <-chan error, error) {
+	args := installCommandArgs(id, source, version)
+	out, err, initErr := globalElevator.runCommandElevated(args...)
+	return args, out, err, initErr
+}
+
 func upgradePackageStreamCtx(ctx context.Context, id, source, version string) ([]string, <-chan string, <-chan error) {
 	args := upgradeCommandArgs(id, source, version)
 	out, err := runActionSmartStreamCtx(ctx, args...)
 	return args, out, err
+}
+
+func upgradePackageElevatedStreamCtx(id, source, version string) ([]string, <-chan string, <-chan error, error) {
+	args := upgradeCommandArgs(id, source, version)
+	out, err, initErr := globalElevator.runCommandElevated(args...)
+	return args, out, err, initErr
 }
 
 func uninstallPackageStreamCtx(ctx context.Context, pkg Package) ([]string, <-chan string, <-chan error) {
@@ -839,4 +877,48 @@ func uninstallPackageStreamCtx(ctx context.Context, pkg Package) ([]string, <-ch
 	}()
 
 	return args, outChan, errChan
+}
+
+func uninstallPackageElevatedStreamCtx(pkg Package) ([]string, <-chan string, <-chan error, error) {
+	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall)
+	outChan := make(chan string)
+	errChan := make(chan error, 1)
+	go func() {
+		defer close(outChan)
+		defer close(errChan)
+
+		runAttempt := func(includePurge bool) (string, error, error) {
+			streamOut, streamErr, initErr := globalElevator.runCommandElevated(uninstallCommandArgs(pkg, includePurge)...)
+			if initErr != nil {
+				return "", nil, initErr
+			}
+			var lines []string
+			for line := range streamOut {
+				lines = append(lines, line)
+				outChan <- line
+			}
+			err, ok := <-streamErr
+			if !ok {
+				err = nil
+			}
+			return strings.Join(lines, "\n"), err, nil
+		}
+
+		output, err, initErr := runAttempt(appSettings.PurgeOnUninstall)
+		if initErr != nil {
+			errChan <- initErr
+			return
+		}
+		if shouldRetryUninstallWithoutPurge(err, output) {
+			outChan <- "Retrying without purge..."
+			_, err, initErr = runAttempt(false)
+			if initErr != nil {
+				errChan <- initErr
+				return
+			}
+		}
+		errChan <- err
+	}()
+
+	return args, outChan, errChan, nil
 }

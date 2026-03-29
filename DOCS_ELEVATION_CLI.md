@@ -1,40 +1,77 @@
 # WinTUI CLI & Elevation Strategy
 
-This document describes the high-level approach for implementing a headless CLI mode and a robust, single-prompt elevation strategy for WinTUI.
+This note describes the delivered shape of the headless CLI (`#17`) and the elevated helper approach (`#21`).
 
-## 1. Architectural Approach
+## Headless CLI
 
-### Headless CLI (Issue #17)
-WinTUI will transition from a TUI-only application to a multi-mode CLI using the **Cobra** library.
-- **Root Command:** Defaults to launching the interactive TUI if no subcommands are provided.
-- **Subcommands:** Implements `list`, `check`, `install`, `upgrade`, and `uninstall` for headless operation.
-- **Output:** Supports a `--json` flag for machine-readable output, suitable for scripts and CI/CD.
+WinTUI keeps Cobra as the entrypoint, but the scripting surface is exposed as **root flags**, not top-level action subcommands.
 
-### Elevated Helper (Issue #21)
-To avoid multiple UAC prompts and UI state loss, we implement an "Elevated Companion Process" model.
-- **Trigger:** When the TUI detects a need for admin rights (e.g., a 0x8a150056 error from winget), it launches a second instance of itself with the `runas` verb.
-- **Helper Mode:** The second instance runs in a special hidden mode: `wintui helper --pipe <pipe_name>`.
-- **IPC:** Communication between the non-elevated TUI and the elevated helper is handled via **Windows Named Pipes** using `go-winio`.
-- **Persistence:** The helper process remains active to handle subsequent elevated commands in a batch, requiring only one UAC prompt per session.
+### Supported flags
 
-## 2. Libraries
+| Flag | Behavior |
+|---|---|
+| `--check` | Print upgradeable packages and exit. Exit code `0` = up to date, `1` = updates available |
+| `--list` | Print installed packages and exit |
+| `--json` | Emit machine-readable JSON for `--check` or `--list` |
 
-### [spf13/cobra](https://github.com/spf13/cobra)
-- **Role:** CLI Framework.
-- **Reason:** Industry standard for Go CLIs; provides robust flag parsing, subcommand management, and automatic help generation.
+### Notes
 
-### [github.com/Microsoft/go-winio](https://github.com/Microsoft/go-winio)
-- **Role:** Windows Named Pipes & IPC.
-- **Reason:** Provides a `net.Conn` compatible interface for Windows-specific IPC, supporting security descriptors (SDDL) necessary for cross-privilege communication.
+- Launching the TUI remains the default when neither `--check` nor `--list` is provided.
+- `--check` and `--list` are mutually exclusive.
+- Existing retry startup flags still work:
+  - `--retry-op`
+  - `--id`
+  - `--name`
+  - `--source`
+  - `--package-version`
+  - `--retry-batch`
 
-## 3. Implementation Plan
+### Output contract
 
-1. **Phase 1: CLI Foundation**
-   - Refactor `main.go` to use Cobra.
-   - Implement `list` and `check` commands using existing `winget.go` logic.
-   - Add unit tests for command routing.
+- Human-readable mode prints a tabular view plus a summary count.
+- JSON mode writes package objects to stdout using lowercase keys (`name`, `id`, `version`, `available`, `source`).
+- No TUI is launched in CLI mode.
 
-2. **Phase 3: Elevation Bridge**
-   - Implement the `helper` subcommand.
-   - Setup bidirectional streaming over Named Pipes.
-   - Update `execution.go` and `winget.go` to route commands through the helper when necessary.
+## Elevated Helper
+
+WinTUI uses a built-in elevated companion process for batch-friendly retries without relaunching the whole app for every package.
+
+### Flow
+
+1. The non-elevated TUI detects a hard elevation error from `winget`.
+2. If `Auto Elevate` is enabled, it starts a named-pipe listener and launches:
+   - `wintui helper --pipe <pipe_name>`
+3. The elevated helper connects back over a Windows named pipe.
+4. Winget actions stream line-by-line through the helper so the existing execution log UI stays intact.
+5. The helper stays alive for subsequent elevated commands in the same session, so a batch needs at most one UAC prompt.
+
+### Security
+
+- The named pipe is created with an SDDL restricted to the current user SID.
+- The helper itself must be elevated before it will serve requests.
+
+### Fallbacks
+
+- If helper startup fails, WinTUI keeps the original package failure visible and still offers manual `Ctrl+e`.
+- Manual `Ctrl+e` first tries the helper path.
+- If the helper still cannot start, WinTUI falls back to the older full-process relaunch with retry arguments.
+
+### Retry behavior
+
+- Retries only target the failed/current items, never already-successful batch items.
+- Explicit target versions are preserved across retry startup.
+- Hard elevation errors and softer installer/MSI cases such as `1603` are both retry candidates, but the messaging differs:
+  - hard: administrator privileges are required
+  - soft: retrying elevated may help, but may change installer behavior
+
+## Libraries
+
+### `spf13/cobra`
+
+- Role: entrypoint and flag parsing
+- Why: stable Go CLI framework with help/version support
+
+### `github.com/Microsoft/go-winio`
+
+- Role: Windows named pipes
+- Why: `net.Conn`/`net.Listener` compatible IPC with Windows security descriptor support

@@ -22,6 +22,10 @@ var (
 	retrySource  string
 	retryVersion string
 	retryBatch   string
+
+	listFlag  bool
+	checkFlag bool
+	jsonFlag  bool
 )
 
 var rootCmd = &cobra.Command{
@@ -29,8 +33,17 @@ var rootCmd = &cobra.Command{
 	Short: "WinTUI - A terminal UI for winget",
 	Long:  `A modern, interactive terminal user interface for the Windows Package Manager (winget).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Version check is handled by Cobra's built-in version flag if we set it
-		// but we want to use our custom format or handle it specifically.
+		appSettings = LoadSettings()
+
+		if listFlag && checkFlag {
+			return fmt.Errorf("--list and --check cannot be used together")
+		}
+		if listFlag {
+			return runList()
+		}
+		if checkFlag {
+			return runCheck()
+		}
 
 		var req *retryRequest
 		if retryOpVal != "" {
@@ -52,9 +65,6 @@ var rootCmd = &cobra.Command{
 			}
 		}
 
-		// Load settings from config file
-		appSettings = LoadSettings()
-
 		p := tea.NewProgram(newApp(req))
 		_, err := p.Run()
 		return err
@@ -69,6 +79,10 @@ func init() {
 	rootCmd.Flags().StringVar(&retrySource, "source", "", "Package source to retry")
 	rootCmd.Flags().StringVar(&retryVersion, "package-version", "", "Package version to retry")
 	rootCmd.Flags().StringVar(&retryBatch, "retry-batch", "", "Base64 encoded batch retry data")
+
+	rootCmd.Flags().BoolVar(&checkFlag, "check", false, "Check for available upgrades")
+	rootCmd.Flags().BoolVar(&listFlag, "list", false, "List all installed packages")
+	rootCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 
 	// Compatibility with old -v flag
 	rootCmd.Flags().BoolP("version", "v", false, "show version")
