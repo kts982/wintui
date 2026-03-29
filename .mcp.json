@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "tui-driver": {
-      "command": "C:\\Users\\ktsio\\.cargo\\bin\\mcp-tui-driver.exe",
-      "args": []
-    }
-  }
-}
