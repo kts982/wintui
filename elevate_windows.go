@@ -10,6 +10,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const (
+	swHide       = 0
+	swShowNormal = 1
+)
+
 func relaunchElevatedRetry(req retryRequest) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -21,10 +26,10 @@ func relaunchElevatedRetry(req retryRequest) error {
 		return err
 	}
 
-	return relaunchAsAdmin(exe, args)
+	return relaunchAsAdmin(exe, args, swShowNormal)
 }
 
-func relaunchAsAdmin(exe string, args []string) error {
+func relaunchAsAdmin(exe string, args []string, showCmd int) error {
 	verb, err := windows.UTF16PtrFromString("runas")
 	if err != nil {
 		return err
@@ -46,7 +51,7 @@ func relaunchAsAdmin(exe string, args []string) error {
 		uintptr(unsafe.Pointer(file)),
 		uintptr(unsafe.Pointer(params)),
 		0,
-		1, // SW_SHOWNORMAL
+		uintptr(showCmd),
 	)
 	if r1 <= 32 {
 		if callErr != syscall.Errno(0) {

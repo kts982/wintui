@@ -139,6 +139,5 @@ func startElevatedHelper(ctx context.Context, pipeID string) (net.Listener, erro
 }
 
 func relaunchElevatedWithArgs(exe string, args []string) error {
-	// Re-using ShellExecute logic but for the helper
-	return relaunchAsAdmin(exe, args)
+	return relaunchAsAdmin(exe, args, swHide)
 }
