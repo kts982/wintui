@@ -82,3 +82,16 @@ func TestInstallDoneViewShowsSoftElevationRetryHint(t *testing.T) {
 		t.Fatalf("view() = %q, want retry hint", got)
 	}
 }
+
+func TestInstallEscDoesNotFakeCancelDuringElevatedExecution(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installExecuting
+	s.forceElevated = true
+
+	next, _ := s.update(keyMsg("esc"))
+	got := next.(installScreen)
+
+	if got.state != installExecuting {
+		t.Fatalf("state = %v, want installExecuting", got.state)
+	}
+}

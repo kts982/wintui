@@ -208,6 +208,9 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 		// Cancel running operation with esc
 		if msg.String() == "esc" && (s.state == upgradeLoading || s.state == upgradeExecuting) {
+			if s.state == upgradeExecuting && s.forceElevated {
+				return s, nil
+			}
 			if s.cancel != nil {
 				s.cancel()
 			}
@@ -326,7 +329,14 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.state != upgradeExecuting {
 			return s, nil
 		}
-		s.exec.appendLine(normalizeActionStreamLine(retryOpUpgrade, string(msg)))
+		line := string(msg)
+		switch {
+		case line == "Elevation required. Requesting...":
+			s.forceElevated = true
+		case strings.HasPrefix(line, "Automatic elevation failed:"):
+			s.forceElevated = false
+		}
+		s.exec.appendLine(normalizeActionStreamLine(retryOpUpgrade, line))
 		return s, awaitStream(s.retryArgs, s.upgradeOut, s.upgradeErr)
 
 	case streamDoneMsg:
@@ -1029,6 +1039,9 @@ func (s upgradeScreen) helpKeys() []key.Binding {
 	case upgradeLoading:
 		return []key.Binding{keyEscCancel}
 	case upgradeExecuting:
+		if s.forceElevated {
+			return s.exec.helpKeysWithoutCancel()
+		}
 		return s.exec.helpKeys()
 	case upgradeEmpty, upgradeDone:
 		bindings := append([]key.Binding(nil), s.exec.doneHelpKeys()...)

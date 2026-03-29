@@ -224,6 +224,9 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 		// Cancel
 		if msg.String() == "esc" && (s.state == packagesLoading || s.state == packagesUninstalling) {
+			if s.state == packagesUninstalling && s.forceElevated {
+				return s, nil
+			}
 			if s.cancel != nil {
 				s.cancel()
 			}
@@ -385,7 +388,14 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.state != packagesUninstalling {
 			return s, nil
 		}
-		s.exec.appendLine(normalizeActionStreamLine(retryOpUninstall, string(msg)))
+		line := string(msg)
+		switch {
+		case line == "Elevation required. Requesting...":
+			s.forceElevated = true
+		case strings.HasPrefix(line, "Automatic elevation failed:"):
+			s.forceElevated = false
+		}
+		s.exec.appendLine(normalizeActionStreamLine(retryOpUninstall, line))
 		return s, awaitStream(s.retryArgs, s.uninstallOut, s.uninstallErr)
 
 	case streamDoneMsg:
@@ -1047,6 +1057,9 @@ func (s packagesScreen) helpKeys() []key.Binding {
 	switch s.state {
 	case packagesLoading, packagesUninstalling:
 		if s.state == packagesUninstalling {
+			if s.forceElevated {
+				return s.exec.helpKeysWithoutCancel()
+			}
 			return s.exec.helpKeys()
 		}
 		return []key.Binding{keyEscCancel}

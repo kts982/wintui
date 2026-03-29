@@ -153,6 +153,9 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, textinput.Blink
 		}
 		if msg.String() == "esc" && s.state == installExecuting {
+			if s.forceElevated {
+				return s, nil
+			}
 			if s.cancel != nil {
 				s.cancel()
 			}
@@ -311,7 +314,14 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.state != installExecuting {
 			return s, nil
 		}
-		s.exec.appendLine(normalizeActionStreamLine(retryOpInstall, string(msg)))
+		line := string(msg)
+		switch {
+		case line == "Elevation required. Requesting...":
+			s.forceElevated = true
+		case strings.HasPrefix(line, "Automatic elevation failed:"):
+			s.forceElevated = false
+		}
+		s.exec.appendLine(normalizeActionStreamLine(retryOpInstall, line))
 		return s, awaitStream(s.retryArgs, s.installOutChan, s.installErrChan)
 
 	case streamDoneMsg:
@@ -609,6 +619,9 @@ func (s installScreen) helpKeys() []key.Binding {
 	case installSearching:
 		return []key.Binding{keyEscCancel}
 	case installExecuting:
+		if s.forceElevated {
+			return s.exec.helpKeysWithoutCancel()
+		}
 		return s.exec.helpKeys()
 	case installResults:
 		return []key.Binding{keyScroll, keyDetails, keyEnter, keyEsc}
