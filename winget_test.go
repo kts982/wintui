@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -297,4 +298,16 @@ func TestActionCommandArgs(t *testing.T) {
 			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
 		}
 	})
+}
+func TestAutoElevateHints(t *testing.T) {
+	err := errors.New("winget error")
+	if !requiresElevation(err, "0x8a150056") {
+		t.Errorf("expected 0x8a150056 to require elevation")
+	}
+	if requiresElevation(err, "1603") {
+		t.Errorf("expected 1603 to NOT strictly require elevation")
+	}
+	if !likelyBenefitsFromElevation(err, "1603") {
+		t.Errorf("expected 1603 to likely benefit from elevation")
+	}
 }

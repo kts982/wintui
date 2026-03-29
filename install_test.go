@@ -64,3 +64,34 @@ func TestInstallDetailOverlayConsumesEnter(t *testing.T) {
 		t.Fatal("detail overlay closed unexpectedly")
 	}
 }
+
+func TestInstallDoneViewShowsSoftElevationRetryHint(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installDone
+	s.err = assertErr("installer failed with a fatal error (1603)")
+	s.output = "Install failed with exit code: 1603"
+	s.packages = []Package{
+		{Name: "Neovim", ID: "Neovim.Neovim", Source: "winget"},
+	}
+
+	got := s.view(120, 24)
+	if !strings.Contains(got, "Retrying elevated may install machine-wide instead of per-user for some packages.") {
+		t.Fatalf("view() = %q, want soft elevation warning", got)
+	}
+	if !strings.Contains(got, "Press Ctrl+e to relaunch elevated and retry the failed package.") {
+		t.Fatalf("view() = %q, want retry hint", got)
+	}
+}
+
+func TestInstallEscDoesNotFakeCancelDuringElevatedExecution(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installExecuting
+	s.forceElevated = true
+
+	next, _ := s.update(keyMsg("esc"))
+	got := next.(installScreen)
+
+	if got.state != installExecuting {
+		t.Fatalf("state = %v, want installExecuting", got.state)
+	}
+}

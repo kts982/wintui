@@ -8,6 +8,7 @@
 A terminal user interface for **winget** (Windows Package Manager), built with Go and the [Charmbracelet](https://charm.sh) TUI libraries.
 
 Browse, install, upgrade, and manage Windows packages without leaving the terminal.
+WinTUI also includes a headless CLI mode for scripts and a built-in auto-elevation helper that can keep a batch moving with a single UAC prompt.
 
 ![WinTUI demo](demo.gif)
 
@@ -44,6 +45,7 @@ Portable `winget` manifest files live under [`packaging/winget`](./packaging/win
 - **Install** — search and install new packages with live streaming output
 - **Package Details** — inspect package metadata, choose an explicit target version, and compare installed vs. target upgrade details (`i`, `v`)
 - **Export / Import** — export installed packages to JSON (`e`) and restore on another machine (`m`)
+- **Headless CLI** — use `--check`, `--list`, and `--json` for scripts, Task Scheduler, or CI without launching the TUI
 
 **System Utilities**
 - **Health Check** — shells, dev tools, runtimes, package managers, disk space, Defender, developer mode
@@ -58,7 +60,7 @@ Portable `winget` manifest files live under [`packaging/winget`](./packaging/win
 - Streaming execution view for install, upgrade, and uninstall operations
 - Post-run log preview with `l` to expand/collapse execution output
 - Cancellable operations (`Esc`)
-- `Ctrl+e` to retry failed elevation-candidate actions; batch retries only rerun failed items
+- Built-in `Auto Elevate` support for hard admin-required actions, plus `Ctrl+e` to retry failed elevation-candidate actions; batch retries only rerun failed items
 - Context-aware help bar
 
 ## Usage
@@ -68,6 +70,24 @@ Portable `winget` manifest files live under [`packaging/winget`](./packaging/win
 ```
 
 > **Tip:** Some operations require administrator privileges. Run in an elevated terminal for full functionality, or press `Ctrl+e` when WinTUI offers an elevated retry. The tab bar shows `● admin` / `● user` status.
+
+### Headless CLI
+
+```powershell
+# Human-readable upgrade check
+.\wintui.exe --check
+
+# Exit code 1 when updates are available
+.\wintui.exe --check || echo "Updates available"
+
+# Machine-readable output
+.\wintui.exe --check --json
+.\wintui.exe --list --json > packages.json
+```
+
+Further documentation:
+- [CLI reference](docs/cli.md)
+- [Elevation and retry behavior](docs/elevation.md)
 
 ## Keyboard Shortcuts
 
@@ -107,10 +127,17 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 | Skip Dependencies | don't process dependencies |
 | Purge on Uninstall | delete all package files |
 | Include Unknown Versions | show packages with unknown versions |
+| Auto Elevate | automatically request admin rights for hard elevation errors |
 
 `Action Mode` applies to install, upgrade, and uninstall requests where the underlying package supports it.
 
 `Default Source` controls install/search preference only; uninstall works against the installed package database regardless of that setting.
+
+`Auto Elevate` tries the built-in elevated helper automatically for hard permission errors. When a run still fails, `Ctrl+e` retries only the failed elevation-candidate items.
+
+For deeper behavior details and examples, see:
+- [CLI reference](docs/cli.md)
+- [Elevation and retry behavior](docs/elevation.md)
 
 ## Development
 

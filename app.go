@@ -61,7 +61,8 @@ type commandDoneMsg struct {
 type streamMsg string
 
 type streamDoneMsg struct {
-	err error
+	err       error
+	retryArgs []string
 }
 
 type packageDataChangedMsg struct {
@@ -123,6 +124,10 @@ type logoRow struct {
 	vel float64 // current velocity
 }
 
+type startRetryMsg struct {
+	req retryRequest
+}
+
 type app struct {
 	activeTab  int
 	screens    map[screenID]screen
@@ -133,6 +138,7 @@ type app struct {
 	logoRows   []logoRow
 	logoSpring harmonica.Spring
 	logoTime   float64 // accumulated time for wave target
+	retryReq   *retryRequest
 }
 
 func newApp(retryReq *retryRequest) app {
@@ -154,22 +160,12 @@ func newApp(retryReq *retryRequest) app {
 		height:     24,
 		logoRows:   rows,
 		logoSpring: harmonica.NewSpring(harmonica.FPS(15), 2.0, 0.8),
+		retryReq:   retryReq,
 	}
 	if retryReq != nil {
 		a.activeTab = tabForRetry(*retryReq)
-		switch retryReq.Op {
-		case retryOpInstall:
-			a.screens[tabs[a.activeTab].id] = newInstallScreenWithRetry(*retryReq)
-		case retryOpUpgrade:
-			a.screens[tabs[a.activeTab].id] = newUpgradeScreenWithRetry(*retryReq)
-		case retryOpUninstall:
-			a.screens[tabs[a.activeTab].id] = newPackagesScreenWithRetry(*retryReq)
-		default:
-			a.screens[tabs[a.activeTab].id] = createScreen(tabs[a.activeTab].id)
-		}
-	} else {
-		a.screens[tabs[0].id] = createScreen(tabs[0].id)
 	}
+	a.screens[tabs[a.activeTab].id] = createScreen(tabs[a.activeTab].id)
 	return a
 }
 
@@ -180,7 +176,12 @@ func logoTick() tea.Cmd {
 }
 
 func (a app) Init() tea.Cmd {
-	return tea.Batch(a.wrapScreenCmd(a.currentScreenID(), a.activeScreen().init()), logoTick())
+	cmds := []tea.Cmd{a.wrapScreenCmd(a.currentScreenID(), a.activeScreen().init()), logoTick()}
+	if a.retryReq != nil {
+		req := *a.retryReq
+		cmds = append(cmds, func() tea.Msg { return startRetryMsg{req: req} })
+	}
+	return tea.Batch(cmds...)
 }
 
 func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

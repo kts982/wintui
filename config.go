@@ -34,6 +34,9 @@ type Settings struct {
 
 	// Default source: "winget", "msstore", or "" (all)
 	Source string `json:"source"`
+
+	// Attempt to automatically elevate commands that require admin
+	AutoElevate bool `json:"auto_elevate"`
 }
 
 // DefaultSettings returns settings with sensible defaults.
@@ -42,6 +45,7 @@ func DefaultSettings() Settings {
 		Scope:       "",
 		InstallMode: "",
 		Source:      "winget",
+		AutoElevate: true,
 	}
 }
 
@@ -278,6 +282,15 @@ var settingDefs = []settingDef{
 		enabledHint:  "Upgrade scans will include packages with unknown installed versions.",
 		disabledHint: "Upgrade scans will hide packages whose installed version is unknown.",
 	},
+	{
+		key:          "auto_elevate",
+		label:        "Auto Elevate",
+		desc:         "Automatically request administrator rights",
+		detail:       "When a command fails with an elevation error, WinTUI can automatically attempt to run it elevated.\nTurn this off if you prefer to manually trigger elevation.",
+		stype:        settingToggle,
+		enabledHint:  "WinTUI will automatically prompt for elevation when needed.",
+		disabledHint: "Elevation must be manually triggered (Ctrl+E on failure).",
+	},
 }
 
 // getValue returns the current value for a setting key.
@@ -301,6 +314,8 @@ func (s Settings) getValue(key string) string {
 		return boolStr(s.PurgeOnUninstall)
 	case "include_unknown":
 		return boolStr(s.IncludeUnknown)
+	case "auto_elevate":
+		return boolStr(s.AutoElevate)
 	}
 	return ""
 }
@@ -326,6 +341,8 @@ func (s *Settings) setValue(key, val string) {
 		s.PurgeOnUninstall = val == "true"
 	case "include_unknown":
 		s.IncludeUnknown = val == "true"
+	case "auto_elevate":
+		s.AutoElevate = val == "true"
 	}
 }
 

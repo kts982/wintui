@@ -82,6 +82,14 @@ func (l executionLog) helpKeys() []key.Binding {
 	return bindings
 }
 
+func (l executionLog) helpKeysWithoutCancel() []key.Binding {
+	bindings := []key.Binding{keyScroll}
+	if !l.follow {
+		bindings = append(bindings, keyFollow)
+	}
+	return bindings
+}
+
 func (l executionLog) doneHelpKeys() []key.Binding {
 	if !l.hasOutput() {
 		return nil

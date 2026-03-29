@@ -261,3 +261,23 @@ func TestDetailOverlayBlocksGlobalTabSwitchShortcuts(t *testing.T) {
 		t.Fatalf("activeTab = %d, want %d", got.activeTab, 2)
 	}
 }
+func TestStartRetryMsgTriggersActionImmediately(t *testing.T) {
+	req := retryRequest{
+		Op: retryOpInstall,
+		ID: "Test.App",
+	}
+	a := newApp(&req)
+
+	cmd := a.Init()
+	if cmd == nil {
+		t.Fatalf("Expected Init to return a batch command, got nil")
+	}
+
+	msg := startRetryMsg{req: req}
+	s := newInstallScreen()
+	newS, _ := s.update(msg)
+
+	if newS.(installScreen).state != installExecuting {
+		t.Fatalf("Expected state to be installExecuting, got %v", newS.(installScreen).state)
+	}
+}
