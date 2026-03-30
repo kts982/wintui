@@ -363,7 +363,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.err = s.batchErr
 		s.state = upgradeDone
 		s.forceElevated = false
-		s.exec.setDoneExpanded(s.batchErr != nil)
+		s.exec.setDoneExpanded(true)
 		cache.invalidate()
 		return s, func() tea.Msg { return packageDataChangedMsg{origin: screenUpgrade} }
 

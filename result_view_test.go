@@ -102,17 +102,32 @@ func TestFormatUninstallResultsPrefersDecodedError(t *testing.T) {
 	}
 }
 
-func TestInstallDoneViewShowsCollapsedLogPreview(t *testing.T) {
+func TestInstallDoneViewShowsExpandedLogByDefault(t *testing.T) {
 	s := newInstallScreen()
 	s.state = installDone
 	s.packages = []Package{{Name: "Notepad++", ID: "Notepad++.Notepad++", Source: "winget"}}
 	s.exec.appendSection("== Notepad++ ==")
 	s.exec.appendLine("Successfully installed")
+	s.exec.setDoneExpanded(true)
+
+	got := s.view(100, 20)
+	if !strings.Contains(got, "Execution log — press l to hide") {
+		t.Errorf("view() = %q, want expanded log hint", got)
+	}
+}
+
+func TestInstallDoneViewCollapsesLogOnToggle(t *testing.T) {
+	s := newInstallScreen()
+	s.state = installDone
+	s.packages = []Package{{Name: "Notepad++", ID: "Notepad++.Notepad++", Source: "winget"}}
+	s.exec.appendSection("== Notepad++ ==")
+	s.exec.appendLine("Successfully installed")
+	s.exec.setDoneExpanded(true)
 	s.exec.setDoneExpanded(false)
 
 	got := s.view(100, 20)
 	if !strings.Contains(got, "Log preview — press l to expand") {
-		t.Errorf("view() = %q, want log preview hint", got)
+		t.Errorf("view() = %q, want collapsed log preview hint", got)
 	}
 }
 
@@ -135,7 +150,7 @@ func TestUpgradeDoneViewShowsBatchRetryHintForFailedElevationCandidates(t *testi
 	if !strings.Contains(got, "Retrying elevated may change installer behavior for some packages.") {
 		t.Fatalf("view() = %q, want upgrade retry warning", got)
 	}
-	if !strings.Contains(got, "Press Ctrl+e to relaunch elevated and retry the failed package.") {
+	if !strings.Contains(got, "Press Ctrl+e to retry the failed package with elevated privileges.") {
 		t.Fatalf("view() = %q, want upgrade retry hint", got)
 	}
 }
@@ -156,7 +171,7 @@ func TestUninstallDoneViewShowsBatchRetryHintForFailedElevationCandidates(t *tes
 	if !strings.Contains(got, "Retrying elevated may help remove packages blocked by permissions or services.") {
 		t.Fatalf("view() = %q, want uninstall retry warning", got)
 	}
-	if !strings.Contains(got, "Press Ctrl+e to relaunch elevated and retry the failed package.") {
+	if !strings.Contains(got, "Press Ctrl+e to retry the failed package with elevated privileges.") {
 		t.Fatalf("view() = %q, want uninstall retry hint", got)
 	}
 }

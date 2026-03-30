@@ -334,7 +334,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.output = s.exec.fullOutput()
 		s.state = installDone
 		s.forceElevated = false
-		s.exec.setDoneExpanded(msg.err != nil)
+		s.exec.setDoneExpanded(true)
 		cache.invalidate()
 		if msg.err == nil {
 			return s, func() tea.Msg { return packageDataChangedMsg{origin: screenInstall} }

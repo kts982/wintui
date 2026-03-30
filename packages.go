@@ -422,7 +422,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.err = s.batchErr
 		s.state = packagesDone
 		s.forceElevated = false
-		s.exec.setDoneExpanded(s.batchErr != nil)
+		s.exec.setDoneExpanded(true)
 		s.selected = make(map[string]bool)
 		successCount, _ := batchResultCounts(s.batchErrs)
 		if successCount > 0 {

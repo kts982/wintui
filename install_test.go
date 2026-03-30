@@ -78,7 +78,7 @@ func TestInstallDoneViewShowsSoftElevationRetryHint(t *testing.T) {
 	if !strings.Contains(got, "Retrying elevated may install machine-wide instead of per-user for some packages.") {
 		t.Fatalf("view() = %q, want soft elevation warning", got)
 	}
-	if !strings.Contains(got, "Press Ctrl+e to relaunch elevated and retry the failed package.") {
+	if !strings.Contains(got, "Press Ctrl+e to retry the failed package with elevated privileges.") {
 		t.Fatalf("view() = %q, want retry hint", got)
 	}
 }

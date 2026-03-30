@@ -770,7 +770,19 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 }
 
 func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string, <-chan error) {
-	// 1. Try running normally (non-elevated)
+	// When silent mode + auto-elevate are both on and we're not already
+	// elevated, run everything through the elevated helper upfront.
+	// This avoids UAC popups from installers that elevate themselves
+	// (e.g. MSI packages with ElevationRequirement: elevatesSelf).
+	if appSettings.InstallMode == "silent" && appSettings.AutoElevate && !isElevated() {
+		out, errCh, initErr := globalElevator.runCommandElevated(args...)
+		if initErr == nil {
+			return out, errCh
+		}
+		// Helper failed to start — fall through to normal path.
+	}
+
+	// Try running normally (non-elevated)
 	outChan, errChan := runWingetStreamCtx(ctx, false, args...)
 
 	// Create a proxy channel so we can switch to elevated if needed

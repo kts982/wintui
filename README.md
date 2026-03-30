@@ -16,6 +16,12 @@ WinTUI also includes a headless CLI mode for scripts and a built-in auto-elevati
 
 **Requirements:** Windows 10/11 with winget installed.
 
+```powershell
+winget install kts982.WinTUI
+```
+
+Or install manually:
+
 ```bash
 # Run a release binary
 .\wintui.exe
@@ -34,8 +40,6 @@ Pre-built binaries are available on [GitHub Releases](https://github.com/kts982/
 ```bash
 gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 ```
-
-Portable `winget` manifest files live under [`packaging/winget`](./packaging/winget). A submission to the community `winget-pkgs` repository is pending approval.
 
 ## Features
 

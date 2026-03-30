@@ -139,7 +139,7 @@ func retryHintText(req *retryRequest) string {
 	if req != nil && req.isBatch() {
 		target = "the failed packages"
 	}
-	return fmt.Sprintf("Press Ctrl+e to relaunch elevated and retry %s.", target)
+	return fmt.Sprintf("Press Ctrl+e to retry %s with elevated privileges.", target)
 }
 
 func retryWarningText(req *retryRequest) string {

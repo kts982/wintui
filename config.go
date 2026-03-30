@@ -195,7 +195,7 @@ var settingDefs = []settingDef{
 		},
 		choiceHints: map[string]string{
 			"":            "Use the package's normal installer behavior.",
-			"silent":      "Request a quiet run with minimal or no UI.",
+			"silent":      "Request a quiet run with no UI. Combined with Auto Elevate, all actions run elevated upfront.",
 			"interactive": "Allow installer dialogs and prompts.",
 		},
 	},
@@ -286,10 +286,10 @@ var settingDefs = []settingDef{
 		key:          "auto_elevate",
 		label:        "Auto Elevate",
 		desc:         "Automatically request administrator rights",
-		detail:       "When a command fails with an elevation error, WinTUI can automatically attempt to run it elevated.\nTurn this off if you prefer to manually trigger elevation.",
+		detail:       "When enabled, WinTUI automatically handles elevation.\nIn silent mode, all actions run elevated upfront to avoid UAC popups.\nIn other modes, elevation is retried automatically on failure.\nTurn this off to stay non-elevated and use Ctrl+E manually.",
 		stype:        settingToggle,
-		enabledHint:  "WinTUI will automatically prompt for elevation when needed.",
-		disabledHint: "Elevation must be manually triggered (Ctrl+E on failure).",
+		enabledHint:  "WinTUI will handle elevation automatically. In silent mode, all actions run elevated.",
+		disabledHint: "All actions run non-elevated. Use Ctrl+E to retry on failure.",
 	},
 }
 
