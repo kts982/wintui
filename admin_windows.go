@@ -1,14 +1,10 @@
 package main
 
-import (
-	"sync"
-
-	"golang.org/x/sys/windows"
-)
+import "golang.org/x/sys/windows"
 
 // isElevated reports whether the current process is running with
 // administrator (elevated) privileges on Windows.
-var isElevated = sync.OnceValue(func() bool {
-	t := windows.GetCurrentProcessToken()
-	return t.IsElevated()
-})
+// It is a variable so tests can override it.
+var isElevated = func() bool {
+	return windows.GetCurrentProcessToken().IsElevated()
+}

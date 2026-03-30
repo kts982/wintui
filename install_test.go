@@ -66,6 +66,7 @@ func TestInstallDetailOverlayConsumesEnter(t *testing.T) {
 }
 
 func TestInstallDoneViewShowsSoftElevationRetryHint(t *testing.T) {
+	forceNotElevated(t)
 	s := newInstallScreen()
 	s.state = installDone
 	s.err = assertErr("installer failed with a fatal error (1603)")

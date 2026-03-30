@@ -64,6 +64,7 @@ func TestNewRetryRequestFromItemsPreservesSingleTargetVersion(t *testing.T) {
 }
 
 func TestUpgradeRetryInfoUsesOnlyFailedElevationCandidates(t *testing.T) {
+	forceNotElevated(t)
 	s := newUpgradeScreen()
 	s.batchIDs = []string{"Pkg.One", "Pkg.Two", "Pkg.Three"}
 	s.batchSources = []string{"winget", "winget", "winget"}
@@ -104,6 +105,7 @@ func TestUpgradeRetryInfoUsesOnlyFailedElevationCandidates(t *testing.T) {
 }
 
 func TestPackagesRetryInfoUsesOnlyFailedElevationCandidates(t *testing.T) {
+	forceNotElevated(t)
 	s := newPackagesScreen()
 	s.batchPackages = []Package{
 		{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget"},

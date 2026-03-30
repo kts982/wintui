@@ -202,6 +202,16 @@ func (e fixedErr) Error() string { return string(e) }
 
 func assertErr(msg string) error { return fixedErr(msg) }
 
+// forceNotElevated overrides isElevated to return false for the duration
+// of the test, restoring the original afterwards. This is needed because CI
+// runners are typically elevated, which causes retryInfo() to short-circuit.
+func forceNotElevated(t *testing.T) {
+	t.Helper()
+	orig := isElevated
+	isElevated = func() bool { return false }
+	t.Cleanup(func() { isElevated = orig })
+}
+
 func TestActionCommandArgs(t *testing.T) {
 	original := appSettings
 	defer func() { appSettings = original }()

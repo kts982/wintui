@@ -132,6 +132,7 @@ func TestInstallDoneViewCollapsesLogOnToggle(t *testing.T) {
 }
 
 func TestUpgradeDoneViewShowsBatchRetryHintForFailedElevationCandidates(t *testing.T) {
+	forceNotElevated(t)
 	s := newUpgradeScreen()
 	s.state = upgradeDone
 	s.batchTotal = 2
@@ -156,6 +157,7 @@ func TestUpgradeDoneViewShowsBatchRetryHintForFailedElevationCandidates(t *testi
 }
 
 func TestUninstallDoneViewShowsBatchRetryHintForFailedElevationCandidates(t *testing.T) {
+	forceNotElevated(t)
 	s := newPackagesScreen()
 	s.state = packagesDone
 	s.batchTotal = 2
