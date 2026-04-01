@@ -67,6 +67,7 @@ var rootCmd = &cobra.Command{
 
 		p := tea.NewProgram(newApp(req))
 		_, err := p.Run()
+		globalElevator.shutdown()
 		return err
 	},
 }

@@ -3,8 +3,10 @@ wintui.exe~
 *.exe
 rsrc_windows*.syso
 /.dev/
+/.agents/
 /.claude/
 /.codex/
+/.gemini/
 /.gocache/
 /.mcp.json
 /.winget-pkgs-submission/

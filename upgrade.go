@@ -231,6 +231,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					s.batchOutputs,
 				)
 				s.exec.setDoneExpanded(true)
+				s.exec.setDoneSize(s.width, s.height, 18)
 			}
 			return s, nil
 		}
@@ -364,6 +365,7 @@ func (s upgradeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.state = upgradeDone
 		s.forceElevated = false
 		s.exec.setDoneExpanded(true)
+		s.exec.setDoneSize(s.width, s.height, 18)
 		cache.invalidate()
 		return s, func() tea.Msg { return packageDataChangedMsg{origin: screenUpgrade} }
 

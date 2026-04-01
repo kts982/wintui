@@ -228,6 +228,7 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 		"0x8a150019": "package version already installed",
 		"0x8a15002b": "install technology differs from installed version (package manages its own updates)",
 		"0x8a15002c": "some packages failed to upgrade",
+		"0x8a150006": "installer failed (the installer process was terminated)",
 		"0x8a150056": "package requires administrator privileges to install",
 		"0x80073d28": "installer requires administrator privileges (try running as admin)",
 		"0x80073cf3": "package install failed (conflicting package)",
@@ -237,6 +238,7 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 		"1638":       "another version of this product is already installed",
 		"3010":       "installer completed and a restart is required",
 		"1641":       "installer initiated a restart",
+		"3221226525": "installer was terminated (close the app before upgrading)",
 	}
 
 	code, desc := matchKnownWingetErrorCode(strings.Join([]string{msg, stderr, stdout}, "\n"), replacements)

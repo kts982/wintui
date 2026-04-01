@@ -247,6 +247,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.selected = make(map[string]bool)
 				s.state = packagesDone
 				s.exec.setDoneExpanded(true)
+				s.exec.setDoneSize(s.width, s.height, 18)
 			}
 			return s, nil
 		}
@@ -423,6 +424,7 @@ func (s packagesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.state = packagesDone
 		s.forceElevated = false
 		s.exec.setDoneExpanded(true)
+		s.exec.setDoneSize(s.width, s.height, 18)
 		s.selected = make(map[string]bool)
 		successCount, _ := batchResultCounts(s.batchErrs)
 		if successCount > 0 {

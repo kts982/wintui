@@ -155,6 +155,17 @@ func (l *executionLog) setSize(width, height int) {
 	l.vp.SetHeight(vpH)
 }
 
+// setDoneSize adjusts the viewport height for the done state where
+// extra chrome (result summary, hints) takes more vertical space.
+func (l *executionLog) setDoneSize(width, height, reserve int) {
+	l.vp.SetWidth(width - 8)
+	vpH := height - reserve
+	if vpH < 5 {
+		vpH = 5
+	}
+	l.vp.SetHeight(vpH)
+}
+
 func (l executionLog) view(width, height int) string {
 	return indentBlock(l.vp.View(), 2)
 }

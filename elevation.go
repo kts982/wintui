@@ -77,6 +77,21 @@ func (m *elevationManager) ensureHelper() error {
 	}
 }
 
+// shutdown closes the helper connection and listener, causing the
+// elevated helper process to exit cleanly.
+func (m *elevationManager) shutdown() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.conn != nil {
+		m.conn.Close()
+		m.conn = nil
+	}
+	if m.ln != nil {
+		m.ln.Close()
+		m.ln = nil
+	}
+}
+
 func (m *elevationManager) runCommandElevated(args ...string) (<-chan string, <-chan error, error) {
 	if err := m.ensureHelper(); err != nil {
 		return nil, nil, err

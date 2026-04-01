@@ -164,6 +164,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.err = fmt.Errorf("cancelled")
 			s.state = installDone
 			s.exec.setDoneExpanded(true)
+			s.exec.setDoneSize(s.width, s.height, 14)
 			return s, nil
 		}
 
@@ -335,6 +336,7 @@ func (s installScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.state = installDone
 		s.forceElevated = false
 		s.exec.setDoneExpanded(true)
+		s.exec.setDoneSize(s.width, s.height, 14)
 		cache.invalidate()
 		if msg.err == nil {
 			return s, func() tea.Msg { return packageDataChangedMsg{origin: screenInstall} }
