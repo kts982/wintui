@@ -53,11 +53,7 @@ type workspaceScreen struct {
 	filter           listFilter
 	detail           detailPanel
 	exec             executionLog
-	pendingAction    string // "upgrade" or "uninstall"
-	batchItems       []batchItem
-	batchIdx         int                   // index of the currently running item
-	batchMap         map[string]*batchItem // keyed by packageSourceKey for list lookup
-	showResultModal  bool
+	modal            *execModal
 	streamOut        <-chan string
 	streamErr        <-chan error
 	err              error
@@ -197,33 +193,40 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s.updateDetail(msg)
 		}
 
-		// Confirm state.
-		if s.state == workspaceConfirm {
-			switch msg.String() {
-			case "enter":
-				return s.startBatch()
-			case "esc":
-				s.state = workspaceReady
-				s.batchItems = nil
-				s.pendingAction = ""
-				return s, nil
-			}
-			return s, nil
-		}
-
-		// Done state — result modal or post-close list.
-		if s.state == workspaceDone {
-			if s.showResultModal {
+		// Modal states (confirm, executing, complete).
+		if s.modal != nil {
+			switch s.modal.phase {
+			case execPhaseReview:
 				switch msg.String() {
-				case "enter", "esc":
-					s.showResultModal = false
+				case "enter":
+					return s.startBatch()
+				case "esc":
+					s.modal = nil
+					s.state = workspaceReady
+					return s, nil
+				}
+				return s, nil
+			case execPhaseRunning:
+				if msg.String() == "esc" {
+					if s.cancel != nil {
+						s.cancel()
+					}
+				}
+				return s, nil
+			case execPhaseComplete:
+				if msg.String() == "enter" {
+					s.modal = nil
+					s.state = workspaceDone
 					return s, nil
 				}
 				return s, nil
 			}
+		}
+
+		// Done state — list with final status icons.
+		if s.state == workspaceDone {
 			if msg.String() == "r" {
-				s.batchItems = nil
-				s.batchMap = nil
+				s.modal = nil
 				cache.invalidate()
 				s.state = workspaceLoading
 				s.items = nil
@@ -231,20 +234,6 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.err = nil
 				s.exec.reset()
 				return s, s.init()
-			}
-			return s, nil
-		}
-
-		// Executing state — only allow cancel.
-		if s.state == workspaceExecuting {
-			if msg.String() == "esc" {
-				if s.cancel != nil {
-					s.cancel()
-				}
-			}
-			cmd, handled := s.exec.update(msg)
-			if handled {
-				return s, cmd
 			}
 			return s, nil
 		}
@@ -317,7 +306,12 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.detail = updated
 			return s, cmd
 		}
-		if s.state == workspaceLoading || s.state == workspaceExecuting {
+		if s.state == workspaceExecuting && s.modal != nil {
+			var cmd tea.Cmd
+			s.modal.spinner, cmd = s.modal.spinner.Update(msg)
+			return s, cmd
+		}
+		if s.state == workspaceLoading {
 			var cmd tea.Cmd
 			s.spinner, cmd = s.spinner.Update(msg)
 			return s, cmd
@@ -351,21 +345,20 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 
 	case streamMsg:
-		if s.state == workspaceExecuting {
+		if s.state == workspaceExecuting && s.modal != nil {
 			s.exec.appendLine(string(msg))
 			return s, awaitStream(nil, s.streamOut, s.streamErr)
 		}
 
 	case streamDoneMsg:
-		if s.state == workspaceExecuting && s.batchIdx < len(s.batchItems) {
-			s.batchItems[s.batchIdx].output = s.exec.currentOutput()
+		if s.state == workspaceExecuting && s.modal != nil && s.modal.idx < len(s.modal.items) {
 			if msg.err != nil {
-				s.batchItems[s.batchIdx].status = batchFailed
-				s.batchItems[s.batchIdx].err = msg.err
+				s.modal.items[s.modal.idx].status = batchFailed
+				s.modal.items[s.modal.idx].err = msg.err
 			} else {
-				s.batchItems[s.batchIdx].status = batchDone
+				s.modal.items[s.modal.idx].status = batchDone
 			}
-			s.batchIdx++
+			s.modal.idx++
 			return s.processNextBatchItem()
 		}
 	}
@@ -380,6 +373,16 @@ func (s *workspaceScreen) focusSummary() tea.Cmd {
 		return s.summary.focus(&item.pkg, item.installed, item.available)
 	}
 	return s.summary.focus(nil, "", "")
+}
+
+func (s workspaceScreen) countSelected(items []workspaceItem) int {
+	n := 0
+	for _, item := range items {
+		if s.selected[item.key()] {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *workspaceScreen) selectAllUpgradeable() {
@@ -471,61 +474,43 @@ func (s workspaceScreen) beginAction(action string) (screen, tea.Cmd) {
 		return s, nil
 	}
 
-	s.pendingAction = action
-	s.batchItems = make([]batchItem, len(targets))
-	s.batchMap = make(map[string]*batchItem, len(targets))
+	items := make([]batchItem, len(targets))
 	for i, t := range targets {
-		s.batchItems[i] = batchItem{item: t, status: batchQueued}
-		s.batchMap[t.key()] = &s.batchItems[i]
+		items[i] = batchItem{item: t, status: batchQueued}
 	}
+	m := newExecModal(action, items)
+	s.modal = &m
 	s.state = workspaceConfirm
 	return s, nil
-}
-
-func (s workspaceScreen) confirmModalView(width, height int) string {
-	count := len(s.batchItems)
-	verb := s.pendingAction
-	title := strings.ToUpper(verb[:1]) + verb[1:]
-	var body string
-	if count == 1 {
-		body = fmt.Sprintf("%s %s (%s)?", title, s.batchItems[0].item.pkg.Name, s.batchItems[0].item.pkg.ID)
-	} else {
-		body = fmt.Sprintf("%s %d selected packages?", title, count)
-	}
-	bg := s.viewReady(width, height)
-	return renderConfirmModal(bg, width, height, confirmModal{
-		title:       title + " Packages",
-		body:        []string{body},
-		confirmVerb: verb,
-	})
 }
 
 type startWorkspaceBatchMsg struct{}
 
 func (s workspaceScreen) startBatch() (screen, tea.Cmd) {
 	s.state = workspaceExecuting
-	s.batchIdx = 0
+	s.modal.phase = execPhaseRunning
+	s.modal.idx = 0
 	s.exec.reset()
 	return s, tea.Batch(
-		s.spinner.Tick,
+		s.modal.spinner.Tick,
 		func() tea.Msg { return startWorkspaceBatchMsg{} },
 	)
 }
 
 func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
-	if s.batchIdx >= len(s.batchItems) {
+	if s.modal.idx >= len(s.modal.items) {
 		return s.finishBatch()
 	}
 
-	s.batchItems[s.batchIdx].status = batchRunning
-	item := s.batchItems[s.batchIdx].item
+	s.modal.items[s.modal.idx].status = batchRunning
+	item := s.modal.items[s.modal.idx].item
 	s.exec.appendSection(fmt.Sprintf("== %s (%s) ==", item.pkg.Name, item.pkg.ID))
 
 	var args []string
 	var outChan <-chan string
 	var errChan <-chan error
 
-	if s.pendingAction == "upgrade" {
+	if s.modal.action == "upgrade" {
 		version := s.selectedVersions[item.key()]
 		args, outChan, errChan = upgradePackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
 	} else {
@@ -535,12 +520,12 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 	s.streamOut = outChan
 	s.streamErr = errChan
 
-	return s, tea.Batch(s.spinner.Tick, awaitStream(nil, s.streamOut, s.streamErr))
+	return s, tea.Batch(s.modal.spinner.Tick, awaitStream(nil, s.streamOut, s.streamErr))
 }
 
 func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
-	s.state = workspaceDone
-	s.showResultModal = true
+	s.modal.phase = execPhaseComplete
+	s.modal.log = s.exec.lines
 	s.selected = make(map[string]bool)
 	cache.invalidate()
 	return s, func() tea.Msg { return packageDataChangedMsg{origin: screenWorkspace} }
@@ -562,16 +547,13 @@ func (s workspaceScreen) view(width, height int) string {
 		return "  " + helpStyle.Render("No packages found. Press r to refresh.") + "\n"
 	case workspaceReady:
 		return s.viewReady(width, height)
-	case workspaceConfirm:
-		return s.confirmModalView(width, height)
-	case workspaceExecuting:
+	case workspaceConfirm, workspaceExecuting:
+		if s.modal != nil {
+			return s.modal.view(width, height)
+		}
 		return s.viewReady(width, height)
 	case workspaceDone:
-		bg := s.viewReady(width, height)
-		if s.showResultModal {
-			return s.renderResultModal(bg, width, height)
-		}
-		return bg
+		return s.viewReady(width, height)
 	}
 	return ""
 }
@@ -639,7 +621,11 @@ func (s workspaceScreen) renderList(items []workspaceItem, nUpgradeable int, l l
 	// Render updates panel.
 	if nUpgradeable > 0 {
 		updateItems := items[:nUpgradeable]
+		selectedCount := s.countSelected(updateItems)
 		title := fmt.Sprintf("Updates Available (%d)", nUpgradeable)
+		if selectedCount > 0 {
+			title = fmt.Sprintf("Updates Available (%d / %d selected)", nUpgradeable, selectedCount)
+		}
 		innerH := max(updatesPanelH-2, 1) // minus top+bottom border
 		borderColor := dim
 		if cursorInUpdates {
@@ -653,7 +639,11 @@ func (s workspaceScreen) renderList(items []workspaceItem, nUpgradeable int, l l
 	// Render installed panel.
 	if nInstalled > 0 {
 		installedItems := items[nUpgradeable:]
+		selCount := s.countSelected(installedItems)
 		title := fmt.Sprintf("Installed (%d)", nInstalled)
+		if selCount > 0 {
+			title = fmt.Sprintf("Installed (%d / %d selected)", nInstalled, selCount)
+		}
 		innerH := max(installedPanelH-2, 1) // minus top+bottom border
 		borderColor := dim
 		if !cursorInUpdates || nUpgradeable == 0 {
@@ -719,10 +709,14 @@ func (s workspaceScreen) renderPanelItems(items []workspaceItem, globalOffset, m
 			cursor = cursorStr
 		}
 		isCursor := globalIdx == s.cursor
-		// Show batch status icon if this package is in the current batch.
+		// Show batch status icon if this package is in a batch.
 		var sel string
-		if bi, ok := s.batchMap[item.key()]; ok {
-			sel = " " + bi.statusIcon(s.spinner) + " "
+		if s.modal != nil && s.modal.itemMap != nil {
+			if bi, ok := s.modal.itemMap[item.key()]; ok {
+				sel = " " + bi.statusIcon(s.modal.spinner) + " "
+			} else {
+				sel = checkbox(s.selected[item.key()])
+			}
 		} else {
 			sel = checkbox(s.selected[item.key()])
 		}
@@ -752,50 +746,6 @@ func (s workspaceScreen) renderItemText(item workspaceItem, maxWidth int, isCurs
 // viewBatchList renders the batch items with inline status icons.
 // Used for both executing and done states.
 // renderResultModal renders a scrollable modal with batch execution results.
-func (s workspaceScreen) renderResultModal(background string, width, height int) string {
-	completed, failed, _ := batchCounters(s.batchItems)
-	action := strings.ToUpper(s.pendingAction[:1]) + s.pendingAction[1:]
-
-	var title string
-	if failed == 0 {
-		title = fmt.Sprintf("%s Complete", action)
-	} else {
-		title = fmt.Sprintf("%s Results", action)
-	}
-
-	// Build result body.
-	var bodyLines []string
-	if failed == 0 {
-		bodyLines = append(bodyLines, successStyle.Render(fmt.Sprintf("All %d packages succeeded.", completed)))
-	} else {
-		bodyLines = append(bodyLines, warnStyle.Render(fmt.Sprintf("%d succeeded, %d failed", completed-failed, failed)))
-	}
-	bodyLines = append(bodyLines, "")
-
-	for _, bi := range s.batchItems {
-		icon := bi.statusIcon(s.spinner)
-		line := icon + " " + bi.item.pkg.Name
-		if bi.err != nil {
-			line += "  " + helpStyle.Render(bi.err.Error())
-		}
-		bodyLines = append(bodyLines, line)
-	}
-
-	// Add log excerpt if there's output.
-	if s.exec.hasOutput() {
-		bodyLines = append(bodyLines, "")
-		bodyLines = append(bodyLines, helpStyle.Render("── Execution Log ──"))
-		for _, line := range s.exec.lines {
-			bodyLines = append(bodyLines, helpStyle.Render(line))
-		}
-	}
-
-	return renderConfirmModal(background, width, height, confirmModal{
-		title:       title,
-		body:        bodyLines,
-		confirmVerb: "close",
-	})
-}
 
 // ── Help keys ─────────────────────────────────────────────────────
 
@@ -803,23 +753,11 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 	if s.detail.visible() {
 		return s.detail.helpKeys()
 	}
+	if s.modal != nil {
+		return s.modal.helpKeys()
+	}
 	switch s.state {
-	case workspaceConfirm:
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", s.pendingAction)),
-			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-		}
-	case workspaceExecuting:
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-		}
 	case workspaceDone:
-		if s.showResultModal {
-			return []key.Binding{
-				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "close")),
-				key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
-			}
-		}
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		}
