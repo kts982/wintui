@@ -225,6 +225,8 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 		"0x8a150002": "package not found or no applicable installer",
 		"0x8a15000e": "upgrade not applicable (already up to date)",
 		"0x8a150011": "package not found",
+		"0x8a150014": "no installed package found matching input criteria",
+		"0x8a150015": "no applicable update found",
 		"0x8a150019": "package version already installed",
 		"0x8a15002b": "install technology differs from installed version (package manages its own updates)",
 		"0x8a15002c": "some packages failed to upgrade",
