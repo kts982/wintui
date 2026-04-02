@@ -21,6 +21,7 @@ type summaryPanel struct {
 	detail    *PackageDetail // fetched metadata (nil until loaded)
 	loading   bool
 	err       error
+	noFetch   bool   // true when source doesn't support detail fetching
 	fetchID   string // id+source of the pending fetch, to discard stale results
 	cancelFn  context.CancelFunc
 	fetchFunc summaryFetchFunc
@@ -46,6 +47,12 @@ func defaultSummaryFetch(ctx context.Context, id, source, version string) (Packa
 	return showPackageCtx(ctx, id, source, version)
 }
 
+// canFetchDetails returns true if the package source supports winget show.
+func canFetchDetails(source string) bool {
+	s := strings.ToLower(source)
+	return s == "winget" || s == "msstore"
+}
+
 // summaryDetailMsg delivers async-fetched metadata to the panel.
 type summaryDetailMsg struct {
 	fetchID string
@@ -68,6 +75,7 @@ func (p *summaryPanel) focus(pkg *Package, installed, target string) tea.Cmd {
 		p.detail = nil
 		p.loading = false
 		p.err = nil
+		p.noFetch = false
 		return nil
 	}
 
@@ -82,11 +90,20 @@ func (p *summaryPanel) focus(pkg *Package, installed, target string) tea.Cmd {
 	p.cancelPending()
 	p.pkg = pkg
 	p.detail = nil
-	p.loading = true
 	p.err = nil
 	p.fetchID = key
 	p.installed = installed
 	p.target = target
+
+	// Skip fetch for sources that don't support winget show.
+	if !canFetchDetails(pkg.Source) {
+		p.loading = false
+		p.noFetch = true
+		return nil
+	}
+
+	p.loading = true
+	p.noFetch = false
 
 	// Schedule a debounced fetch.
 	return tea.Tick(summaryDebounceDelay, func(t time.Time) tea.Msg {
@@ -142,7 +159,7 @@ func (p *summaryPanel) setSize(width, height int) {
 	p.height = max(height, 0)
 }
 
-// view renders the summary panel.
+// view renders the summary panel, clipped to fit within the allocated height.
 func (p summaryPanel) view() string {
 	if p.width < 4 || p.height < 3 {
 		return ""
@@ -151,74 +168,74 @@ func (p summaryPanel) view() string {
 		return p.renderEmpty()
 	}
 
-	innerWidth := max(p.width-4, 10) // padding + border
+	// Inner dimensions: border takes 2, padding(0,1) takes 2.
+	innerWidth := max(p.width-6, 8)
+	maxLines := max(p.height-2, 3) // available content lines inside border
 
-	var b strings.Builder
+	var lines []string
 
-	// Package name + ID
-	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.pkg.Name))
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render(p.pkg.ID))
-	b.WriteString("\n")
+	// Package name + ID (always shown).
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.pkg.Name))
+	lines = append(lines, helpStyle.Render(p.pkg.ID))
+	lines = append(lines, helpStyle.Render(strings.Repeat("─", innerWidth)))
 
-	// Separator
-	b.WriteString(helpStyle.Render(strings.Repeat("─", innerWidth)))
-	b.WriteString("\n")
-
-	// Version info
+	// Version info.
 	if p.installed != "" {
-		b.WriteString(p.field("Installed", p.installed))
+		lines = append(lines, p.field("Installed", p.installed))
 	} else if p.pkg.Version != "" {
-		b.WriteString(p.field("Version", p.pkg.Version))
+		lines = append(lines, p.field("Version", p.pkg.Version))
 	}
-
 	if p.pkg.Available != "" {
-		b.WriteString(p.field("Available", p.pkg.Available))
+		lines = append(lines, p.field("Available", p.pkg.Available))
 	}
-
 	if p.target != "" && p.target != p.pkg.Available {
-		b.WriteString(p.field("Target", p.target))
+		lines = append(lines, p.field("Target", p.target))
 	}
-
 	if p.pkg.Source != "" {
-		b.WriteString(p.field("Source", p.pkg.Source))
+		lines = append(lines, p.field("Source", p.pkg.Source))
 	}
 
-	// Fetched metadata
+	// Fetched metadata.
 	if p.detail != nil {
 		if p.detail.Publisher != "" {
-			b.WriteString(p.field("Publisher", p.detail.Publisher))
+			lines = append(lines, p.field("Publisher", p.detail.Publisher))
 		}
 		if p.detail.InstallerType != "" {
-			b.WriteString(p.field("Type", p.detail.InstallerType))
+			lines = append(lines, p.field("Type", p.detail.InstallerType))
 		}
 		if p.detail.License != "" {
-			b.WriteString(p.field("License", p.detail.License))
+			lines = append(lines, p.field("License", p.detail.License))
 		}
 		if p.detail.Homepage != "" {
-			b.WriteString(p.field("Homepage", truncate(p.detail.Homepage, innerWidth-10)))
+			lines = append(lines, p.field("Homepage", truncate(p.detail.Homepage, innerWidth-10)))
 		}
 
-		// Description (wrapped)
 		if p.detail.Description != "" {
-			b.WriteString("\n")
-			b.WriteString(helpStyle.Render(strings.Repeat("─", innerWidth)))
-			b.WriteString("\n")
-			desc := wordWrap(p.detail.Description, innerWidth)
-			b.WriteString(helpStyle.Render(desc))
-			b.WriteString("\n")
+			lines = append(lines, "")
+			lines = append(lines, helpStyle.Render(strings.Repeat("─", innerWidth)))
+			descLines := strings.Split(wordWrap(p.detail.Description, innerWidth), "\n")
+			for _, dl := range descLines {
+				lines = append(lines, helpStyle.Render(dl))
+			}
 		}
 	} else if p.loading {
-		b.WriteString("\n")
-		b.WriteString(helpStyle.Render("Loading..."))
-		b.WriteString("\n")
+		lines = append(lines, "")
+		lines = append(lines, helpStyle.Render("Loading..."))
+	} else if p.noFetch {
+		lines = append(lines, "")
+		lines = append(lines, helpStyle.Render("Package managed outside winget."))
+		lines = append(lines, helpStyle.Render("Extended details not available."))
 	} else if p.err != nil {
-		b.WriteString("\n")
-		b.WriteString(helpStyle.Render("Details unavailable"))
-		b.WriteString("\n")
+		lines = append(lines, "")
+		lines = append(lines, helpStyle.Render("Details unavailable"))
 	}
 
-	content := b.String()
+	// Clip to available height.
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+
+	content := strings.Join(lines, "\n")
 
 	style := lipgloss.NewStyle().
 		Width(max(p.width-2, 1)).
@@ -245,7 +262,7 @@ func (p summaryPanel) renderEmpty() string {
 
 func (p summaryPanel) field(label, value string) string {
 	return lipgloss.NewStyle().Foreground(secondary).Render(label+": ") +
-		lipgloss.NewStyle().Foreground(bright).Render(value) + "\n"
+		lipgloss.NewStyle().Foreground(bright).Render(value)
 }
 
 func wordWrap(s string, width int) string {

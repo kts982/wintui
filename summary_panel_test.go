@@ -165,6 +165,51 @@ func TestSummaryPanelFetchError(t *testing.T) {
 	}
 }
 
+func TestSummaryPanelArpPackageSkipsFetch(t *testing.T) {
+	p := newSummaryPanel()
+	p.setSize(40, 20)
+
+	pkg := Package{Name: "Some App", ID: "Some.App", Source: ""}
+	cmd := p.focus(&pkg, "1.0", "")
+
+	if cmd != nil {
+		t.Fatal("ARP package should not trigger a fetch command")
+	}
+	if p.loading {
+		t.Fatal("loading should be false for ARP package")
+	}
+	if !p.noFetch {
+		t.Fatal("noFetch should be true for ARP package")
+	}
+	got := p.view()
+	if !strings.Contains(got, "managed outside winget") {
+		t.Errorf("view should show non-winget message, got: %s", got)
+	}
+}
+
+func TestSummaryPanelContentClippedToHeight(t *testing.T) {
+	p := newSummaryPanel()
+	p.setSize(40, 10) // small height
+
+	pkg := Package{Name: "Test", ID: "Test.Pkg", Version: "1.0", Source: "winget"}
+	p.focus(&pkg, "1.0", "")
+	// Simulate fetched detail with long description.
+	p.loading = false
+	p.detail = &PackageDetail{
+		Publisher:   "Test Publisher",
+		License:     "MIT",
+		Homepage:    "https://example.com",
+		Description: "This is a very long description that should be truncated when the panel height is too small to show everything including all the metadata fields and the full description text.",
+	}
+
+	got := p.view()
+	lines := strings.Split(got, "\n")
+	// Total rendered lines should not exceed panel height.
+	if len(lines) > p.height {
+		t.Errorf("rendered %d lines, but panel height is %d", len(lines), p.height)
+	}
+}
+
 func TestWordWrap(t *testing.T) {
 	input := "This is a test of the word wrapping function that should break lines"
 	got := wordWrap(input, 20)
