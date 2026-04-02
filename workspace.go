@@ -214,7 +214,8 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 				return s, nil
 			case execPhaseComplete:
-				if msg.String() == "enter" {
+				switch msg.String() {
+				case "enter":
 					s.modal = nil
 					cache.invalidate()
 					s.state = workspaceLoading
@@ -222,6 +223,20 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					s.cursor = 0
 					s.exec.reset()
 					return s, s.init()
+				case "ctrl+e":
+					if s.modal.hasElevationCandidates() {
+						retryItems := s.modal.elevationCandidateItems()
+						m := newExecModal(s.modal.action, retryItems)
+						m.phase = execPhaseRunning
+						m.forceElevated = true
+						s.modal = &m
+						s.state = workspaceExecuting
+						s.exec.reset()
+						return s, tea.Batch(
+							s.modal.spinner.Tick,
+							func() tea.Msg { return startWorkspaceBatchMsg{} },
+						)
+					}
 				}
 				return s, nil
 			}
@@ -510,17 +525,32 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 	item := s.modal.items[s.modal.idx].item
 	s.exec.appendSection(fmt.Sprintf("== %s (%s) ==", item.pkg.Name, item.pkg.ID))
 
-	var args []string
 	var outChan <-chan string
 	var errChan <-chan error
 
-	if s.modal.action == "upgrade" {
-		version := s.selectedVersions[item.key()]
-		args, outChan, errChan = upgradePackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
+	if s.modal.forceElevated {
+		// Route through elevated helper for Ctrl+E retry.
+		var initErr error
+		if s.modal.action == "upgrade" {
+			version := s.selectedVersions[item.key()]
+			_, outChan, errChan, initErr = upgradePackageElevatedStreamCtx(item.pkg.ID, item.pkg.Source, version)
+		} else {
+			_, outChan, errChan, initErr = uninstallPackageElevatedStreamCtx(item.pkg)
+		}
+		if initErr != nil {
+			s.modal.items[s.modal.idx].status = batchFailed
+			s.modal.items[s.modal.idx].err = fmt.Errorf("elevation failed: %v", initErr)
+			s.modal.idx++
+			return s.processNextBatchItem()
+		}
 	} else {
-		args, outChan, errChan = uninstallPackageStreamCtx(s.ctx, item.pkg)
+		if s.modal.action == "upgrade" {
+			version := s.selectedVersions[item.key()]
+			_, outChan, errChan = upgradePackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
+		} else {
+			_, outChan, errChan = uninstallPackageStreamCtx(s.ctx, item.pkg)
+		}
 	}
-	_ = args
 	s.streamOut = outChan
 	s.streamErr = errChan
 

@@ -21,13 +21,14 @@ const (
 // execModal manages the multi-phase execution modal overlay.
 // Review → Running → Complete, all within one modal.
 type execModal struct {
-	phase   execModalPhase
-	action  string // "upgrade" or "uninstall"
-	items   []batchItem
-	itemMap map[string]*batchItem
-	idx     int // currently running item index
-	log     []string
-	spinner spinner.Model
+	phase         execModalPhase
+	action        string // "upgrade" or "uninstall"
+	items         []batchItem
+	itemMap       map[string]*batchItem
+	idx           int // currently running item index
+	log           []string
+	spinner       spinner.Model
+	forceElevated bool // true when retrying via Ctrl+E
 }
 
 func newExecModal(action string, items []batchItem) execModal {
@@ -192,7 +193,40 @@ func (m execModal) viewComplete() (string, []string, string) {
 	}
 
 	actions := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("enter") + " close"
+
+	// Offer elevation retry if auto-elevate is off and there are elevation candidates.
+	if !appSettings.AutoElevate && !isElevated() && m.hasElevationCandidates() {
+		actions = lipgloss.NewStyle().Bold(true).Foreground(accent).Render("ctrl+e") + " retry elevated  •  " + actions
+	}
+
 	return title, body, actions
+}
+
+// hasElevationCandidates returns true if any failed items could benefit from elevation.
+func (m execModal) hasElevationCandidates() bool {
+	for _, bi := range m.items {
+		if bi.status != batchFailed || bi.err == nil {
+			continue
+		}
+		if likelyBenefitsFromElevation(bi.err, bi.output) {
+			return true
+		}
+	}
+	return false
+}
+
+// elevationCandidateItems returns the failed items that could benefit from elevation.
+func (m execModal) elevationCandidateItems() []batchItem {
+	var items []batchItem
+	for _, bi := range m.items {
+		if bi.status != batchFailed || bi.err == nil {
+			continue
+		}
+		if likelyBenefitsFromElevation(bi.err, bi.output) {
+			items = append(items, batchItem{item: bi.item, status: batchQueued})
+		}
+	}
+	return items
 }
 
 // extractKeyLogLines picks the most informative lines from a package's output.
@@ -235,9 +269,12 @@ func (m execModal) helpKeys() []key.Binding {
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 		}
 	case execPhaseComplete:
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "close")),
+		bindings := []key.Binding{}
+		if !appSettings.AutoElevate && !isElevated() && m.hasElevationCandidates() {
+			bindings = append(bindings, key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", "retry elevated")))
 		}
+		bindings = append(bindings, key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "close")))
+		return bindings
 	}
 	return nil
 }
