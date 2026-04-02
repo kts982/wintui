@@ -56,6 +56,8 @@ type workspaceScreen struct {
 	pendingAction    string // "upgrade" or "uninstall"
 	batchItems       []batchItem
 	batchIdx         int // index of the currently running item
+	streamOut        <-chan string
+	streamErr        <-chan error
 	err              error
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -343,7 +345,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	case streamMsg:
 		if s.state == workspaceExecuting {
 			s.exec.appendLine(string(msg))
-			return s, nil
+			return s, awaitStream(nil, s.streamOut, s.streamErr)
 		}
 
 	case streamDoneMsg:
@@ -520,8 +522,10 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 		args, outChan, errChan = uninstallPackageStreamCtx(s.ctx, item.pkg)
 	}
 	_ = args
+	s.streamOut = outChan
+	s.streamErr = errChan
 
-	return s, tea.Batch(s.spinner.Tick, awaitStream(nil, outChan, errChan))
+	return s, tea.Batch(s.spinner.Tick, awaitStream(nil, s.streamOut, s.streamErr))
 }
 
 func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
