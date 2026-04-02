@@ -95,7 +95,7 @@ func TestDetailVersionPickerHelpKeys(t *testing.T) {
 		keyScroll.Help(),
 		keyEnter.Help(),
 		keyUseLatest.Help(),
-		keyEsc.Help(),
+		keyEscOrLeft.Help(),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("helpKeys() = %#v, want %#v", got, want)

@@ -311,7 +311,7 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 		}
 
 		switch msg.String() {
-		case "esc":
+		case "esc", "left", "h":
 			p.state = detailHidden
 			return p, nil, true
 		case "up", "k":
@@ -376,23 +376,23 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 func (p detailPanel) helpKeys() []key.Binding {
 	switch p.state {
 	case detailLoading, detailError:
-		return []key.Binding{keyEsc}
+		return []key.Binding{keyEscOrLeft}
 	case detailReady:
 		if p.versionsLoading {
-			return []key.Binding{keyEsc}
+			return []key.Binding{keyEscOrLeft}
 		}
 		if p.selectingVersion {
-			return []key.Binding{keyScroll, keyEnter, keyUseLatest, keyEsc}
+			return []key.Binding{keyScroll, keyEnter, keyUseLatest, keyEscOrLeft}
 		}
 		if p.allowVersionSelect {
 			bindings := []key.Binding{keyScroll, keyVersion}
 			if p.selectedVersion != "" {
 				bindings = append(bindings, keyUseLatest)
 			}
-			bindings = append(bindings, keyOpen, keyEsc)
+			bindings = append(bindings, keyOpen, keyEscOrLeft)
 			return bindings
 		}
-		return []key.Binding{keyScroll, keyOpen, keyEsc}
+		return []key.Binding{keyScroll, keyOpen, keyEscOrLeft}
 	}
 	return nil
 }

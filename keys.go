@@ -33,6 +33,10 @@ var (
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "back"),
 	)
+	keyEscOrLeft = key.NewBinding(
+		key.WithKeys("esc", "left"),
+		key.WithHelp("←/esc", "back"),
+	)
 	keyEscCancel = key.NewBinding(
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "cancel"),

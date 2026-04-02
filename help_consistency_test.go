@@ -58,7 +58,7 @@ func TestInstallDetailHelpOverridesScreenHelp(t *testing.T) {
 	want := []key.Help{
 		keyScroll.Help(),
 		keyOpen.Help(),
-		keyEsc.Help(),
+		keyEscOrLeft.Help(),
 	}
 
 	if !reflect.DeepEqual(got, want) {
