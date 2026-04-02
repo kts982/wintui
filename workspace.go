@@ -271,7 +271,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 			}
 			return s, nil
-		case "enter":
+		case "enter", "right", "l":
 			return s.openDetail()
 		case "/":
 			s.filter = s.filter.activate()
@@ -631,7 +631,7 @@ func (s workspaceScreen) renderList(items []workspaceItem, nUpgradeable int, l l
 	if nUpgradeable > 0 && nInstalled > 0 {
 		maxUpdatesH := max(availableH*2/5, 5)
 		updatesPanelH = min(nUpgradeable+2, maxUpdatesH) // +2 for top+bottom border
-		installedPanelH = availableH - updatesPanelH
+		installedPanelH = availableH - updatesPanelH - 1 // -1 for gap between panels
 	} else if nUpgradeable > 0 {
 		updatesPanelH = availableH
 	} else {
@@ -721,20 +721,26 @@ func (s workspaceScreen) renderPanelItems(items []workspaceItem, globalOffset, m
 			cursor = cursorStr
 		}
 		sel := checkbox(s.selected[item.key()])
-		row := cursor + sel + " " + s.renderItemText(item, innerWidth)
+		isCursor := globalIdx == s.cursor
+		row := cursor + sel + " " + s.renderItemText(item, innerWidth, isCursor)
 		lines = append(lines, row)
 	}
 
 	return strings.Join(lines, "\n")
 }
 
-func (s workspaceScreen) renderItemText(item workspaceItem, maxWidth int) string {
+func (s workspaceScreen) renderItemText(item workspaceItem, maxWidth int, isCursor bool) string {
+	nameStyle := itemStyle // white
+	if isCursor {
+		nameStyle = itemActiveStyle // bold pink
+	}
+
 	if item.upgradeable {
-		name := itemActiveStyle.Render(item.pkg.Name)
+		name := nameStyle.Render(item.pkg.Name)
 		ver := helpStyle.Render(item.installed + " → " + item.available)
 		return name + "  " + ver
 	}
-	name := itemStyle.Render(item.pkg.Name)
+	name := nameStyle.Render(item.pkg.Name)
 	ver := helpStyle.Render(item.installed)
 	return name + "  " + ver
 }
