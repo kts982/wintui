@@ -98,10 +98,11 @@ func (m execModal) view(width, height int) string {
 		lines = append(lines, actions)
 	}
 
-	// Cap content height — truncate body if needed.
-	if len(lines) > maxH {
-		lines = lines[:maxH-1]
-		lines = append(lines, helpStyle.Render("... (scroll not yet implemented)"))
+	// Cap content height — ensure action button always visible.
+	// Reserve 3 lines: blank + actions + bottom padding.
+	maxBodyLines := maxH - 3
+	if len(lines) > maxBodyLines {
+		lines = lines[:maxBodyLines]
 	}
 
 	content := strings.Join(lines, "\n")
@@ -173,27 +174,53 @@ func (m execModal) viewComplete() (string, []string, string) {
 	}
 	body = append(body, "")
 
-	// Per-package results.
+	// Per-package results with compact log summary.
 	for _, bi := range m.items {
 		icon := bi.statusIcon(m.spinner)
-		line := "  " + icon + " " + bi.item.pkg.Name
+		line := "  " + icon + " " + lipgloss.NewStyle().Bold(true).Render(bi.item.pkg.Name)
 		if bi.err != nil {
-			line += "  " + helpStyle.Render(bi.err.Error())
+			line += "  " + errorStyle.Render(bi.err.Error())
+		} else {
+			line += "  " + successStyle.Render("done")
 		}
 		body = append(body, line)
-	}
 
-	// Execution log (compact).
-	if len(m.log) > 0 {
-		body = append(body, "")
-		body = append(body, helpStyle.Render("── Execution Log ──"))
-		for _, line := range m.log {
-			body = append(body, helpStyle.Render(line))
+		// Show key log lines for this package (compact).
+		for _, logLine := range extractKeyLogLines(bi.output) {
+			body = append(body, "    "+helpStyle.Render(logLine))
 		}
 	}
 
 	actions := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("enter") + " close"
 	return title, body, actions
+}
+
+// extractKeyLogLines picks the most informative lines from a package's output.
+func extractKeyLogLines(output string) []string {
+	if output == "" {
+		return nil
+	}
+	var result []string
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// Skip section headers.
+		if strings.HasPrefix(trimmed, "==") {
+			continue
+		}
+		// Keep informative lines.
+		lower := strings.ToLower(trimmed)
+		if strings.Contains(lower, "successfully") ||
+			strings.Contains(lower, "failed") ||
+			strings.Contains(lower, "error") ||
+			strings.Contains(lower, "no installed package") ||
+			strings.Contains(lower, "requires") {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func (m execModal) helpKeys() []key.Binding {
