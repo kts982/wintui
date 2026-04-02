@@ -411,8 +411,11 @@ func (s workspaceScreen) openDetail() (screen, tea.Cmd) {
 		return s, nil
 	}
 	item := items[s.cursor]
+	if !canFetchDetails(item.pkg.Source) {
+		return s, nil // ARP packages don't have fetchable details
+	}
 	var cmd tea.Cmd
-	s.detail, cmd = s.detail.showWithVersion(item.pkg, "", true)
+	s.detail, cmd = s.detail.showWithVersion(item.pkg, "", item.upgradeable)
 	return s, cmd
 }
 
