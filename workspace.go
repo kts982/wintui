@@ -737,37 +737,35 @@ func (s workspaceScreen) viewBatchList(width, height int) string {
 
 	var b strings.Builder
 
-	// Header with aggregate counter.
+	// Compact status bar: "Upgrading 1/2: ✓ Notepad++ · ⣯ Neovim · queued"
+	var statusParts []string
+	for _, bi := range s.batchItems {
+		icon := bi.statusIcon(s.spinner)
+		statusParts = append(statusParts, icon+" "+bi.item.pkg.Name)
+	}
+
 	if s.state == workspaceExecuting {
 		verb := action
-		if action == "Upgrade" {
+		switch action {
+		case "Upgrade":
 			verb = "Upgrading"
-		} else if action == "Uninstall" {
+		case "Uninstall":
 			verb = "Uninstalling"
 		}
-		b.WriteString(fmt.Sprintf("  %s  %d/%d", sectionTitleStyle.Render(verb), completed, total))
+		header := fmt.Sprintf("%s %d/%d", verb, completed, total)
+		b.WriteString("  " + sectionTitleStyle.Render(header) + "  " + strings.Join(statusParts, " · "))
 	} else {
 		if failed == 0 {
 			b.WriteString("  " + successStyle.Render(fmt.Sprintf("%s complete: %d succeeded", action, completed)))
 		} else {
 			b.WriteString("  " + warnStyle.Render(fmt.Sprintf("%s finished: %d succeeded, %d failed", action, completed-failed, failed)))
 		}
+		b.WriteString("  " + strings.Join(statusParts, " · "))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
-	// Inline status list.
-	for _, bi := range s.batchItems {
-		icon := bi.statusIcon(s.spinner)
-		name := itemStyle.Render(bi.item.pkg.Name)
-		row := "  " + icon + " " + name
-		if text := bi.statusText(); text != "" {
-			row += "  " + text
-		}
-		b.WriteString(row + "\n")
-	}
-
-	// Log panel below.
-	logReserve := len(s.batchItems) + 4 // items + header + padding
+	// Log panel fills remaining space (header is just 1 line now).
+	logReserve := 4 // status line + padding
 	if s.state == workspaceDone {
 		if logView := s.exec.doneView(width, l.list.H, logReserve); logView != "" {
 			b.WriteString("\n" + logView + "\n")
@@ -775,7 +773,7 @@ func (s workspaceScreen) viewBatchList(width, height int) string {
 		b.WriteString("\n  " + helpStyle.Render("Press r to refresh or tab to switch screens") + "\n")
 	} else {
 		logH := max(l.list.H-logReserve, 5)
-		s.exec.setSize(width, logH+12) // adjust for setSize offset
+		s.exec.setSize(width, logH+12)
 		b.WriteString("\n" + s.exec.view(width, logH) + "\n")
 	}
 
