@@ -309,7 +309,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.detail = updated
 			return s, cmd
 		}
-		if s.state == workspaceLoading {
+		if s.state == workspaceLoading || s.state == workspaceExecuting {
 			var cmd tea.Cmd
 			s.spinner, cmd = s.spinner.Update(msg)
 			return s, cmd
