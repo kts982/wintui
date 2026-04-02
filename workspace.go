@@ -118,8 +118,10 @@ func buildItems(installed, upgradeable []Package) []workspaceItem {
 		k := packageSourceKey(pkg.ID, pkg.Source)
 		seen[k] = true
 		if upPkg, ok := upgradeMap[k]; ok {
+			merged := pkg
+			merged.Available = upPkg.Available
 			updates = append(updates, workspaceItem{
-				pkg:         pkg,
+				pkg:         merged,
 				upgradeable: true,
 				installed:   pkg.Version,
 				available:   upPkg.Available,
@@ -193,7 +195,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.cursor++
 				return s, s.focusSummary()
 			}
-		case " ":
+		case "space":
 			items := s.filteredItems()
 			if s.cursor < len(items) {
 				k := items[s.cursor].key()
