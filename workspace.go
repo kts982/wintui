@@ -216,13 +216,8 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			case execPhaseComplete:
 				switch msg.String() {
 				case "enter":
-					s.modal = nil
-					cache.invalidate()
-					s.state = workspaceLoading
-					s.items = nil
-					s.cursor = 0
-					s.exec.reset()
-					return s, s.init()
+					result, cmd := s.resetAndReload()
+					return result, cmd
 				case "ctrl+e":
 					if s.modal.hasElevationCandidates() {
 						retryItems := s.modal.elevationCandidateItems()
@@ -245,14 +240,8 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		// Done state — list with final status icons.
 		if s.state == workspaceDone {
 			if msg.String() == "r" {
-				s.modal = nil
-				cache.invalidate()
-				s.state = workspaceLoading
-				s.items = nil
-				s.cursor = 0
-				s.err = nil
-				s.exec.reset()
-				return s, s.init()
+				result, cmd := s.resetAndReload()
+				return result, cmd
 			}
 			return s, nil
 		}
@@ -290,11 +279,8 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, s.filter.input.Focus()
 		case "r":
 			if s.state == workspaceReady || s.state == workspaceEmpty {
-				cache.invalidate()
-				s.state = workspaceLoading
-				s.items = nil
-				s.cursor = 0
-				return s, s.init()
+				result, cmd := s.resetAndReload()
+				return result, cmd
 			}
 		case "a":
 			s.selectAllUpgradeable()
@@ -371,6 +357,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 	case streamDoneMsg:
 		if s.state == workspaceExecuting && s.modal != nil && s.modal.idx < len(s.modal.items) {
+			s.modal.items[s.modal.idx].output = s.exec.currentOutput()
 			if msg.err != nil {
 				s.modal.items[s.modal.idx].status = batchFailed
 				s.modal.items[s.modal.idx].err = msg.err
@@ -383,6 +370,24 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	}
 
 	return s, nil
+}
+
+// resetAndReload creates a fresh context and reloads package data.
+func (s *workspaceScreen) resetAndReload() (workspaceScreen, tea.Cmd) {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx = ctx
+	s.cancel = cancel
+	s.modal = nil
+	s.state = workspaceLoading
+	s.items = nil
+	s.cursor = 0
+	s.err = nil
+	s.exec.reset()
+	cache.invalidate()
+	return *s, s.init()
 }
 
 func (s *workspaceScreen) focusSummary() tea.Cmd {
@@ -506,6 +511,14 @@ func (s workspaceScreen) beginAction(action string) (screen, tea.Cmd) {
 type startWorkspaceBatchMsg struct{}
 
 func (s workspaceScreen) startBatch() (screen, tea.Cmd) {
+	// Fresh context for each batch so a previous Esc cancel doesn't poison it.
+	if s.cancel != nil {
+		s.cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ctx = ctx
+	s.cancel = cancel
+
 	s.state = workspaceExecuting
 	s.modal.phase = execPhaseRunning
 	s.modal.idx = 0
@@ -810,6 +823,11 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	}
 	return bindings
+}
+
+func (s workspaceScreen) blocksGlobalShortcuts() bool {
+	return s.modal != nil || s.detail.visible() || s.filter.active ||
+		s.state == workspaceExecuting || s.state == workspaceConfirm
 }
 
 // ── Filter support ────────────────────────────────────────────────
