@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -602,62 +603,117 @@ func (s workspaceScreen) viewReady(width, height int) string {
 }
 
 func (s workspaceScreen) renderList(items []workspaceItem, nUpgradeable int, l layout) string {
-	var b strings.Builder
-	maxVisible := l.maxVisibleItems(2) // 2 for section headers
+	panelWidth := l.list.W - 2          // account for outer indent
+	innerWidth := max(panelWidth-4, 10) // border(2) + padding(2)
 
-	// Filter bar.
+	var b strings.Builder
+
+	// Filter bar (above panels).
 	if s.filter.active {
 		b.WriteString("  " + s.filter.input.View() + "\n")
 	} else if s.filter.query != "" {
 		b.WriteString("  " + helpStyle.Render("Filter: "+s.filter.query+"  (/ edit • esc clear)") + "\n")
 	}
 
-	start, end := scrollWindow(s.cursor, len(items), maxVisible)
+	nInstalled := len(items) - nUpgradeable
+
+	// Calculate how much height each panel gets.
+	availableH := l.list.H
+	if s.filter.active || s.filter.query != "" {
+		availableH-- // filter bar
+	}
+
+	// Allocate height: updates panel gets up to 40% or what it needs, rest goes to installed.
+	var updatesPanelH, installedPanelH int
+	if nUpgradeable > 0 && nInstalled > 0 {
+		maxUpdatesH := max(availableH*2/5, 5)
+		updatesPanelH = min(nUpgradeable+3, maxUpdatesH) // +3 for top border/title + bottom border + spacing
+		installedPanelH = availableH - updatesPanelH
+	} else if nUpgradeable > 0 {
+		updatesPanelH = availableH
+	} else {
+		installedPanelH = availableH
+	}
+
+	// Render updates panel.
+	if nUpgradeable > 0 {
+		updateItems := items[:nUpgradeable]
+		title := fmt.Sprintf("Updates Available (%d)", nUpgradeable)
+		innerH := max(updatesPanelH-3, 1) // minus border(2) + title(1)
+		content := s.renderPanelItems(updateItems, 0, innerH, innerWidth)
+		b.WriteString(renderTitledPanel(title, content, panelWidth, innerH, accent))
+		b.WriteString("\n")
+	}
+
+	// Render installed panel.
+	if nInstalled > 0 {
+		installedItems := items[nUpgradeable:]
+		title := fmt.Sprintf("Installed (%d)", nInstalled)
+		innerH := max(installedPanelH-3, 1)
+		content := s.renderPanelItems(installedItems, nUpgradeable, innerH, innerWidth)
+		b.WriteString(renderTitledPanel(title, content, panelWidth, innerH, dim))
+	}
+
+	return b.String()
+}
+
+// renderTitledPanel renders a bordered panel with a title in the top border.
+func renderTitledPanel(title, content string, width, innerH int, borderColor color.Color) string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(borderColor)
+	borderStyle := lipgloss.NewStyle().Foreground(borderColor)
+
+	innerW := max(width-2, 1) // minus left+right border
+
+	// Top border: ╭─ Title ─────────╮
+	titleRendered := titleStyle.Render(" " + title + " ")
+	titleLen := len([]rune(title)) + 2 // +2 for spaces
+	remainingW := max(innerW-titleLen-1, 0)
+	topLine := borderStyle.Render("╭─") + titleRendered + borderStyle.Render(strings.Repeat("─", remainingW)+"╮")
+
+	// Content with side borders.
+	contentLines := strings.Split(content, "\n")
+	var body strings.Builder
+	for i := range innerH {
+		line := ""
+		if i < len(contentLines) {
+			line = contentLines[i]
+		}
+		// Pad line to innerW using lipgloss to handle ANSI-aware width.
+		paddedLine := lipgloss.NewStyle().Width(innerW).Render(line)
+		body.WriteString(borderStyle.Render("│") + paddedLine + borderStyle.Render("│") + "\n")
+	}
+
+	// Bottom border.
+	bottomLine := borderStyle.Render("╰" + strings.Repeat("─", innerW) + "╯")
+
+	return topLine + "\n" + body.String() + bottomLine
+}
+
+// renderPanelItems renders a scrollable slice of items for one section panel.
+// globalOffset is the index offset for cursor calculation.
+func (s workspaceScreen) renderPanelItems(items []workspaceItem, globalOffset, maxVisible, innerWidth int) string {
+	// Find the cursor position relative to this section.
+	localCursor := s.cursor - globalOffset
+	if localCursor < 0 || localCursor >= len(items) {
+		localCursor = -1 // cursor is in the other section
+	}
+
+	start, end := scrollWindow(max(localCursor, 0), len(items), maxVisible)
 	visible := items[start:end]
 
-	// Track whether we need section headers.
-	inUpgradeable := start < nUpgradeable
-
+	var lines []string
 	for i, item := range visible {
-		globalIdx := start + i
-
-		// Section header: transition from upgradeable to installed.
-		if inUpgradeable && !item.upgradeable {
-			inUpgradeable = false
-			if globalIdx > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString("  " + sectionTitleStyle.Render("Installed") + "\n")
-		} else if globalIdx == start && item.upgradeable && start == 0 {
-			b.WriteString("  " + sectionTitleStyle.Render("Updates Available") + "\n")
-		} else if globalIdx == start && !item.upgradeable && start == 0 {
-			b.WriteString("  " + sectionTitleStyle.Render("Installed") + "\n")
-		}
-
-		// Cursor + selection.
+		globalIdx := globalOffset + start + i
 		cursor := cursorBlankStr
 		if globalIdx == s.cursor {
 			cursor = cursorStr
 		}
-
 		sel := checkbox(s.selected[item.key()])
-
-		// Package row.
-		name := item.pkg.Name
-		row := cursor + sel + " " + s.renderItemText(item, l.list.W-6) // 6 = cursor+checkbox+spacing
-		b.WriteString(row + "\n")
-		_ = name
+		row := cursor + sel + " " + s.renderItemText(item, innerWidth)
+		lines = append(lines, row)
 	}
 
-	// Pad to fill list height.
-	rendered := b.String()
-	lines := strings.Count(rendered, "\n")
-	for lines < l.list.H {
-		rendered += "\n"
-		lines++
-	}
-
-	return rendered
+	return strings.Join(lines, "\n")
 }
 
 func (s workspaceScreen) renderItemText(item workspaceItem, maxWidth int) string {

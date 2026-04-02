@@ -31,21 +31,6 @@ var (
 	cursorBlankStr = "  "
 )
 
-// ── Tab bar ────────────────────────────────────────────────────────
-
-var (
-	tabActiveStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(accent).
-			Underline(true)
-
-	tabInactiveStyle = lipgloss.NewStyle().
-				Foreground(dim)
-
-	tabSepStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("238"))
-)
-
 // ── Section titles ─────────────────────────────────────────────────
 
 var sectionTitleStyle = lipgloss.NewStyle().
@@ -81,9 +66,9 @@ func useCompactHeaderForSize(width, height int) bool {
 }
 
 func contentAreaHeightForWindow(width, height int, hasHelp bool) int {
-	chromeHeight := 9
+	chromeHeight := 11 // full logo (6) + subtitle (1) + bordered tabs (3) + padding (1)
 	if useCompactHeaderForSize(width, height) {
-		chromeHeight = 3
+		chromeHeight = 5 // compact title (1) + bordered tabs (3) + padding (1)
 	}
 	helpHeight := 0
 	if hasHelp {

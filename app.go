@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image/color"
 	"math"
 	"strings"
@@ -371,37 +372,41 @@ func (a app) renderLogo() string {
 
 // ── Tab bar rendering ──────────────────────────────────────────────
 
+var (
+	tabBoxActive = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Foreground(accent).
+			Bold(true).
+			Padding(0, 1)
+
+	tabBoxInactive = lipgloss.NewStyle().
+			Border(lipgloss.HiddenBorder()).
+			Foreground(dim).
+			Padding(0, 1)
+)
+
 func (a app) renderTabBar() string {
 	var parts []string
 	for i, t := range tabs {
-		num := string(rune('1' + i))
+		label := fmt.Sprintf("%d %s", i+1, t.label)
 		if i == a.activeTab {
-			numStr := lipgloss.NewStyle().Foreground(accent).Bold(true).Render(num)
-			labelStr := tabActiveStyle.Render(t.label)
-			parts = append(parts, numStr+" "+labelStr)
+			parts = append(parts, tabBoxActive.Render(label))
 		} else {
-			numStr := lipgloss.NewStyle().Foreground(dim).Render(num)
-			labelStr := tabInactiveStyle.Render(t.label)
-			parts = append(parts, numStr+" "+labelStr)
+			parts = append(parts, tabBoxInactive.Render(label))
 		}
 	}
-	sep := tabSepStyle.Render(" │ ")
-	bar := "  " + strings.Join(parts, sep)
+	bar := lipgloss.JoinHorizontal(lipgloss.Bottom, parts...)
 
-	// Admin badge + hints right after tabs
+	// Admin badge
 	var adminBadge string
 	if isElevated() {
 		adminBadge = lipgloss.NewStyle().Foreground(success).Render("● admin")
 	} else {
 		adminBadge = lipgloss.NewStyle().Foreground(warning).Render("● user")
 	}
-	hint := "  tab cycle • q quit"
-	if a.useCompactHeader() {
-		hint = "  tab/q"
-	}
-	bar += "    " + adminBadge + helpStyle.Render(hint)
 
-	return bar + "\n"
+	return "  " + bar + "  " + adminBadge + "\n"
 }
 
 // tabHitTest returns the tab index at x position, or -1.
