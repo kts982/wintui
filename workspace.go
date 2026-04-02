@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/lipgloss/v2"
 	"github.com/sahilm/fuzzy"
@@ -54,13 +53,9 @@ type workspaceScreen struct {
 	filter           listFilter
 	detail           detailPanel
 	exec             executionLog
-	progress         progressBar
 	pendingAction    string // "upgrade" or "uninstall"
-	pendingItems     []workspaceItem
-	batchCurrent     int
-	batchTotal       int
-	batchErrs        []error
-	batchOutputs     []string
+	batchItems       []batchItem
+	batchIdx         int // index of the currently running item
 	err              error
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -83,7 +78,6 @@ func newWorkspaceScreen() workspaceScreen {
 		filter:           newListFilter(),
 		detail:           newDetailPanel(),
 		exec:             newExecutionLog(),
-		progress:         newProgressBar(50),
 		ctx:              ctx,
 		cancel:           cancel,
 	}
@@ -206,7 +200,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				return s.startBatch()
 			case "esc":
 				s.state = workspaceReady
-				s.pendingItems = nil
+				s.batchItems = nil
 				s.pendingAction = ""
 				return s, nil
 			}
@@ -353,28 +347,16 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 
 	case streamDoneMsg:
-		if s.state == workspaceExecuting {
-			s.batchOutputs = append(s.batchOutputs, s.exec.currentOutput())
-			s.batchErrs = append(s.batchErrs, msg.err)
-			s.batchCurrent++
-			if s.batchTotal > 0 {
-				s.progress.percent = float64(s.batchCurrent) / float64(s.batchTotal)
+		if s.state == workspaceExecuting && s.batchIdx < len(s.batchItems) {
+			s.batchItems[s.batchIdx].output = s.exec.currentOutput()
+			if msg.err != nil {
+				s.batchItems[s.batchIdx].status = batchFailed
+				s.batchItems[s.batchIdx].err = msg.err
+			} else {
+				s.batchItems[s.batchIdx].status = batchDone
 			}
+			s.batchIdx++
 			return s.processNextBatchItem()
-		}
-
-	case progressTickMsg:
-		if s.state == workspaceExecuting {
-			var cmd tea.Cmd
-			s.progress, cmd = s.progress.update(msg)
-			return s, cmd
-		}
-
-	case progress.FrameMsg:
-		if s.state == workspaceExecuting {
-			var cmd tea.Cmd
-			s.progress, cmd = s.progress.update(msg)
-			return s, cmd
 		}
 	}
 
@@ -480,18 +462,21 @@ func (s workspaceScreen) beginAction(action string) (screen, tea.Cmd) {
 	}
 
 	s.pendingAction = action
-	s.pendingItems = targets
+	s.batchItems = make([]batchItem, len(targets))
+	for i, t := range targets {
+		s.batchItems[i] = batchItem{item: t, status: batchQueued}
+	}
 	s.state = workspaceConfirm
 	return s, nil
 }
 
 func (s workspaceScreen) confirmModalView(width, height int) string {
-	count := len(s.pendingItems)
+	count := len(s.batchItems)
 	verb := s.pendingAction
 	title := strings.ToUpper(verb[:1]) + verb[1:]
 	var body string
 	if count == 1 {
-		body = fmt.Sprintf("%s %s (%s)?", title, s.pendingItems[0].pkg.Name, s.pendingItems[0].pkg.ID)
+		body = fmt.Sprintf("%s %s (%s)?", title, s.batchItems[0].item.pkg.Name, s.batchItems[0].item.pkg.ID)
 	} else {
 		body = fmt.Sprintf("%s %d selected packages?", title, count)
 	}
@@ -507,24 +492,21 @@ type startWorkspaceBatchMsg struct{}
 
 func (s workspaceScreen) startBatch() (screen, tea.Cmd) {
 	s.state = workspaceExecuting
-	s.batchTotal = len(s.pendingItems)
-	s.batchCurrent = 0
-	s.batchErrs = make([]error, 0, s.batchTotal)
-	s.batchOutputs = make([]string, 0, s.batchTotal)
+	s.batchIdx = 0
 	s.exec.reset()
-	s.progress, _ = s.progress.start()
 	return s, tea.Batch(
-		tickProgress(),
+		s.spinner.Tick,
 		func() tea.Msg { return startWorkspaceBatchMsg{} },
 	)
 }
 
 func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
-	if s.batchCurrent >= s.batchTotal {
+	if s.batchIdx >= len(s.batchItems) {
 		return s.finishBatch()
 	}
 
-	item := s.pendingItems[s.batchCurrent]
+	s.batchItems[s.batchIdx].status = batchRunning
+	item := s.batchItems[s.batchIdx].item
 	s.exec.appendSection(fmt.Sprintf("== %s (%s) ==", item.pkg.Name, item.pkg.ID))
 
 	var args []string
@@ -539,12 +521,11 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 	}
 	_ = args
 
-	return s, awaitStream(nil, outChan, errChan)
+	return s, tea.Batch(s.spinner.Tick, awaitStream(nil, outChan, errChan))
 }
 
 func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 	s.state = workspaceDone
-	s.progress = s.progress.stop()
 	s.exec.setDoneExpanded(true)
 	s.exec.setDoneSize(s.width, s.height, 18)
 	s.selected = make(map[string]bool)
@@ -570,10 +551,8 @@ func (s workspaceScreen) view(width, height int) string {
 		return s.viewReady(width, height)
 	case workspaceConfirm:
 		return s.confirmModalView(width, height)
-	case workspaceExecuting:
-		return s.viewExecuting(width, height)
-	case workspaceDone:
-		return s.viewDone(width, height)
+	case workspaceExecuting, workspaceDone:
+		return s.viewBatchList(width, height)
 	}
 	return ""
 }
@@ -745,55 +724,57 @@ func (s workspaceScreen) renderItemText(item workspaceItem, maxWidth int, isCurs
 	return name + "  " + ver
 }
 
-func (s workspaceScreen) viewExecuting(width, height int) string {
-	var b strings.Builder
-	action := strings.ToUpper(s.pendingAction[:1]) + s.pendingAction[1:]
-	b.WriteString("  " + sectionTitleStyle.Render(action+" Packages") + "\n")
-	if s.batchTotal > 0 {
-		b.WriteString(fmt.Sprintf("  %s %d/%d\n", action+"ing", s.batchCurrent+1, s.batchTotal))
-	}
-	b.WriteString("  " + s.progress.view() + "\n\n")
-	b.WriteString(s.exec.view(width, height))
-	return b.String()
-}
-
-func (s workspaceScreen) viewDone(width, height int) string {
-	var b strings.Builder
+// viewBatchList renders the batch items with inline status icons.
+// Used for both executing and done states.
+func (s workspaceScreen) viewBatchList(width, height int) string {
+	l := computeLayout(width, height, true)
+	completed, failed, total := batchCounters(s.batchItems)
 	action := strings.ToUpper(s.pendingAction[:1]) + s.pendingAction[1:]
 
-	// Count successes and failures.
-	successCount := 0
-	failCount := 0
-	for _, err := range s.batchErrs {
-		if err == nil {
-			successCount++
-		} else {
-			failCount++
+	var b strings.Builder
+
+	// Header with aggregate counter.
+	if s.state == workspaceExecuting {
+		verb := action
+		if action == "Upgrade" {
+			verb = "Upgrading"
+		} else if action == "Uninstall" {
+			verb = "Uninstalling"
 		}
-	}
-
-	if failCount == 0 {
-		b.WriteString("  " + successStyle.Render(fmt.Sprintf("%s complete: %d succeeded", action, successCount)) + "\n\n")
+		b.WriteString(fmt.Sprintf("  %s  %d/%d", sectionTitleStyle.Render(verb), completed, total))
 	} else {
-		b.WriteString("  " + warnStyle.Render(fmt.Sprintf("%s finished: %d succeeded, %d failed", action, successCount, failCount)) + "\n\n")
-	}
-
-	// Per-package results.
-	for i, item := range s.pendingItems {
-		if i < len(s.batchErrs) {
-			if s.batchErrs[i] == nil {
-				b.WriteString("  " + successStyle.Render("✓ ") + item.pkg.Name + "\n")
-			} else {
-				b.WriteString("  " + errorStyle.Render("✗ ") + item.pkg.Name + "\n")
-				b.WriteString("    " + helpStyle.Render(s.batchErrs[i].Error()) + "\n")
-			}
+		if failed == 0 {
+			b.WriteString("  " + successStyle.Render(fmt.Sprintf("%s complete: %d succeeded", action, completed)))
+		} else {
+			b.WriteString("  " + warnStyle.Render(fmt.Sprintf("%s finished: %d succeeded, %d failed", action, completed-failed, failed)))
 		}
 	}
+	b.WriteString("\n\n")
 
-	if logView := s.exec.doneView(width, height, 18); logView != "" {
-		b.WriteString("\n" + logView + "\n")
+	// Inline status list.
+	for _, bi := range s.batchItems {
+		icon := bi.statusIcon(s.spinner)
+		name := itemStyle.Render(bi.item.pkg.Name)
+		row := "  " + icon + " " + name
+		if text := bi.statusText(); text != "" {
+			row += "  " + text
+		}
+		b.WriteString(row + "\n")
 	}
-	b.WriteString("\n  " + helpStyle.Render("Press r to refresh or tab to switch screens") + "\n")
+
+	// Log panel below.
+	logReserve := len(s.batchItems) + 4 // items + header + padding
+	if s.state == workspaceDone {
+		if logView := s.exec.doneView(width, l.list.H, logReserve); logView != "" {
+			b.WriteString("\n" + logView + "\n")
+		}
+		b.WriteString("\n  " + helpStyle.Render("Press r to refresh or tab to switch screens") + "\n")
+	} else {
+		logH := max(l.list.H-logReserve, 5)
+		s.exec.setSize(width, logH+12) // adjust for setSize offset
+		b.WriteString("\n" + s.exec.view(width, logH) + "\n")
+	}
+
 	return b.String()
 }
 
