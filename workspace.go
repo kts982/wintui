@@ -55,7 +55,9 @@ type workspaceScreen struct {
 	exec             executionLog
 	pendingAction    string // "upgrade" or "uninstall"
 	batchItems       []batchItem
-	batchIdx         int // index of the currently running item
+	batchIdx         int                   // index of the currently running item
+	batchMap         map[string]*batchItem // keyed by packageSourceKey for list lookup
+	showResultModal  bool
 	streamOut        <-chan string
 	streamErr        <-chan error
 	err              error
@@ -209,13 +211,19 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 
-		// Done state.
+		// Done state — result modal or post-close list.
 		if s.state == workspaceDone {
-			cmd, handled := s.exec.doneUpdate(msg)
-			if handled {
-				return s, cmd
+			if s.showResultModal {
+				switch msg.String() {
+				case "enter", "esc":
+					s.showResultModal = false
+					return s, nil
+				}
+				return s, nil
 			}
 			if msg.String() == "r" {
+				s.batchItems = nil
+				s.batchMap = nil
 				cache.invalidate()
 				s.state = workspaceLoading
 				s.items = nil
@@ -465,8 +473,10 @@ func (s workspaceScreen) beginAction(action string) (screen, tea.Cmd) {
 
 	s.pendingAction = action
 	s.batchItems = make([]batchItem, len(targets))
+	s.batchMap = make(map[string]*batchItem, len(targets))
 	for i, t := range targets {
 		s.batchItems[i] = batchItem{item: t, status: batchQueued}
+		s.batchMap[t.key()] = &s.batchItems[i]
 	}
 	s.state = workspaceConfirm
 	return s, nil
@@ -530,8 +540,7 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 
 func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 	s.state = workspaceDone
-	s.exec.setDoneExpanded(true)
-	s.exec.setDoneSize(s.width, s.height, 18)
+	s.showResultModal = true
 	s.selected = make(map[string]bool)
 	cache.invalidate()
 	return s, func() tea.Msg { return packageDataChangedMsg{origin: screenWorkspace} }
@@ -555,8 +564,14 @@ func (s workspaceScreen) view(width, height int) string {
 		return s.viewReady(width, height)
 	case workspaceConfirm:
 		return s.confirmModalView(width, height)
-	case workspaceExecuting, workspaceDone:
-		return s.viewBatchList(width, height)
+	case workspaceExecuting:
+		return s.viewReady(width, height)
+	case workspaceDone:
+		bg := s.viewReady(width, height)
+		if s.showResultModal {
+			return s.renderResultModal(bg, width, height)
+		}
+		return bg
 	}
 	return ""
 }
@@ -703,8 +718,14 @@ func (s workspaceScreen) renderPanelItems(items []workspaceItem, globalOffset, m
 		if globalIdx == s.cursor {
 			cursor = cursorStr
 		}
-		sel := checkbox(s.selected[item.key()])
 		isCursor := globalIdx == s.cursor
+		// Show batch status icon if this package is in the current batch.
+		var sel string
+		if bi, ok := s.batchMap[item.key()]; ok {
+			sel = " " + bi.statusIcon(s.spinner) + " "
+		} else {
+			sel = checkbox(s.selected[item.key()])
+		}
 		row := cursor + sel + " " + s.renderItemText(item, innerWidth, isCursor)
 		lines = append(lines, row)
 	}
@@ -730,54 +751,50 @@ func (s workspaceScreen) renderItemText(item workspaceItem, maxWidth int, isCurs
 
 // viewBatchList renders the batch items with inline status icons.
 // Used for both executing and done states.
-func (s workspaceScreen) viewBatchList(width, height int) string {
-	l := computeLayout(width, height, true)
-	completed, failed, total := batchCounters(s.batchItems)
+// renderResultModal renders a scrollable modal with batch execution results.
+func (s workspaceScreen) renderResultModal(background string, width, height int) string {
+	completed, failed, _ := batchCounters(s.batchItems)
 	action := strings.ToUpper(s.pendingAction[:1]) + s.pendingAction[1:]
 
-	var b strings.Builder
+	var title string
+	if failed == 0 {
+		title = fmt.Sprintf("%s Complete", action)
+	} else {
+		title = fmt.Sprintf("%s Results", action)
+	}
 
-	// Compact status bar: "Upgrading 1/2: ✓ Notepad++ · ⣯ Neovim · queued"
-	var statusParts []string
+	// Build result body.
+	var bodyLines []string
+	if failed == 0 {
+		bodyLines = append(bodyLines, successStyle.Render(fmt.Sprintf("All %d packages succeeded.", completed)))
+	} else {
+		bodyLines = append(bodyLines, warnStyle.Render(fmt.Sprintf("%d succeeded, %d failed", completed-failed, failed)))
+	}
+	bodyLines = append(bodyLines, "")
+
 	for _, bi := range s.batchItems {
 		icon := bi.statusIcon(s.spinner)
-		statusParts = append(statusParts, icon+" "+bi.item.pkg.Name)
+		line := icon + " " + bi.item.pkg.Name
+		if bi.err != nil {
+			line += "  " + helpStyle.Render(bi.err.Error())
+		}
+		bodyLines = append(bodyLines, line)
 	}
 
-	if s.state == workspaceExecuting {
-		verb := action
-		switch action {
-		case "Upgrade":
-			verb = "Upgrading"
-		case "Uninstall":
-			verb = "Uninstalling"
+	// Add log excerpt if there's output.
+	if s.exec.hasOutput() {
+		bodyLines = append(bodyLines, "")
+		bodyLines = append(bodyLines, helpStyle.Render("── Execution Log ──"))
+		for _, line := range s.exec.lines {
+			bodyLines = append(bodyLines, helpStyle.Render(line))
 		}
-		header := fmt.Sprintf("%s %d/%d", verb, completed, total)
-		b.WriteString("  " + sectionTitleStyle.Render(header) + "  " + strings.Join(statusParts, " · "))
-	} else {
-		if failed == 0 {
-			b.WriteString("  " + successStyle.Render(fmt.Sprintf("%s complete: %d succeeded", action, completed)))
-		} else {
-			b.WriteString("  " + warnStyle.Render(fmt.Sprintf("%s finished: %d succeeded, %d failed", action, completed-failed, failed)))
-		}
-		b.WriteString("  " + strings.Join(statusParts, " · "))
-	}
-	b.WriteString("\n")
-
-	// Log panel fills remaining space (header is just 1 line now).
-	logReserve := 4 // status line + padding
-	if s.state == workspaceDone {
-		if logView := s.exec.doneView(width, l.list.H, logReserve); logView != "" {
-			b.WriteString("\n" + logView + "\n")
-		}
-		b.WriteString("\n  " + helpStyle.Render("Press r to refresh or tab to switch screens") + "\n")
-	} else {
-		logH := max(l.list.H-logReserve, 5)
-		s.exec.setSize(width, logH+12)
-		b.WriteString("\n" + s.exec.view(width, logH) + "\n")
 	}
 
-	return b.String()
+	return renderConfirmModal(background, width, height, confirmModal{
+		title:       title,
+		body:        bodyLines,
+		confirmVerb: "close",
+	})
 }
 
 // ── Help keys ─────────────────────────────────────────────────────
@@ -793,9 +810,19 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 		}
 	case workspaceExecuting:
-		return s.exec.helpKeys()
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		}
 	case workspaceDone:
-		return s.exec.doneHelpKeys()
+		if s.showResultModal {
+			return []key.Binding{
+				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "close")),
+				key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
+			}
+		}
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
+		}
 	case workspaceReady:
 		// fall through
 	default:
