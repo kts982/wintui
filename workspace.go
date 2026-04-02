@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/lipgloss/v2"
 	"github.com/sahilm/fuzzy"
@@ -20,6 +22,9 @@ const (
 	workspaceLoading workspaceState = iota
 	workspaceReady
 	workspaceEmpty
+	workspaceConfirm
+	workspaceExecuting
+	workspaceDone
 )
 
 // workspaceItem is a unified list entry for both upgradeable and installed packages.
@@ -35,19 +40,29 @@ func (w workspaceItem) key() string {
 }
 
 type workspaceScreen struct {
-	state    workspaceState
-	width    int
-	height   int
-	layout   layout
-	items    []workspaceItem // grouped: upgradeable first, then installed
-	cursor   int
-	selected map[string]bool // keyed by packageSourceKey
-	spinner  spinner.Model
-	summary  summaryPanel
-	filter   listFilter
-	detail   detailPanel
-	ctx      context.Context
-	cancel   context.CancelFunc
+	state            workspaceState
+	width            int
+	height           int
+	layout           layout
+	items            []workspaceItem // grouped: upgradeable first, then installed
+	cursor           int
+	selected         map[string]bool   // keyed by packageSourceKey
+	selectedVersions map[string]string // custom version picks per package
+	spinner          spinner.Model
+	summary          summaryPanel
+	filter           listFilter
+	detail           detailPanel
+	exec             executionLog
+	progress         progressBar
+	pendingAction    string // "upgrade" or "uninstall"
+	pendingItems     []workspaceItem
+	batchCurrent     int
+	batchTotal       int
+	batchErrs        []error
+	batchOutputs     []string
+	err              error
+	ctx              context.Context
+	cancel           context.CancelFunc
 }
 
 func newWorkspaceScreen() workspaceScreen {
@@ -56,17 +71,20 @@ func newWorkspaceScreen() workspaceScreen {
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
 	ctx, cancel := context.WithCancel(context.Background())
 	return workspaceScreen{
-		state:    workspaceLoading,
-		width:    80,
-		height:   24,
-		layout:   computeLayout(80, 24, true),
-		selected: make(map[string]bool),
-		spinner:  sp,
-		summary:  newSummaryPanel(),
-		filter:   newListFilter(),
-		detail:   newDetailPanel(),
-		ctx:      ctx,
-		cancel:   cancel,
+		state:            workspaceLoading,
+		width:            80,
+		height:           24,
+		layout:           computeLayout(80, 24, true),
+		selected:         make(map[string]bool),
+		selectedVersions: make(map[string]string),
+		spinner:          sp,
+		summary:          newSummaryPanel(),
+		filter:           newListFilter(),
+		detail:           newDetailPanel(),
+		exec:             newExecutionLog(),
+		progress:         newProgressBar(50),
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 }
 
@@ -171,12 +189,59 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.height = msg.Height
 		s.layout = computeLayout(msg.Width, msg.Height, true)
 		s.summary.setSize(s.layout.detail.W, s.layout.detail.H)
+		s.detail = s.detail.withWindowSize(msg.Width, msg.Height)
 		return s, nil
 
 	case tea.KeyPressMsg:
 		// Detail panel intercepts keys when visible.
 		if s.detail.visible() {
 			return s.updateDetail(msg)
+		}
+
+		// Confirm state.
+		if s.state == workspaceConfirm {
+			switch msg.String() {
+			case "enter":
+				return s.startBatch()
+			case "esc":
+				s.state = workspaceReady
+				s.pendingItems = nil
+				s.pendingAction = ""
+				return s, nil
+			}
+			return s, nil
+		}
+
+		// Done state.
+		if s.state == workspaceDone {
+			cmd, handled := s.exec.doneUpdate(msg)
+			if handled {
+				return s, cmd
+			}
+			if msg.String() == "r" {
+				cache.invalidate()
+				s.state = workspaceLoading
+				s.items = nil
+				s.cursor = 0
+				s.err = nil
+				s.exec.reset()
+				return s, s.init()
+			}
+			return s, nil
+		}
+
+		// Executing state — only allow cancel.
+		if s.state == workspaceExecuting {
+			if msg.String() == "esc" {
+				if s.cancel != nil {
+					s.cancel()
+				}
+			}
+			cmd, handled := s.exec.update(msg)
+			if handled {
+				return s, cmd
+			}
+			return s, nil
 		}
 
 		// Filter input.
@@ -221,6 +286,10 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case "a":
 			s.selectAllUpgradeable()
 			return s, nil
+		case "u":
+			return s.beginAction("upgrade")
+		case "x", "delete":
+			return s.beginAction("uninstall")
 		}
 
 	case workspaceDataMsg:
@@ -238,6 +307,11 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		return s, s.focusSummary()
 
 	case spinner.TickMsg:
+		if s.detail.visible() {
+			updated, cmd, _ := s.detail.update(msg)
+			s.detail = updated
+			return s, cmd
+		}
 		if s.state == workspaceLoading {
 			var cmd tea.Cmd
 			s.spinner, cmd = s.spinner.Update(msg)
@@ -254,6 +328,53 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		updated, cmd, _ := s.detail.update(msg)
 		s.detail = updated
 		return s, cmd
+
+	case detailVersionSelectedMsg:
+		if msg.version != "" {
+			if s.selectedVersions == nil {
+				s.selectedVersions = make(map[string]string)
+			}
+			s.selectedVersions[packageSourceKey(msg.pkgID, msg.source)] = msg.version
+		} else {
+			delete(s.selectedVersions, packageSourceKey(msg.pkgID, msg.source))
+		}
+		return s, nil
+
+	case startWorkspaceBatchMsg:
+		if s.state == workspaceExecuting {
+			return s.processNextBatchItem()
+		}
+
+	case streamMsg:
+		if s.state == workspaceExecuting {
+			s.exec.appendLine(string(msg))
+			return s, nil
+		}
+
+	case streamDoneMsg:
+		if s.state == workspaceExecuting {
+			s.batchOutputs = append(s.batchOutputs, s.exec.currentOutput())
+			s.batchErrs = append(s.batchErrs, msg.err)
+			s.batchCurrent++
+			if s.batchTotal > 0 {
+				s.progress.percent = float64(s.batchCurrent) / float64(s.batchTotal)
+			}
+			return s.processNextBatchItem()
+		}
+
+	case progressTickMsg:
+		if s.state == workspaceExecuting {
+			var cmd tea.Cmd
+			s.progress, cmd = s.progress.update(msg)
+			return s, cmd
+		}
+
+	case progress.FrameMsg:
+		if s.state == workspaceExecuting {
+			var cmd tea.Cmd
+			s.progress, cmd = s.progress.update(msg)
+			return s, cmd
+		}
 	}
 
 	return s, nil
@@ -323,9 +444,119 @@ func (s workspaceScreen) updateFilter(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 	}
 }
 
+// ── Actions ───────────────────────────────────────────────────────
+
+func (s workspaceScreen) beginAction(action string) (screen, tea.Cmd) {
+	// Collect selected items that match the action.
+	var targets []workspaceItem
+	for _, item := range s.items {
+		if !s.selected[item.key()] {
+			continue
+		}
+		if action == "upgrade" && !item.upgradeable {
+			continue
+		}
+		targets = append(targets, item)
+	}
+
+	// If nothing selected, act on the focused item.
+	if len(targets) == 0 {
+		items := s.filteredItems()
+		if s.cursor < len(items) {
+			item := items[s.cursor]
+			if action == "upgrade" && !item.upgradeable {
+				return s, nil
+			}
+			targets = []workspaceItem{item}
+		}
+	}
+
+	if len(targets) == 0 {
+		return s, nil
+	}
+
+	s.pendingAction = action
+	s.pendingItems = targets
+	s.state = workspaceConfirm
+	return s, nil
+}
+
+func (s workspaceScreen) confirmModalView(width, height int) string {
+	count := len(s.pendingItems)
+	verb := s.pendingAction
+	title := strings.ToUpper(verb[:1]) + verb[1:]
+	var body string
+	if count == 1 {
+		body = fmt.Sprintf("%s %s (%s)?", title, s.pendingItems[0].pkg.Name, s.pendingItems[0].pkg.ID)
+	} else {
+		body = fmt.Sprintf("%s %d selected packages?", title, count)
+	}
+	bg := s.viewReady(width, height)
+	return renderConfirmModal(bg, width, height, confirmModal{
+		title:       title + " Packages",
+		body:        []string{body},
+		confirmVerb: verb,
+	})
+}
+
+type startWorkspaceBatchMsg struct{}
+
+func (s workspaceScreen) startBatch() (screen, tea.Cmd) {
+	s.state = workspaceExecuting
+	s.batchTotal = len(s.pendingItems)
+	s.batchCurrent = 0
+	s.batchErrs = make([]error, 0, s.batchTotal)
+	s.batchOutputs = make([]string, 0, s.batchTotal)
+	s.exec.reset()
+	s.progress, _ = s.progress.start()
+	return s, tea.Batch(
+		tickProgress(),
+		func() tea.Msg { return startWorkspaceBatchMsg{} },
+	)
+}
+
+func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
+	if s.batchCurrent >= s.batchTotal {
+		return s.finishBatch()
+	}
+
+	item := s.pendingItems[s.batchCurrent]
+	s.exec.appendSection(fmt.Sprintf("== %s (%s) ==", item.pkg.Name, item.pkg.ID))
+
+	var args []string
+	var outChan <-chan string
+	var errChan <-chan error
+
+	if s.pendingAction == "upgrade" {
+		version := s.selectedVersions[item.key()]
+		args, outChan, errChan = upgradePackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
+	} else {
+		args, outChan, errChan = uninstallPackageStreamCtx(s.ctx, item.pkg)
+	}
+	_ = args
+
+	return s, awaitStream(nil, outChan, errChan)
+}
+
+func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
+	s.state = workspaceDone
+	s.progress = s.progress.stop()
+	s.exec.setDoneExpanded(true)
+	s.exec.setDoneSize(s.width, s.height, 18)
+	s.selected = make(map[string]bool)
+	cache.invalidate()
+	return s, func() tea.Msg { return packageDataChangedMsg{origin: screenWorkspace} }
+}
+
 // ── View ──────────────────────────────────────────────────────────
 
 func (s workspaceScreen) view(width, height int) string {
+	// Detail overlay takes over the full content area.
+	if s.detail.visible() {
+		return "  " + sectionTitleStyle.Render("Package Details") + "\n\n" +
+			s.detail.view(width, height-2)
+	}
+
 	switch s.state {
 	case workspaceLoading:
 		return s.viewLoading()
@@ -333,6 +564,12 @@ func (s workspaceScreen) view(width, height int) string {
 		return "  " + helpStyle.Render("No packages found. Press r to refresh.") + "\n"
 	case workspaceReady:
 		return s.viewReady(width, height)
+	case workspaceConfirm:
+		return s.confirmModalView(width, height)
+	case workspaceExecuting:
+		return s.viewExecuting(width, height)
+	case workspaceDone:
+		return s.viewDone(width, height)
 	}
 	return ""
 }
@@ -431,13 +668,77 @@ func (s workspaceScreen) renderItemText(item workspaceItem, maxWidth int) string
 	return name + "  " + ver
 }
 
+func (s workspaceScreen) viewExecuting(width, height int) string {
+	var b strings.Builder
+	action := strings.ToUpper(s.pendingAction[:1]) + s.pendingAction[1:]
+	b.WriteString("  " + sectionTitleStyle.Render(action+" Packages") + "\n")
+	if s.batchTotal > 0 {
+		b.WriteString(fmt.Sprintf("  %s %d/%d\n", action+"ing", s.batchCurrent+1, s.batchTotal))
+	}
+	b.WriteString("  " + s.progress.view() + "\n\n")
+	b.WriteString(s.exec.view(width, height))
+	return b.String()
+}
+
+func (s workspaceScreen) viewDone(width, height int) string {
+	var b strings.Builder
+	action := strings.ToUpper(s.pendingAction[:1]) + s.pendingAction[1:]
+
+	// Count successes and failures.
+	successCount := 0
+	failCount := 0
+	for _, err := range s.batchErrs {
+		if err == nil {
+			successCount++
+		} else {
+			failCount++
+		}
+	}
+
+	if failCount == 0 {
+		b.WriteString("  " + successStyle.Render(fmt.Sprintf("%s complete: %d succeeded", action, successCount)) + "\n\n")
+	} else {
+		b.WriteString("  " + warnStyle.Render(fmt.Sprintf("%s finished: %d succeeded, %d failed", action, successCount, failCount)) + "\n\n")
+	}
+
+	// Per-package results.
+	for i, item := range s.pendingItems {
+		if i < len(s.batchErrs) {
+			if s.batchErrs[i] == nil {
+				b.WriteString("  " + successStyle.Render("✓ ") + item.pkg.Name + "\n")
+			} else {
+				b.WriteString("  " + errorStyle.Render("✗ ") + item.pkg.Name + "\n")
+				b.WriteString("    " + helpStyle.Render(s.batchErrs[i].Error()) + "\n")
+			}
+		}
+	}
+
+	if logView := s.exec.doneView(width, height, 18); logView != "" {
+		b.WriteString("\n" + logView + "\n")
+	}
+	b.WriteString("\n  " + helpStyle.Render("Press r to refresh or tab to switch screens") + "\n")
+	return b.String()
+}
+
 // ── Help keys ─────────────────────────────────────────────────────
 
 func (s workspaceScreen) helpKeys() []key.Binding {
 	if s.detail.visible() {
 		return s.detail.helpKeys()
 	}
-	if s.state != workspaceReady {
+	switch s.state {
+	case workspaceConfirm:
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", s.pendingAction)),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		}
+	case workspaceExecuting:
+		return s.exec.helpKeys()
+	case workspaceDone:
+		return s.exec.doneHelpKeys()
+	case workspaceReady:
+		// fall through
+	default:
 		return nil
 	}
 	bindings := []key.Binding{
