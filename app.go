@@ -26,6 +26,7 @@ const (
 	screenCleanup
 	screenHealthcheck
 	screenSettings
+	screenWorkspace
 )
 
 // ── Tab definitions ────────────────────────────────────────────────
@@ -36,8 +37,7 @@ type tabDef struct {
 }
 
 var tabs = []tabDef{
-	{"Upgrade", screenUpgrade},
-	{"Installed", screenPackages},
+	{"Packages", screenWorkspace},
 	{"Install", screenInstall},
 	{"Cleanup", screenCleanup},
 	{"Health", screenHealthcheck},
@@ -473,10 +473,7 @@ func (a app) handlePackageDataChanged(msg packageDataChangedMsg) (app, tea.Cmd) 
 }
 
 func packageRefreshOrder(origin screenID) []screenID {
-	if origin == screenInstall {
-		return []screenID{screenPackages, screenUpgrade}
-	}
-	return []screenID{screenUpgrade, screenPackages}
+	return []screenID{screenWorkspace, screenPackages, screenUpgrade}
 }
 
 func (a app) updateScreen(id screenID, msg tea.Msg) (app, tea.Cmd) {
@@ -539,6 +536,8 @@ func (a app) wrapScreenCmd(id screenID, cmd tea.Cmd) tea.Cmd {
 
 func createScreen(id screenID) screen {
 	switch id {
+	case screenWorkspace:
+		return newWorkspaceScreen()
 	case screenUpgrade:
 		return newUpgradeScreen()
 	case screenInstall:
@@ -552,6 +551,6 @@ func createScreen(id screenID) screen {
 	case screenSettings:
 		return newSettingsScreen()
 	default:
-		return newUpgradeScreen()
+		return newWorkspaceScreen()
 	}
 }

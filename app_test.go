@@ -43,7 +43,7 @@ func TestInstallScreenStatePreservedAcrossTabSwitches(t *testing.T) {
 	a := newApp(nil)
 
 	var cmd tea.Cmd
-	a, cmd = a.switchTab(2) // Install
+	a, cmd = a.switchTab(1) // Install
 	if cmd == nil {
 		t.Fatal("expected init command when first switching to Install tab")
 	}
@@ -61,8 +61,8 @@ func TestInstallScreenStatePreservedAcrossTabSwitches(t *testing.T) {
 		t.Fatalf("install input before switch = %q, want %q", got, "firefox")
 	}
 
-	a, _ = a.switchTab(1) // Installed
-	a, _ = a.switchTab(2) // Install again
+	a, _ = a.switchTab(0) // Packages
+	a, _ = a.switchTab(1) // Install again
 
 	installAfter, ok := a.activeScreen().(installScreen)
 	if !ok {
@@ -77,13 +77,13 @@ func TestBackgroundScreenCommandsStayOwnedByOriginatingScreen(t *testing.T) {
 	a := app{
 		activeTab: 0,
 		screens: map[screenID]screen{
-			screenUpgrade: stubScreen{},
-			screenInstall: stubScreen{},
+			screenWorkspace: stubScreen{},
+			screenInstall:   stubScreen{},
 		},
 	}
 
 	var cmd tea.Cmd
-	a, cmd = a.updateScreen(screenUpgrade, tea.KeyPressMsg{Code: 'b'})
+	a, cmd = a.updateScreen(screenWorkspace, tea.KeyPressMsg{Code: 'b'})
 	if cmd == nil {
 		t.Fatal("expected command from stub screen")
 	}
@@ -94,37 +94,36 @@ func TestBackgroundScreenCommandsStayOwnedByOriginatingScreen(t *testing.T) {
 		t.Fatalf("wrapped command produced %T, want tea.BatchMsg", msg)
 	}
 
-	a.activeTab = 2 // Install tab becomes active while upgrade commands continue in background
+	a.activeTab = 1 // Install tab becomes active while workspace commands continue in background
 
 	for _, sub := range batch {
 		model, _ := a.Update(sub())
 		a = model.(app)
 	}
 
-	upgradeScreen, ok := a.screens[screenUpgrade].(stubScreen)
+	wsScreen, ok := a.screens[screenWorkspace].(stubScreen)
 	if !ok {
-		t.Fatal("upgrade screen missing or wrong type")
+		t.Fatal("workspace screen missing or wrong type")
 	}
-	if got, want := upgradeScreen.log, []string{"first", "second"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("upgrade screen log = %#v, want %#v", got, want)
+	if got, want := wsScreen.log, []string{"first", "second"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("workspace screen log = %#v, want %#v", got, want)
 	}
 
-	installScreen, ok := a.screens[screenInstall].(stubScreen)
+	instScreen, ok := a.screens[screenInstall].(stubScreen)
 	if !ok {
 		t.Fatal("install screen missing or wrong type")
 	}
-	if len(installScreen.log) != 0 {
-		t.Fatalf("install screen unexpectedly received background updates: %#v", installScreen.log)
+	if len(instScreen.log) != 0 {
+		t.Fatalf("install screen unexpectedly received background updates: %#v", instScreen.log)
 	}
 }
 
-func TestPackageDataChangedReloadsInactiveDataScreensInBackground(t *testing.T) {
+func TestPackageDataChangedReloadsInactiveDataScreens(t *testing.T) {
 	a := app{
-		activeTab: 2, // Install
+		activeTab: 1, // Install
 		screens: map[screenID]screen{
-			screenUpgrade:  stubScreen{},
-			screenInstall:  stubScreen{},
-			screenPackages: stubScreen{},
+			screenWorkspace: stubScreen{},
+			screenInstall:   stubScreen{},
 		},
 	}
 
@@ -132,43 +131,17 @@ func TestPackageDataChangedReloadsInactiveDataScreensInBackground(t *testing.T) 
 	if cmd == nil {
 		t.Fatal("expected reload command when affected tabs are inactive")
 	}
-	if _, ok := a.screens[screenUpgrade].(upgradeScreen); !ok {
-		t.Fatalf("inactive upgrade screen was not recreated: %#v", a.screens[screenUpgrade])
-	}
-	if _, ok := a.screens[screenPackages].(packagesScreen); !ok {
-		t.Fatalf("inactive packages screen was not recreated: %#v", a.screens[screenPackages])
+	if _, ok := a.screens[screenWorkspace].(workspaceScreen); !ok {
+		t.Fatalf("inactive workspace screen was not recreated: %T", a.screens[screenWorkspace])
 	}
 }
 
-func TestPackageDataChangedReloadsActiveDataScreen(t *testing.T) {
+func TestPackageDataChangedUsesSequentialRefresh(t *testing.T) {
 	a := app{
-		activeTab: 1, // Installed
+		activeTab: 1, // Install
 		screens: map[screenID]screen{
-			screenUpgrade:  stubScreen{},
-			screenInstall:  stubScreen{},
-			screenPackages: stubScreen{},
-		},
-	}
-
-	_, cmd := a.Update(packageDataChangedMsg{origin: screenInstall})
-	if cmd == nil {
-		t.Fatal("expected reload command for active data screen")
-	}
-	if _, ok := a.screens[screenUpgrade].(upgradeScreen); !ok {
-		t.Fatalf("inactive upgrade screen was not recreated: %#v", a.screens[screenUpgrade])
-	}
-	if _, ok := a.screens[screenPackages].(packagesScreen); !ok {
-		t.Fatalf("active packages screen was not recreated: %#v", a.screens[screenPackages])
-	}
-}
-
-func TestPackageDataChangedUsesSequentialRefreshAfterInstall(t *testing.T) {
-	a := app{
-		activeTab: 2, // Install
-		screens: map[screenID]screen{
-			screenUpgrade:  stubScreen{},
-			screenInstall:  stubScreen{},
-			screenPackages: stubScreen{},
+			screenWorkspace: stubScreen{},
+			screenInstall:   stubScreen{},
 		},
 	}
 
@@ -208,45 +181,42 @@ func TestRenderLogoUsesFullAsciiLogoOnLargeTerminals(t *testing.T) {
 	}
 }
 
-func TestSwitchTabAppliesCurrentWindowSizeToNewPackagesScreen(t *testing.T) {
+func TestSwitchTabAppliesCurrentWindowSizeToNewInstallScreen(t *testing.T) {
 	a := newApp(nil)
 	a.width = 140
 	a.height = 40
 
 	var cmd tea.Cmd
-	a, cmd = a.switchTab(1) // Installed
+	a, cmd = a.switchTab(1) // Install
 	if cmd == nil {
-		t.Fatal("expected init command when first switching to Installed tab")
+		t.Fatal("expected init command when first switching to Install tab")
 	}
 
-	s, ok := a.activeScreen().(packagesScreen)
+	_, ok := a.activeScreen().(installScreen)
 	if !ok {
-		t.Fatalf("active screen = %T, want packagesScreen", a.activeScreen())
-	}
-	if s.tableWidth != packagesTableWidth(140) {
-		t.Fatalf("tableWidth = %d, want %d", s.tableWidth, packagesTableWidth(140))
+		t.Fatalf("active screen = %T, want installScreen", a.activeScreen())
 	}
 }
 
 func TestConfirmModalBlocksGlobalTabSwitchShortcuts(t *testing.T) {
 	a := app{
-		activeTab: 2, // Install
+		activeTab: 1, // Install
 		screens: map[screenID]screen{
 			screenInstall: installScreen{state: installConfirm},
 		},
 	}
 
-	model, _ := a.Update(tea.KeyPressMsg{Code: '2', Text: "2"})
+	model, _ := a.Update(tea.KeyPressMsg{Code: '1', Text: "1"})
 	got := model.(app)
 
-	if got.activeTab != 2 {
-		t.Fatalf("activeTab = %d, want %d", got.activeTab, 2)
+	if got.activeTab != 1 {
+		t.Fatalf("activeTab = %d, want %d", got.activeTab, 1)
 	}
 }
 
 func TestDetailOverlayBlocksGlobalTabSwitchShortcuts(t *testing.T) {
 	a := app{
-		activeTab: 2, // Install
+		activeTab: 1, // Install
 		screens: map[screenID]screen{
 			screenInstall: installScreen{
 				detail: detailPanel{state: detailReady},
@@ -254,13 +224,14 @@ func TestDetailOverlayBlocksGlobalTabSwitchShortcuts(t *testing.T) {
 		},
 	}
 
-	model, _ := a.Update(tea.KeyPressMsg{Code: '2', Text: "2"})
+	model, _ := a.Update(tea.KeyPressMsg{Code: '1', Text: "1"})
 	got := model.(app)
 
-	if got.activeTab != 2 {
-		t.Fatalf("activeTab = %d, want %d", got.activeTab, 2)
+	if got.activeTab != 1 {
+		t.Fatalf("activeTab = %d, want %d", got.activeTab, 1)
 	}
 }
+
 func TestStartRetryMsgTriggersActionImmediately(t *testing.T) {
 	req := retryRequest{
 		Op: retryOpInstall,

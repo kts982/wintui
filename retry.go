@@ -161,11 +161,9 @@ func retryWarningText(req *retryRequest) string {
 func tabForRetry(req retryRequest) int {
 	switch req.Op {
 	case retryOpInstall:
-		return 2
-	case retryOpUpgrade:
-		return 0
-	case retryOpUninstall:
-		return 1
+		return 1 // Install tab
+	case retryOpUpgrade, retryOpUninstall:
+		return 0 // Packages (workspace) tab
 	default:
 		return 0
 	}
