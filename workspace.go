@@ -603,8 +603,8 @@ func (s workspaceScreen) viewReady(width, height int) string {
 }
 
 func (s workspaceScreen) renderList(items []workspaceItem, nUpgradeable int, l layout) string {
-	panelWidth := l.list.W - 2          // account for outer indent
-	innerWidth := max(panelWidth-4, 10) // border(2) + padding(2)
+	panelWidth := l.list.W
+	innerWidth := max(panelWidth-2, 10) // minus left+right border chars
 
 	var b strings.Builder
 
@@ -620,14 +620,17 @@ func (s workspaceScreen) renderList(items []workspaceItem, nUpgradeable int, l l
 	// Calculate how much height each panel gets.
 	availableH := l.list.H
 	if s.filter.active || s.filter.query != "" {
-		availableH-- // filter bar
+		availableH--
 	}
 
-	// Allocate height: updates panel gets up to 40% or what it needs, rest goes to installed.
+	// Determine which section has focus.
+	cursorInUpdates := s.cursor < nUpgradeable
+
+	// Allocate height: updates gets what it needs (capped), rest to installed.
 	var updatesPanelH, installedPanelH int
 	if nUpgradeable > 0 && nInstalled > 0 {
 		maxUpdatesH := max(availableH*2/5, 5)
-		updatesPanelH = min(nUpgradeable+3, maxUpdatesH) // +3 for top border/title + bottom border + spacing
+		updatesPanelH = min(nUpgradeable+2, maxUpdatesH) // +2 for top+bottom border
 		installedPanelH = availableH - updatesPanelH
 	} else if nUpgradeable > 0 {
 		updatesPanelH = availableH
@@ -639,9 +642,13 @@ func (s workspaceScreen) renderList(items []workspaceItem, nUpgradeable int, l l
 	if nUpgradeable > 0 {
 		updateItems := items[:nUpgradeable]
 		title := fmt.Sprintf("Updates Available (%d)", nUpgradeable)
-		innerH := max(updatesPanelH-3, 1) // minus border(2) + title(1)
+		innerH := max(updatesPanelH-2, 1) // minus top+bottom border
+		borderColor := dim
+		if cursorInUpdates {
+			borderColor = accent
+		}
 		content := s.renderPanelItems(updateItems, 0, innerH, innerWidth)
-		b.WriteString(renderTitledPanel(title, content, panelWidth, innerH, accent))
+		b.WriteString(renderTitledPanel(title, content, panelWidth, innerH, borderColor))
 		b.WriteString("\n")
 	}
 
@@ -649,9 +656,13 @@ func (s workspaceScreen) renderList(items []workspaceItem, nUpgradeable int, l l
 	if nInstalled > 0 {
 		installedItems := items[nUpgradeable:]
 		title := fmt.Sprintf("Installed (%d)", nInstalled)
-		innerH := max(installedPanelH-3, 1)
+		innerH := max(installedPanelH-2, 1) // minus top+bottom border
+		borderColor := dim
+		if !cursorInUpdates || nUpgradeable == 0 {
+			borderColor = accent
+		}
 		content := s.renderPanelItems(installedItems, nUpgradeable, innerH, innerWidth)
-		b.WriteString(renderTitledPanel(title, content, panelWidth, innerH, dim))
+		b.WriteString(renderTitledPanel(title, content, panelWidth, innerH, borderColor))
 	}
 
 	return b.String()
@@ -662,15 +673,17 @@ func renderTitledPanel(title, content string, width, innerH int, borderColor col
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(borderColor)
 	borderStyle := lipgloss.NewStyle().Foreground(borderColor)
 
-	innerW := max(width-2, 1) // minus left+right border
+	innerW := max(width-2, 1) // content width between left and right border chars
 
-	// Top border: ╭─ Title ─────────╮
+	// Top border: ╭─ Title ──────────────────╮
 	titleRendered := titleStyle.Render(" " + title + " ")
-	titleLen := len([]rune(title)) + 2 // +2 for spaces
-	remainingW := max(innerW-titleLen-1, 0)
-	topLine := borderStyle.Render("╭─") + titleRendered + borderStyle.Render(strings.Repeat("─", remainingW)+"╮")
+	titleRuneLen := len([]rune(title)) + 2 // spaces around title
+	dashesAfter := max(innerW-titleRuneLen-1, 0)
+	topLine := borderStyle.Render("╭─") + titleRendered +
+		borderStyle.Render(strings.Repeat("─", dashesAfter)) +
+		borderStyle.Render("╮")
 
-	// Content with side borders.
+	// Content rows with side borders.
 	contentLines := strings.Split(content, "\n")
 	var body strings.Builder
 	for i := range innerH {
@@ -678,8 +691,7 @@ func renderTitledPanel(title, content string, width, innerH int, borderColor col
 		if i < len(contentLines) {
 			line = contentLines[i]
 		}
-		// Pad line to innerW using lipgloss to handle ANSI-aware width.
-		paddedLine := lipgloss.NewStyle().Width(innerW).Render(line)
+		paddedLine := lipgloss.NewStyle().Width(innerW).MaxWidth(innerW).Render(line)
 		body.WriteString(borderStyle.Render("│") + paddedLine + borderStyle.Render("│") + "\n")
 	}
 

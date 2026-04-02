@@ -406,7 +406,9 @@ func (a app) renderTabBar() string {
 		adminBadge = lipgloss.NewStyle().Foreground(warning).Render("● user")
 	}
 
-	return "  " + bar + "  " + adminBadge + "\n"
+	// Indent the entire tab bar consistently.
+	tabLine := lipgloss.NewStyle().PaddingLeft(1).Render(bar) + "  " + adminBadge
+	return tabLine + "\n"
 }
 
 // tabHitTest returns the tab index at x position, or -1.
