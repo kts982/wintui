@@ -216,8 +216,12 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			case execPhaseComplete:
 				if msg.String() == "enter" {
 					s.modal = nil
-					s.state = workspaceDone
-					return s, nil
+					cache.invalidate()
+					s.state = workspaceLoading
+					s.items = nil
+					s.cursor = 0
+					s.exec.reset()
+					return s, s.init()
 				}
 				return s, nil
 			}

@@ -28,7 +28,6 @@ type execModal struct {
 	idx     int // currently running item index
 	log     []string
 	spinner spinner.Model
-	scroll  int // scroll offset for result view
 }
 
 func newExecModal(action string, items []batchItem) execModal {
@@ -53,14 +52,26 @@ func (m execModal) actionTitle() string {
 	return strings.ToUpper(m.action[:1]) + m.action[1:]
 }
 
+func (m execModal) actionVerb() string {
+	switch m.action {
+	case "upgrade":
+		return "Upgrading"
+	case "uninstall":
+		return "Uninstalling"
+	default:
+		return m.actionTitle() + "ing"
+	}
+}
+
 func (m execModal) active() bool {
 	return len(m.items) > 0
 }
 
-// view renders the modal content for the current phase.
+// view renders the modal centered in the content area (below chrome).
 func (m execModal) view(width, height int) string {
 	maxW := min(width-8, 80)
-	innerW := max(maxW-4, 20) // border + padding
+	innerW := max(maxW-6, 20) // border(2) + padding(4)
+	maxH := height - 4        // leave room for chrome above and help below
 
 	var title string
 	var body []string
@@ -68,26 +79,32 @@ func (m execModal) view(width, height int) string {
 
 	switch m.phase {
 	case execPhaseReview:
-		title, body, actions = m.viewReview(innerW)
+		title, body, actions = m.viewReview()
 	case execPhaseRunning:
-		title, body, actions = m.viewRunning(innerW)
+		title, body, actions = m.viewRunning()
 	case execPhaseComplete:
-		title, body, actions = m.viewComplete(innerW)
+		title, body, actions = m.viewComplete()
 	}
 
-	// Build the modal content.
-	var content strings.Builder
-	content.WriteString(sectionTitleStyle.Render(title) + "\n")
-	content.WriteString(helpStyle.Render(strings.Repeat("─", innerW)) + "\n")
+	// Build the modal content lines.
+	var lines []string
+	lines = append(lines, sectionTitleStyle.Render(title))
+	lines = append(lines, helpStyle.Render(strings.Repeat("─", innerW)))
 
-	for _, line := range body {
-		content.WriteString(line + "\n")
-	}
+	lines = append(lines, body...)
 
 	if actions != "" {
-		content.WriteString("\n")
-		content.WriteString(actions)
+		lines = append(lines, "")
+		lines = append(lines, actions)
 	}
+
+	// Cap content height — truncate body if needed.
+	if len(lines) > maxH {
+		lines = lines[:maxH-1]
+		lines = append(lines, helpStyle.Render("... (scroll not yet implemented)"))
+	}
+
+	content := strings.Join(lines, "\n")
 
 	// Render in a bordered box.
 	style := lipgloss.NewStyle().
@@ -96,20 +113,20 @@ func (m execModal) view(width, height int) string {
 		BorderForeground(accent).
 		Padding(1, 2)
 
-	rendered := style.Render(content.String())
+	rendered := style.Render(content)
 
-	// Center on screen.
+	// Center in the content area.
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, rendered)
 }
 
-func (m execModal) viewReview(innerW int) (string, []string, string) {
+func (m execModal) viewReview() (string, []string, string) {
 	title := fmt.Sprintf("%s %d package(s)", m.actionTitle(), len(m.items))
 	var body []string
 	for _, bi := range m.items {
 		body = append(body, "  "+checkbox(true)+" "+bi.item.pkg.Name+"  "+helpStyle.Render(bi.item.pkg.ID))
 	}
-	body = append(body, "")
 	if m.action == "uninstall" {
+		body = append(body, "")
 		body = append(body, warnStyle.Render("This will remove the selected packages."))
 	}
 	actions := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("enter") + " " + m.action +
@@ -117,9 +134,9 @@ func (m execModal) viewReview(innerW int) (string, []string, string) {
 	return title, body, actions
 }
 
-func (m execModal) viewRunning(innerW int) (string, []string, string) {
+func (m execModal) viewRunning() (string, []string, string) {
 	completed, _, total := batchCounters(m.items)
-	title := fmt.Sprintf("%sing %d/%d", m.actionTitle(), completed, total)
+	title := fmt.Sprintf("%s %d/%d", m.actionVerb(), completed, total)
 
 	var body []string
 	for _, bi := range m.items {
@@ -135,7 +152,7 @@ func (m execModal) viewRunning(innerW int) (string, []string, string) {
 	return title, body, actions
 }
 
-func (m execModal) viewComplete(innerW int) (string, []string, string) {
+func (m execModal) viewComplete() (string, []string, string) {
 	completed, failed, _ := batchCounters(m.items)
 	succeeded := completed - failed
 
@@ -166,7 +183,7 @@ func (m execModal) viewComplete(innerW int) (string, []string, string) {
 		body = append(body, line)
 	}
 
-	// Execution log.
+	// Execution log (compact).
 	if len(m.log) > 0 {
 		body = append(body, "")
 		body = append(body, helpStyle.Render("── Execution Log ──"))
