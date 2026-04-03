@@ -37,7 +37,7 @@ func TestTabForRetry(t *testing.T) {
 	}{
 		{retryOpUpgrade, 0},
 		{retryOpUninstall, 0},
-		{retryOpInstall, 1},
+		{retryOpInstall, 0},
 	}
 
 	for _, tt := range tests {

@@ -103,7 +103,7 @@ var (
 	)
 	keyTabs = key.NewBinding(
 		key.WithKeys("1", "2", "3", "4", "5", "6"),
-		key.WithHelp("1-5", "tabs"),
+		key.WithHelp("1-4", "tabs"),
 	)
 	keyScroll = key.NewBinding(
 		key.WithKeys("up", "down", "pgup", "pgdown"),

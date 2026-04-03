@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/lipgloss/v2"
 	"github.com/sahilm/fuzzy"
 
@@ -58,6 +59,15 @@ type workspaceScreen struct {
 	err              error
 	ctx              context.Context
 	cancel           context.CancelFunc
+
+	// Search/install integration.
+	searchInput     textinput.Model
+	searchActive    bool            // true when search input is focused
+	searchQuery     string          // last executed search
+	searchResults   []Package       // results from winget search
+	searchLoading   bool            // search in progress
+	installQueue    []workspaceItem // sticky queue of packages selected for install
+	installQueueMap map[string]bool // quick lookup by packageSourceKey
 }
 
 func newWorkspaceScreen() workspaceScreen {
@@ -65,6 +75,15 @@ func newWorkspaceScreen() workspaceScreen {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
 	ctx, cancel := context.WithCancel(context.Background())
+	si := textinput.New()
+	si.Placeholder = "search winget packages..."
+	siStyles := si.Styles()
+	siStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(accent)
+	siStyles.Cursor.Color = accent
+	si.SetStyles(siStyles)
+	si.Prompt = "🔍 "
+	si.SetWidth(40)
+
 	return workspaceScreen{
 		state:            workspaceLoading,
 		width:            80,
@@ -77,9 +96,18 @@ func newWorkspaceScreen() workspaceScreen {
 		filter:           newListFilter(),
 		detail:           newDetailPanel(),
 		exec:             newExecutionLog(),
+		searchInput:      si,
+		installQueueMap:  make(map[string]bool),
 		ctx:              ctx,
 		cancel:           cancel,
 	}
+}
+
+// searchResultsMsg carries search results back from the async search.
+type searchResultsMsg struct {
+	query   string
+	results []Package
+	err     error
 }
 
 // workspaceDataMsg carries both installed and upgradeable data.
@@ -164,17 +192,6 @@ func buildItems(installed, upgradeable []Package) []workspaceItem {
 }
 
 // countUpgradeable returns how many items are upgradeable.
-func countUpgradeable(items []workspaceItem) int {
-	n := 0
-	for _, item := range items {
-		if item.upgradeable {
-			n++
-		} else {
-			break // upgradeable are always first
-		}
-	}
-	return n
-}
 
 func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -236,6 +253,11 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 		}
 
+		// Search input.
+		if s.searchActive {
+			return s.updateSearch(msg)
+		}
+
 		// Filter input.
 		if s.filter.active {
 			return s.updateFilter(msg)
@@ -248,20 +270,15 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				return s, s.focusSummary()
 			}
 		case "down", "j":
-			if s.cursor < len(s.filteredItems())-1 {
+			q, sr, up, ins := s.displayItems()
+			totalItems := len(q) + len(sr) + len(up) + len(ins)
+			if s.cursor < totalItems-1 {
 				s.cursor++
 				return s, s.focusSummary()
 			}
 		case "space":
-			items := s.filteredItems()
-			if s.cursor < len(items) {
-				k := items[s.cursor].key()
-				s.selected[k] = !s.selected[k]
-				if !s.selected[k] {
-					delete(s.selected, k)
-				}
-			}
-			return s, nil
+			return s.toggleSelection()
+
 		case "enter", "right", "l":
 			return s.openDetail()
 		case "/":
@@ -275,6 +292,12 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case "a":
 			s.selectAllUpgradeable()
 			return s, nil
+		case "s":
+			s.searchActive = true
+			s.searchInput.SetValue("")
+			return s, s.searchInput.Focus()
+		case "i":
+			return s.beginAction("install")
 		case "u":
 			return s.beginAction("upgrade")
 		case "x", "delete":
@@ -357,9 +380,50 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.modal.idx++
 			return s.processNextBatchItem()
 		}
+	case searchResultsMsg:
+		s.searchLoading = false
+		if msg.err != nil {
+			s.err = msg.err
+			s.searchResults = nil
+		} else {
+			s.searchQuery = msg.query
+			s.searchResults = msg.results
+		}
+		s.cursor = 0
+		return s, s.focusSummary()
 	}
 
 	return s, nil
+}
+
+func (s workspaceScreen) updateSearch(msg tea.KeyPressMsg) (screen, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		s.searchActive = false
+		s.searchInput.Blur()
+		return s, nil
+	case "enter":
+		query := strings.TrimSpace(s.searchInput.Value())
+		s.searchActive = false
+		s.searchInput.Blur()
+		if query == "" {
+			// Empty search clears results.
+			s.searchResults = nil
+			s.searchQuery = ""
+			return s, nil
+		}
+		s.searchLoading = true
+		s.searchQuery = query
+		ctx := s.ctx
+		return s, func() tea.Msg {
+			results, err := searchPackagesCtx(ctx, query)
+			return searchResultsMsg{query: query, results: results, err: err}
+		}
+	default:
+		var cmd tea.Cmd
+		s.searchInput, cmd = s.searchInput.Update(msg)
+		return s, cmd
+	}
 }
 
 // resetAndReload creates a fresh context and reloads package data.
@@ -381,9 +445,10 @@ func (s *workspaceScreen) resetAndReload() (workspaceScreen, tea.Cmd) {
 }
 
 func (s *workspaceScreen) focusSummary() tea.Cmd {
-	items := s.filteredItems()
-	if s.cursor >= 0 && s.cursor < len(items) {
-		item := items[s.cursor]
+	queue, search, upgradeable, installed := s.displayItems()
+	all := concat(queue, search, upgradeable, installed)
+	if s.cursor >= 0 && s.cursor < len(all) {
+		item := all[s.cursor]
 		return s.summary.focus(&item.pkg, item.installed, item.available)
 	}
 	return s.summary.focus(nil, "", "")
@@ -397,6 +462,56 @@ func (s workspaceScreen) countSelected(items []workspaceItem) int {
 		}
 	}
 	return n
+}
+
+func (s workspaceScreen) toggleSelection() (screen, tea.Cmd) {
+	queue, search, upgradeable, installed := s.displayItems()
+	allItems := concat(queue, search, upgradeable, installed)
+
+	if s.cursor >= len(allItems) {
+		return s, nil
+	}
+	item := allItems[s.cursor]
+	k := item.key()
+
+	// Is this a search result or install queue item?
+	inSearchOrQueue := s.cursor < len(queue)+len(search)
+
+	if inSearchOrQueue {
+		// Toggle in/out of install queue.
+		if s.installQueueMap[k] {
+			delete(s.installQueueMap, k)
+			newQueue := make([]workspaceItem, 0, len(s.installQueue))
+			for _, qi := range s.installQueue {
+				if qi.key() != k {
+					newQueue = append(newQueue, qi)
+				}
+			}
+			s.installQueue = newQueue
+		} else {
+			s.installQueueMap[k] = true
+			s.installQueue = append(s.installQueue, item)
+		}
+	} else {
+		// Regular installed/upgradeable toggle.
+		s.selected[k] = !s.selected[k]
+		if !s.selected[k] {
+			delete(s.selected, k)
+		}
+	}
+	return s, nil
+}
+
+func concat(slices ...[]workspaceItem) []workspaceItem {
+	var total int
+	for _, s := range slices {
+		total += len(s)
+	}
+	result := make([]workspaceItem, 0, total)
+	for _, s := range slices {
+		result = append(result, s...)
+	}
+	return result
 }
 
 func (s *workspaceScreen) selectAllUpgradeable() {
@@ -415,14 +530,52 @@ func (s workspaceScreen) filteredItems() []workspaceItem {
 	return matches
 }
 
+// displayItems returns the full ordered list for rendering and navigation:
+// install queue → search results → upgradeable → installed.
+func (s workspaceScreen) displayItems() (queue, search, upgradeable, installed []workspaceItem) {
+	queue = s.installQueue
+
+	// Search results: exclude items already in install queue or installed.
+	installedKeys := make(map[string]bool, len(s.items))
+	for _, item := range s.items {
+		installedKeys[item.key()] = true
+	}
+	queueKeys := make(map[string]bool, len(s.installQueue))
+	for _, item := range s.installQueue {
+		queueKeys[item.key()] = true
+	}
+	for _, pkg := range s.searchResults {
+		k := packageSourceKey(pkg.ID, pkg.Source)
+		if !installedKeys[k] && !queueKeys[k] {
+			search = append(search, workspaceItem{
+				pkg:       pkg,
+				installed: "",
+				available: pkg.Version,
+			})
+		}
+	}
+
+	// Split existing items into upgradeable and installed.
+	base := s.filteredItems()
+	for _, item := range base {
+		if item.upgradeable {
+			upgradeable = append(upgradeable, item)
+		} else {
+			installed = append(installed, item)
+		}
+	}
+	return
+}
+
 func (s workspaceScreen) openDetail() (screen, tea.Cmd) {
-	items := s.filteredItems()
-	if s.cursor >= len(items) {
+	queue, search, upgradeable, installed := s.displayItems()
+	all := concat(queue, search, upgradeable, installed)
+	if s.cursor >= len(all) {
 		return s, nil
 	}
-	item := items[s.cursor]
+	item := all[s.cursor]
 	if !canFetchDetails(item.pkg.Source) {
-		return s, nil // ARP packages don't have fetchable details
+		return s, nil
 	}
 	var cmd tea.Cmd
 	s.detail, cmd = s.detail.showWithVersion(item.pkg, "", item.upgradeable)
@@ -460,20 +613,26 @@ func (s workspaceScreen) updateFilter(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 // ── Actions ───────────────────────────────────────────────────────
 
 func (s workspaceScreen) beginAction(action string) (screen, tea.Cmd) {
-	// Collect selected items that match the action.
 	var targets []workspaceItem
-	for _, item := range s.items {
-		if !s.selected[item.key()] {
-			continue
+
+	if action == "install" {
+		// Install uses the install queue.
+		targets = append(targets, s.installQueue...)
+	} else {
+		// Collect selected items that match the action.
+		for _, item := range s.items {
+			if !s.selected[item.key()] {
+				continue
+			}
+			if action == "upgrade" && !item.upgradeable {
+				continue
+			}
+			targets = append(targets, item)
 		}
-		if action == "upgrade" && !item.upgradeable {
-			continue
-		}
-		targets = append(targets, item)
 	}
 
 	// If nothing selected, act on the focused item.
-	if len(targets) == 0 {
+	if len(targets) == 0 && action != "install" {
 		items := s.filteredItems()
 		if s.cursor < len(items) {
 			item := items[s.cursor]
@@ -547,10 +706,14 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 			return s.processNextBatchItem()
 		}
 	} else {
-		if s.modal.action == "upgrade" {
+		switch s.modal.action {
+		case "upgrade":
 			version := s.selectedVersions[item.key()]
 			_, outChan, errChan = upgradePackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
-		} else {
+		case "install":
+			version := s.selectedVersions[item.key()]
+			_, outChan, errChan = installPackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
+		default: // uninstall
 			_, outChan, errChan = uninstallPackageStreamCtx(s.ctx, item.pkg)
 		}
 	}
@@ -563,6 +726,12 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 	s.modal.phase = execPhaseComplete
 	s.selected = make(map[string]bool)
+	if s.modal.action == "install" {
+		s.installQueue = nil
+		s.installQueueMap = make(map[string]bool)
+		s.searchResults = nil
+		s.searchQuery = ""
+	}
 	cache.invalidate()
 	return s, func() tea.Msg { return packageDataChangedMsg{origin: screenWorkspace} }
 }
@@ -598,11 +767,9 @@ func (s workspaceScreen) viewLoading() string {
 
 func (s workspaceScreen) viewReady(width, height int) string {
 	l := computeLayout(width, height, true)
-	items := s.filteredItems()
-	nUpgradeable := countUpgradeable(items)
 
-	// Render list panel.
-	listView := s.renderList(items, nUpgradeable, l)
+	// Render list panel using all sections.
+	listView := s.renderSections(l)
 
 	if !l.hasDetail {
 		return listView
@@ -616,75 +783,118 @@ func (s workspaceScreen) viewReady(width, height int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, listView, " ", detailView)
 }
 
-func (s workspaceScreen) renderList(items []workspaceItem, nUpgradeable int, l layout) string {
+// sectionDef describes one panel section for rendering.
+type sectionDef struct {
+	title  string
+	items  []workspaceItem
+	offset int // global cursor offset for this section
+	fixedH int // 0 = flexible, >0 = fixed height (for small sections)
+}
+
+func (s workspaceScreen) renderSections(l layout) string {
 	panelWidth := l.list.W
-	innerWidth := max(panelWidth-2, 10) // minus left+right border chars
+	innerWidth := max(panelWidth-2, 10)
+
+	queue, search, upgradeable, installed := s.displayItems()
 
 	var b strings.Builder
 
-	// Filter bar (above panels).
-	if s.filter.active {
+	// Search input bar or filter bar.
+	if s.searchActive {
+		b.WriteString("  " + s.searchInput.View() + "\n")
+	} else if s.searchLoading {
+		b.WriteString("  " + s.spinner.View() + " Searching...\n")
+	} else if s.filter.active {
 		b.WriteString("  " + s.filter.input.View() + "\n")
 	} else if s.filter.query != "" {
 		b.WriteString("  " + helpStyle.Render("Filter: "+s.filter.query+"  (/ edit • esc clear)") + "\n")
 	}
 
-	nInstalled := len(items) - nUpgradeable
-
-	// Calculate how much height each panel gets.
 	availableH := l.list.H
-	if s.filter.active || s.filter.query != "" {
+	if s.searchActive || s.searchLoading || s.filter.active || s.filter.query != "" {
 		availableH--
 	}
 
-	// Determine which section has focus.
-	cursorInUpdates := s.cursor < nUpgradeable
+	// Build section definitions with global offsets.
+	var sections []sectionDef
+	offset := 0
 
-	// Allocate height: updates gets what it needs (capped), rest to installed.
-	var updatesPanelH, installedPanelH int
-	if nUpgradeable > 0 && nInstalled > 0 {
-		maxUpdatesH := max(availableH*2/5, 5)
-		updatesPanelH = min(nUpgradeable+2, maxUpdatesH)     // +2 for top+bottom border
-		installedPanelH = max(availableH-updatesPanelH-1, 4) // -1 for gap, min 4
-	} else if nUpgradeable > 0 {
-		updatesPanelH = availableH
-	} else {
-		installedPanelH = availableH
+	if len(queue) > 0 {
+		title := fmt.Sprintf("Selected for Install (%d)", len(queue))
+		sections = append(sections, sectionDef{title: title, items: queue, offset: offset, fixedH: len(queue) + 2})
+		offset += len(queue)
 	}
-
-	// Render updates panel.
-	if nUpgradeable > 0 {
-		updateItems := items[:nUpgradeable]
-		selectedCount := s.countSelected(updateItems)
-		title := fmt.Sprintf("Updates Available (%d)", nUpgradeable)
-		if selectedCount > 0 {
-			title = fmt.Sprintf("Updates Available (%d / %d selected)", nUpgradeable, selectedCount)
-		}
-		innerH := max(updatesPanelH-2, 1) // minus top+bottom border
-		borderColor := dim
-		if cursorInUpdates {
-			borderColor = accent
-		}
-		content := s.renderPanelItems(updateItems, 0, innerH, innerWidth)
-		b.WriteString(renderTitledPanel(title, content, panelWidth, innerH, borderColor))
-		b.WriteString("\n")
+	if len(search) > 0 {
+		title := fmt.Sprintf("Search Results (%d)", len(search))
+		sections = append(sections, sectionDef{title: title, items: search, offset: offset})
+		offset += len(search)
 	}
-
-	// Render installed panel.
-	if nInstalled > 0 {
-		installedItems := items[nUpgradeable:]
-		selCount := s.countSelected(installedItems)
-		title := fmt.Sprintf("Installed (%d)", nInstalled)
+	if len(upgradeable) > 0 {
+		selCount := s.countSelected(upgradeable)
+		title := fmt.Sprintf("Updates Available (%d)", len(upgradeable))
 		if selCount > 0 {
-			title = fmt.Sprintf("Installed (%d / %d selected)", nInstalled, selCount)
+			title = fmt.Sprintf("Updates Available (%d / %d selected)", len(upgradeable), selCount)
 		}
-		innerH := max(installedPanelH-2, 1) // minus top+bottom border
+		sections = append(sections, sectionDef{title: title, items: upgradeable, offset: offset, fixedH: len(upgradeable) + 2})
+		offset += len(upgradeable)
+	}
+	if len(installed) > 0 {
+		selCount := s.countSelected(installed)
+		title := fmt.Sprintf("Installed (%d)", len(installed))
+		if selCount > 0 {
+			title = fmt.Sprintf("Installed (%d / %d selected)", len(installed), selCount)
+		}
+		sections = append(sections, sectionDef{title: title, items: installed, offset: offset})
+		offset += len(installed)
+	}
+
+	if len(sections) == 0 {
+		return "  " + helpStyle.Render("No packages found.") + "\n"
+	}
+
+	// Allocate heights: fixed sections get their requested height,
+	// flexible sections split the remainder.
+	fixedTotal := 0
+	flexCount := 0
+	for _, sec := range sections {
+		if sec.fixedH > 0 {
+			fixedTotal += sec.fixedH + 1 // +1 for gap
+		} else {
+			flexCount++
+		}
+	}
+	flexH := 0
+	if flexCount > 0 {
+		flexH = max((availableH-fixedTotal)/flexCount, 4)
+	}
+
+	// Determine which section has the cursor.
+	cursorSection := -1
+	for i, sec := range sections {
+		if s.cursor >= sec.offset && s.cursor < sec.offset+len(sec.items) {
+			cursorSection = i
+			break
+		}
+	}
+
+	// Render each section.
+	for i, sec := range sections {
+		panelH := sec.fixedH
+		if panelH == 0 {
+			panelH = flexH
+		}
+		innerH := max(panelH-2, 1) // minus top+bottom border
+
 		borderColor := dim
-		if !cursorInUpdates || nUpgradeable == 0 {
+		if i == cursorSection {
 			borderColor = accent
 		}
-		content := s.renderPanelItems(installedItems, nUpgradeable, innerH, innerWidth)
-		b.WriteString(renderTitledPanel(title, content, panelWidth, innerH, borderColor))
+
+		content := s.renderPanelItems(sec.items, sec.offset, innerH, innerWidth)
+		b.WriteString(renderTitledPanel(sec.title, content, panelWidth, innerH, borderColor))
+		if i < len(sections)-1 {
+			b.WriteString("\n")
+		}
 	}
 
 	return b.String()
@@ -799,8 +1009,10 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 	bindings := []key.Binding{
 		key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "details")),
+		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search")),
 		key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 		key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade")),
+		key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install")),
 		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")),
 		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "select all updates")),
 		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
@@ -810,7 +1022,7 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 
 func (s workspaceScreen) blocksGlobalShortcuts() bool {
 	return s.modal != nil || s.detail.visible() || s.filter.active ||
-		s.state == workspaceExecuting || s.state == workspaceConfirm
+		s.searchActive || s.state == workspaceExecuting || s.state == workspaceConfirm
 }
 
 // ── Filter support ────────────────────────────────────────────────

@@ -39,7 +39,6 @@ type tabDef struct {
 
 var tabs = []tabDef{
 	{"Packages", screenWorkspace},
-	{"Install", screenInstall},
 	{"Cleanup", screenCleanup},
 	{"Health", screenHealthcheck},
 	{"Settings", screenSettings},
