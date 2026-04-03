@@ -1,10 +1,6 @@
 package main
 
-import (
-	"testing"
-
-	tea "charm.land/bubbletea/v2"
-)
+import "testing"
 
 func TestExecutionLogPausesFollowWhenScrolledUp(t *testing.T) {
 	log := newExecutionLog()
@@ -74,17 +70,5 @@ func TestExecutionLogDoneToggleExpandsAndHandlesScroll(t *testing.T) {
 	}
 	if log.follow {
 		t.Fatal("expected follow mode to pause after scrolling done log")
-	}
-}
-
-func TestInstallWindowSizeUsesContentHeightForExecutionLog(t *testing.T) {
-	s := newInstallScreen()
-
-	next, _ := s.update(tea.WindowSizeMsg{Width: 120, Height: 34})
-	got := next.(installScreen)
-
-	want := max(5, contentAreaHeightForWindow(120, 34, true)-12)
-	if got.exec.vp.Height() != want {
-		t.Fatalf("exec viewport height = %d, want %d", got.exec.vp.Height(), want)
 	}
 }

@@ -391,6 +391,10 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 	case searchResultsMsg:
 		s.searchLoading = false
+		// Discard stale results from a previous search.
+		if msg.query != s.searchQuery {
+			return s, nil
+		}
 		if msg.err != nil {
 			s.err = msg.err
 			s.searchResults = nil
@@ -619,7 +623,8 @@ func (s workspaceScreen) openDetail() (screen, tea.Cmd) {
 		return s, nil
 	}
 	var cmd tea.Cmd
-	s.detail, cmd = s.detail.showWithVersion(item.pkg, "", item.upgradeable)
+	allowVersions := item.upgradeable || canFetchDetails(item.pkg.Source)
+	s.detail, cmd = s.detail.showWithVersion(item.pkg, "", allowVersions)
 	return s, cmd
 }
 

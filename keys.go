@@ -17,14 +17,6 @@ var (
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "select"),
 	)
-	keyApply = key.NewBinding(
-		key.WithKeys("enter"),
-		key.WithHelp("enter", "apply"),
-	)
-	keyUpgradeSelected = key.NewBinding(
-		key.WithKeys("enter"),
-		key.WithHelp("enter", "upgrade"),
-	)
 	keyInstallSelected = key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "install"),
@@ -49,18 +41,6 @@ var (
 		key.WithKeys("r"),
 		key.WithHelp("r", "refresh"),
 	)
-	keyFilter = key.NewBinding(
-		key.WithKeys("/"),
-		key.WithHelp("/", "filter"),
-	)
-	keyFilterEdit = key.NewBinding(
-		key.WithKeys("/"),
-		key.WithHelp("/", "edit"),
-	)
-	keyDetails = key.NewBinding(
-		key.WithKeys("i", "d"),
-		key.WithHelp("i", "details"),
-	)
 	keyToggle = key.NewBinding(
 		key.WithKeys(" ", "x"),
 		key.WithHelp("space", "toggle"),
@@ -72,22 +52,6 @@ var (
 	keyConfirmY = key.NewBinding(
 		key.WithKeys("y"),
 		key.WithHelp("y/n", "confirm"),
-	)
-	keyConfirm = key.NewBinding(
-		key.WithKeys("enter", "y"),
-		key.WithHelp("enter/y", "confirm"),
-	)
-	keyCancel = key.NewBinding(
-		key.WithKeys("esc", "n"),
-		key.WithHelp("esc/n", "cancel"),
-	)
-	keyExport = key.NewBinding(
-		key.WithKeys("e"),
-		key.WithHelp("e", "export"),
-	)
-	keyRetryElevated = key.NewBinding(
-		key.WithKeys("ctrl+e"),
-		key.WithHelp("ctrl+e", "retry elevated"),
 	)
 	keySave = key.NewBinding(
 		key.WithKeys("s"),
@@ -102,7 +66,7 @@ var (
 		key.WithHelp("←→", "cycle"),
 	)
 	keyTabs = key.NewBinding(
-		key.WithKeys("1", "2", "3", "4", "5", "6"),
+		key.WithKeys("1", "2", "3", "4"),
 		key.WithHelp("1-4", "tabs"),
 	)
 	keyScroll = key.NewBinding(
@@ -117,25 +81,9 @@ var (
 		key.WithKeys("l"),
 		key.WithHelp("l", "log"),
 	)
-	keySearch = key.NewBinding(
-		key.WithKeys("enter"),
-		key.WithHelp("enter", "search"),
-	)
-	keyImport = key.NewBinding(
-		key.WithKeys("m"),
-		key.WithHelp("m", "import"),
-	)
-	keyUpgradeAll = key.NewBinding(
-		key.WithKeys("u"),
-		key.WithHelp("u", "upgrade all"),
-	)
 	keyCleanAll = key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "clean all"),
-	)
-	keySearchAgain = key.NewBinding(
-		key.WithKeys("r"),
-		key.WithHelp("r", "search again"),
 	)
 	keyShowSkipped = key.NewBinding(
 		key.WithKeys("v"),

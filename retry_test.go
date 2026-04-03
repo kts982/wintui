@@ -63,72 +63,29 @@ func TestNewRetryRequestFromItemsPreservesSingleTargetVersion(t *testing.T) {
 	}
 }
 
-func TestUpgradeRetryInfoUsesOnlyFailedElevationCandidates(t *testing.T) {
+func TestExecModalElevationCandidatesFiltersCorrectly(t *testing.T) {
 	forceNotElevated(t)
-	s := newUpgradeScreen()
-	s.batchIDs = []string{"Pkg.One", "Pkg.Two", "Pkg.Three"}
-	s.batchSources = []string{"winget", "winget", "winget"}
-	s.batchVersions = []string{"1.0.0", "2.0.0", ""}
-	s.batchErrs = []error{
-		assertErr("installer failed with a fatal error (1603)"),
-		nil,
-		assertErr("package requires administrator privileges to install (0x8a150056)"),
+	items := []batchItem{
+		{item: workspaceItem{pkg: Package{ID: "Pkg.One", Source: "winget"}}, status: batchFailed, err: assertErr("installer failed with a fatal error (1603)"), output: "exit code: 1603"},
+		{item: workspaceItem{pkg: Package{ID: "Pkg.Two", Source: "winget"}}, status: batchDone},
+		{item: workspaceItem{pkg: Package{ID: "Pkg.Three", Source: "winget"}}, status: batchFailed, err: assertErr("package requires administrator privileges (0x8a150056)"), output: "0x8a150056"},
 	}
-	s.batchOutputs = []string{
-		"Upgrade failed with exit code: 1603",
-		"",
-		"package requires administrator privileges to install (0x8a150056)",
-	}
-	s.packages = []Package{
-		{Name: "One", ID: "Pkg.One", Source: "winget"},
-		{Name: "Two", ID: "Pkg.Two", Source: "winget"},
-		{Name: "Three", ID: "Pkg.Three", Source: "winget"},
-	}
+	m := newExecModal("upgrade", items)
+	// Simulate completion.
+	m.items = items
+	m.phase = execPhaseComplete
 
-	info := s.retryInfo()
-	if info.req == nil {
-		t.Fatal("retryInfo() returned nil request")
+	if !m.hasElevationCandidates() {
+		t.Fatal("expected elevation candidates")
 	}
-	if !info.hard {
-		t.Fatal("retryInfo() hard = false, want true when one failure requires elevation")
+	candidates := m.elevationCandidateItems()
+	if len(candidates) != 2 {
+		t.Fatalf("elevation candidates len = %d, want 2", len(candidates))
 	}
-	items := info.req.items()
-	if len(items) != 2 {
-		t.Fatalf("retry items len = %d, want 2", len(items))
+	if candidates[0].item.pkg.ID != "Pkg.One" {
+		t.Fatalf("first candidate = %s, want Pkg.One", candidates[0].item.pkg.ID)
 	}
-	if items[0].ID != "Pkg.One" || items[0].Version != "1.0.0" {
-		t.Fatalf("first retry item = %#v, want Pkg.One with explicit target version", items[0])
-	}
-	if items[1].ID != "Pkg.Three" {
-		t.Fatalf("second retry item = %#v, want Pkg.Three", items[1])
-	}
-}
-
-func TestPackagesRetryInfoUsesOnlyFailedElevationCandidates(t *testing.T) {
-	forceNotElevated(t)
-	s := newPackagesScreen()
-	s.batchPackages = []Package{
-		{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget"},
-		{Name: "Neovim", ID: "Neovim.Neovim", Source: "winget"},
-	}
-	s.batchErrs = []error{
-		nil,
-		assertErr("installer failed with a fatal error (1603)"),
-	}
-	s.batchOutputs = []string{
-		"",
-		"Uninstall failed with exit code: 1603",
-	}
-
-	info := s.retryInfo()
-	if info.req == nil {
-		t.Fatal("retryInfo() returned nil request")
-	}
-	if info.hard {
-		t.Fatal("retryInfo() hard = true, want false for soft 1603-only retry")
-	}
-	items := info.req.items()
-	if len(items) != 1 || items[0].ID != "Neovim.Neovim" {
-		t.Fatalf("retry items = %#v, want only failed Neovim uninstall", items)
+	if candidates[1].item.pkg.ID != "Pkg.Three" {
+		t.Fatalf("second candidate = %s, want Pkg.Three", candidates[1].item.pkg.ID)
 	}
 }

@@ -21,13 +21,10 @@ type screenID int
 
 const (
 	screenMenu screenID = iota // kept for compat, maps to tab 0
-	screenUpgrade
-	screenInstall
-	screenPackages
+	screenWorkspace
 	screenCleanup
 	screenHealthcheck
 	screenSettings
-	screenWorkspace
 )
 
 // ── Tab definitions ────────────────────────────────────────────────
@@ -47,16 +44,6 @@ var tabs = []tabDef{
 // ── Shared messages ────────────────────────────────────────────────
 
 type switchScreenMsg screenID
-
-type packagesLoadedMsg struct {
-	packages []Package
-	err      error
-}
-
-type commandDoneMsg struct {
-	output string
-	err    error
-}
 
 type streamMsg string
 
@@ -426,8 +413,6 @@ func (a app) tabHitTest(x int) int {
 // screenHasTextInput returns true if the active screen has a text input field.
 func (a app) screenHasTextInput() bool {
 	switch s := a.activeScreen().(type) {
-	case installScreen:
-		return s.state == installInput
 	case workspaceScreen:
 		return s.searchActive || s.filter.active
 	default:
@@ -546,12 +531,6 @@ func createScreen(id screenID) screen {
 	switch id {
 	case screenWorkspace:
 		return newWorkspaceScreen()
-	case screenUpgrade:
-		return newUpgradeScreen()
-	case screenInstall:
-		return newInstallScreen()
-	case screenPackages:
-		return newPackagesScreen()
 	case screenCleanup:
 		return newCleanupScreen()
 	case screenHealthcheck:

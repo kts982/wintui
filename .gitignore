@@ -10,3 +10,4 @@ rsrc_windows*.syso
 /.gocache/
 /.mcp.json
 /.winget-pkgs-submission/
+.npm-cache/
