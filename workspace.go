@@ -127,6 +127,8 @@ func (s workspaceScreen) init() tea.Cmd {
 		}
 	}
 	return tea.Batch(s.spinner.Tick, func() tea.Msg {
+		// Run both in parallel. If either fails due to source contention,
+		// the data from the successful call is still usable.
 		type result struct {
 			pkgs []Package
 			err  error
@@ -146,9 +148,21 @@ func (s workspaceScreen) init() tea.Cmd {
 		instResult := <-instCh
 		upgrResult := <-upgrCh
 
+		// If parallel calls failed, retry sequentially.
 		if instResult.err != nil {
-			return workspaceDataMsg{err: instResult.err}
+			pkgs, err := getInstalledCtx(s.ctx)
+			if err != nil {
+				return workspaceDataMsg{err: err}
+			}
+			instResult = result{pkgs, nil}
 		}
+		if upgrResult.err != nil {
+			pkgs, err := getUpgradeableCtx(s.ctx)
+			if err == nil {
+				upgrResult = result{pkgs, nil}
+			}
+		}
+
 		cache.setInstalled(instResult.pkgs)
 		if upgrResult.err == nil {
 			cache.setUpgradeable(upgrResult.pkgs)
