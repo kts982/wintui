@@ -1078,24 +1078,51 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 	if s.modal != nil {
 		return s.modal.helpKeys()
 	}
-	switch s.state {
-	case workspaceReady:
-		// fall through
-	default:
+	if s.state != workspaceReady {
 		return nil
 	}
+	// Compact help — most important keys + ? for full help.
 	bindings := []key.Binding{
 		key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
-		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "details")),
-		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search")),
-		key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search remote")),
 		key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade")),
-		key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install")),
 		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")),
-		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "select all updates")),
-		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	}
+	if len(s.installQueue) > 0 {
+		bindings = append(bindings, key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install queued")))
+	}
+	bindings = append(bindings, key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")))
 	return bindings
+}
+
+// fullHelpKeys returns grouped keybindings for the full help view.
+func (s workspaceScreen) fullHelpKeys() [][]key.Binding {
+	navigation := []key.Binding{
+		key.NewBinding(key.WithKeys("↑/k"), key.WithHelp("↑/k", "move up")),
+		key.NewBinding(key.WithKeys("↓/j"), key.WithHelp("↓/j", "move down")),
+		key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select package")),
+		key.NewBinding(key.WithKeys("enter/→"), key.WithHelp("enter/→", "open details")),
+		key.NewBinding(key.WithKeys("←/esc"), key.WithHelp("←/esc", "close details")),
+	}
+	actions := []key.Binding{
+		key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade selected")),
+		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall selected")),
+		key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install queued")),
+		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "select all updates")),
+	}
+	search := []key.Binding{
+		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search remote packages")),
+		key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter current list")),
+		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh packages")),
+	}
+	general := []key.Binding{
+		key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "pick version (in details)")),
+		key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open homepage (in details)")),
+		key.NewBinding(key.WithKeys("1-4"), key.WithHelp("1-4", "switch tabs")),
+		key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "toggle help")),
+		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+	return [][]key.Binding{navigation, actions, search, general}
 }
 
 func (s workspaceScreen) blocksGlobalShortcuts() bool {

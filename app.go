@@ -79,6 +79,10 @@ type globalShortcutBlocker interface {
 	blocksGlobalShortcuts() bool
 }
 
+type fullHelpProvider interface {
+	fullHelpKeys() [][]key.Binding
+}
+
 // ── ASCII art header ───────────────────────────────────────────────
 
 var asciiLogo = []string{
@@ -116,16 +120,17 @@ type startRetryMsg struct {
 }
 
 type app struct {
-	activeTab  int
-	screens    map[screenID]screen
-	help       help.Model
-	width      int
-	height     int
-	quitting   bool
-	logoRows   []logoRow
-	logoSpring harmonica.Spring
-	logoTime   float64 // accumulated time for wave target
-	retryReq   *retryRequest
+	activeTab    int
+	screens      map[screenID]screen
+	help         help.Model
+	width        int
+	height       int
+	quitting     bool
+	showFullHelp bool
+	logoRows     []logoRow
+	logoSpring   harmonica.Spring
+	logoTime     float64 // accumulated time for wave target
+	retryReq     *retryRequest
 }
 
 func newApp(retryReq *retryRequest) app {
@@ -191,6 +196,11 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !a.screenHasTextInput() {
 				a.quitting = true
 				return a, tea.Quit
+			}
+		case "?":
+			if !blockGlobalShortcuts && !a.screenHasTextInput() {
+				a.showFullHelp = !a.showFullHelp
+				return a, nil
 			}
 		// Number keys switch tabs
 		case "tab":
@@ -265,6 +275,7 @@ func (a app) switchTab(idx int) (app, tea.Cmd) {
 		return a, nil
 	}
 	a.activeTab = idx
+	a.showFullHelp = false
 	id := tabs[idx].id
 	if s, ok := a.screens[id]; ok {
 		var sizeCmd tea.Cmd
@@ -290,8 +301,15 @@ func (a app) View() tea.View {
 	var helpBar string
 	if blocker, ok := a.activeScreen().(globalShortcutBlocker); !ok || !blocker.blocksGlobalShortcuts() {
 		a.help.SetWidth(a.width - 4)
-		if short := a.help.ShortHelpView(a.activeScreen().helpKeys()); strings.TrimSpace(short) != "" {
-			helpBar = "  " + short
+		if a.showFullHelp {
+			if fp, ok := a.activeScreen().(fullHelpProvider); ok {
+				helpBar = "  " + a.help.FullHelpView(fp.fullHelpKeys())
+			}
+		}
+		if helpBar == "" {
+			if short := a.help.ShortHelpView(a.activeScreen().helpKeys()); strings.TrimSpace(short) != "" {
+				helpBar = "  " + short
+			}
 		}
 	}
 
