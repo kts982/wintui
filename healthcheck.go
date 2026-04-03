@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"image/color"
 	"os"
 	"os/exec"
 	"runtime"
@@ -26,6 +27,7 @@ type healthReport struct {
 	Uptime        string
 	OverallStatus string
 	Sections      []healthSection
+	DevSection    healthSection // hidden by default
 	Counts        struct{ Pass, Warn, Fail, Total int }
 }
 
@@ -48,18 +50,15 @@ func runHealthcheck() (healthReport, error) {
 	r.Hostname, _ = os.Hostname()
 	r.OS = fmt.Sprintf("Windows %s/%s", runtime.GOARCH, runtime.GOOS)
 
-	// Try to get proper OS version
 	if ver := cmdOutputTrim("cmd", "/c", "ver"); ver != "" {
 		r.OS = ver
 	}
 
-	// Uptime via wmic
 	if boot := cmdOutputTrim("wmic", "os", "get", "LastBootUpTime"); boot != "" {
 		lines := strings.Split(boot, "\n")
 		for _, l := range lines {
 			l = strings.TrimSpace(l)
 			if len(l) > 14 && l[0] >= '0' && l[0] <= '9' {
-				// Parse WMI datetime: 20260323081500.000000+120
 				t, err := time.Parse("20060102150405", l[:14])
 				if err == nil {
 					r.Uptime = time.Since(t).Truncate(time.Minute).String()
@@ -68,15 +67,13 @@ func runHealthcheck() (healthReport, error) {
 		}
 	}
 
-	// ── Sections ───────────────────────────────────────────────
 	r.Sections = []healthSection{
-		checkEssentials(),
 		checkSystem(),
-		checkDevTools(),
-		checkLanguageRuntimes(),
+		checkPackageManager(),
 	}
+	r.DevSection = checkDevTools()
 
-	// Tally
+	// Tally (only visible sections count toward overall status).
 	for _, sec := range r.Sections {
 		for _, c := range sec.Checks {
 			switch c.Status {
@@ -105,14 +102,32 @@ func runHealthcheck() (healthReport, error) {
 
 // ── Check groups ───────────────────────────────────────────────────
 
-func checkEssentials() healthSection {
-	sec := healthSection{Title: "Essentials"}
+func checkSystem() healthSection {
+	sec := healthSection{Title: "System"}
 
+	sec.Checks = append(sec.Checks, checkWindowsVersion())
 	sec.Checks = append(sec.Checks, checkAdmin())
+	sec.Checks = append(sec.Checks, checkRAM())
 
-	sec.Checks = append(sec.Checks, toolCheck("winget", "winget", false,
+	for _, d := range getFixedDrives() {
+		sec.Checks = append(sec.Checks, checkDiskSpace(d))
+	}
+
+	sec.Checks = append(sec.Checks, checkDefender())
+	sec.Checks = append(sec.Checks, checkPathLength())
+	sec.Checks = append(sec.Checks, checkInternet())
+
+	return sec
+}
+
+func checkPackageManager() healthSection {
+	sec := healthSection{Title: "Package Manager"}
+
+	sec.Checks = append(sec.Checks, toolCheck("winget", "winget", true,
 		"Install App Installer from Microsoft Store.",
 		"--version"))
+
+	sec.Checks = append(sec.Checks, checkWingetSources())
 
 	sec.Checks = append(sec.Checks, toolCheck("pwsh", "PowerShell 7+", false,
 		"winget install Microsoft.PowerShell",
@@ -121,88 +136,136 @@ func checkEssentials() healthSection {
 	sec.Checks = append(sec.Checks, toolCheckInfo("powershell", "Windows PowerShell",
 		"-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"))
 
-	return sec
-}
-
-func checkSystem() healthSection {
-	sec := healthSection{Title: "System"}
-
-	for _, d := range getFixedDrives() {
-		sec.Checks = append(sec.Checks, checkDiskSpace(d))
-	}
-
-	sec.Checks = append(sec.Checks, checkDefender())
-	sec.Checks = append(sec.Checks, checkPathLength())
+	sec.Checks = append(sec.Checks, checkWinTUIUpdate())
 
 	return sec
 }
 
 func checkDevTools() healthSection {
-	sec := healthSection{Title: "Dev Tools"}
+	sec := healthSection{Title: "Developer Tools"}
 
 	sec.Checks = append(sec.Checks, toolCheck("git", "Git", false,
 		"winget install Git.Git", "--version"))
-
 	sec.Checks = append(sec.Checks, toolCheck("code", "VS Code", false,
 		"winget install Microsoft.VisualStudioCode", "--version"))
-
 	sec.Checks = append(sec.Checks, toolCheck("docker", "Docker", false,
 		"winget install Docker.DockerDesktop", "--version"))
-
 	sec.Checks = append(sec.Checks, toolCheck("ssh", "OpenSSH", false,
 		"Enable OpenSSH via Windows Optional Features.", "-V"))
-
-	sec.Checks = append(sec.Checks, toolCheck("curl", "curl", false, "",
-		"--version"))
-
+	sec.Checks = append(sec.Checks, toolCheck("curl", "curl", false, "", "--version"))
+	sec.Checks = append(sec.Checks, toolCheck("node", "Node.js", false,
+		"winget install OpenJS.NodeJS.LTS", "--version"))
+	sec.Checks = append(sec.Checks, toolCheck("python", "Python", false,
+		"winget install Python.Python.3.13", "--version"))
+	sec.Checks = append(sec.Checks, toolCheck("go", "Go", false,
+		"winget install GoLang.Go", "version"))
+	sec.Checks = append(sec.Checks, toolCheck("rustc", "Rust", false,
+		"Install rustup: https://rustup.rs", "--version"))
+	sec.Checks = append(sec.Checks, toolCheck("java", "Java", false,
+		"winget install Oracle.JDK.24", "--version"))
+	sec.Checks = append(sec.Checks, toolCheck("dotnet", "dotnet", false,
+		"winget install Microsoft.DotNet.SDK.9", "--version"))
 	sec.Checks = append(sec.Checks, toolCheck("npm", "npm", false,
 		"Comes with Node.js.", "--version"))
 
-	sec.Checks = append(sec.Checks, toolCheck("pnpm", "pnpm", false,
-		"corepack enable && corepack prepare pnpm@latest --activate", "--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("yarn", "Yarn", false,
-		"corepack enable && corepack prepare yarn@stable --activate", "--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("pip", "pip", false,
-		"Comes with Python.", "--version"))
-
 	return sec
 }
 
-func checkLanguageRuntimes() healthSection {
-	sec := healthSection{Title: "Runtimes"}
+// ── New check implementations ─────────────────────────────────────
 
-	sec.Checks = append(sec.Checks, toolCheck("node", "Node.js", false,
-		"winget install OpenJS.NodeJS.LTS", "--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("python", "Python", false,
-		"winget install Python.Python.3.13", "--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("go", "Go", false,
-		"winget install GoLang.Go", "version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("rustc", "Rust", false,
-		"Install rustup: https://rustup.rs", "--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("java", "Java", false,
-		"winget install Oracle.JDK.24", "--version"))
-
-	sec.Checks = append(sec.Checks, toolCheck("dotnet", "dotnet", false,
-		"winget install Microsoft.DotNet.SDK.9", "--version"))
-
-	return sec
+func checkWindowsVersion() healthCheck {
+	ver := cmdOutputTrim("cmd", "/c", "ver")
+	if ver == "" {
+		return healthCheck{Check: "Windows Version", Status: "WARN", Details: "Could not determine"}
+	}
+	// Check build number for winget compat (1809+ required).
+	return healthCheck{Check: "Windows Version", Status: "PASS", Details: ver}
 }
 
-// ── Individual check helpers ───────────────────────────────────────
+func checkRAM() healthCheck {
+	// Use kernel32 GlobalMemoryStatusEx for reliable memory info.
+	type memoryStatusEx struct {
+		Length               uint32
+		MemoryLoad           uint32
+		TotalPhys            uint64
+		AvailPhys            uint64
+		TotalPageFile        uint64
+		AvailPageFile        uint64
+		TotalVirtual         uint64
+		AvailVirtual         uint64
+		AvailExtendedVirtual uint64
+	}
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	globalMemoryStatusEx := kernel32.NewProc("GlobalMemoryStatusEx")
+
+	var mem memoryStatusEx
+	mem.Length = uint32(unsafe.Sizeof(mem))
+	r1, _, _ := globalMemoryStatusEx.Call(uintptr(unsafe.Pointer(&mem)))
+	if r1 == 0 || mem.TotalPhys == 0 {
+		return healthCheck{Check: "RAM", Status: "WARN", Details: "Could not determine"}
+	}
+
+	totalGB := float64(mem.TotalPhys) / (1024 * 1024 * 1024)
+	freeGB := float64(mem.AvailPhys) / (1024 * 1024 * 1024)
+	pctFree := (freeGB / totalGB) * 100
+
+	status := "PASS"
+	rec := ""
+	if pctFree < 10 {
+		status = "WARN"
+		rec = "Low available memory. Close unused applications."
+	}
+
+	return healthCheck{
+		Check:          "RAM",
+		Status:         status,
+		Details:        fmt.Sprintf("%.1f GB free / %.1f GB (%.0f%%)", freeGB, totalGB, pctFree),
+		Recommendation: rec,
+	}
+}
+
+func checkInternet() healthCheck {
+	cmd := exec.Command("ping", "-n", "1", "-w", "3000", "8.8.8.8")
+	err := cmd.Run()
+	if err != nil {
+		return healthCheck{
+			Check:          "Internet",
+			Status:         "WARN",
+			Details:        "No connectivity",
+			Recommendation: "Check your network connection. winget requires internet access.",
+		}
+	}
+	return healthCheck{Check: "Internet", Status: "PASS", Details: "Connected"}
+}
+
+func checkWingetSources() healthCheck {
+	out := cmdOutputTrim("winget", "source", "list")
+	if strings.Contains(out, "winget") {
+		return healthCheck{Check: "Winget Sources", Status: "PASS", Details: "Sources configured"}
+	}
+	return healthCheck{
+		Check:          "Winget Sources",
+		Status:         "WARN",
+		Details:        "No sources found",
+		Recommendation: "Run: winget source reset --force",
+	}
+}
+
+func checkWinTUIUpdate() healthCheck {
+	// Show current version. The upgrade check is done by winget on the
+	// Packages screen — no need to duplicate a slow winget call here.
+	v := version
+	if v == "dev" {
+		return healthCheck{Check: "WinTUI", Status: "PASS", Details: "dev build"}
+	}
+	return healthCheck{Check: "WinTUI", Status: "PASS", Details: "v" + v}
+}
+
+// ── Existing check helpers ────────────────────────────────────────
 
 func checkAdmin() healthCheck {
 	if isElevated() {
-		return healthCheck{
-			Check:   "Privileges",
-			Status:  "PASS",
-			Details: "Administrator",
-		}
+		return healthCheck{Check: "Privileges", Status: "PASS", Details: "Administrator"}
 	}
 	return healthCheck{
 		Check:          "Privileges",
@@ -220,17 +283,13 @@ func toolCheck(cmd, label string, required bool, recommendation string, versionA
 			status = "FAIL"
 		}
 		return healthCheck{
-			Check:          label,
-			Status:         status,
-			Details:        "Not found",
+			Check: label, Status: status, Details: "Not found",
 			Recommendation: recommendation,
 		}
 	}
-
 	ver := ""
 	if len(versionArgs) > 0 {
 		ver = strings.TrimSpace(cmdOutput(path, versionArgs...))
-		// Take just first line
 		if i := strings.IndexByte(ver, '\n'); i > 0 {
 			ver = strings.TrimSpace(ver[:i])
 		}
@@ -238,24 +297,15 @@ func toolCheck(cmd, label string, required bool, recommendation string, versionA
 	if ver == "" {
 		ver = "detected"
 	}
-
-	// If the "version" output looks like an error, mark as WARN
 	lower := strings.ToLower(ver)
 	if strings.Contains(lower, "could not") || strings.Contains(lower, "error") ||
 		strings.Contains(lower, "not recognized") || strings.Contains(lower, "is not") {
 		return healthCheck{
-			Check:          label,
-			Status:         "WARN",
-			Details:        "Found but not working properly",
+			Check: label, Status: "WARN", Details: "Found but not working properly",
 			Recommendation: recommendation,
 		}
 	}
-
-	return healthCheck{
-		Check:   label,
-		Status:  "PASS",
-		Details: ver,
-	}
+	return healthCheck{Check: label, Status: "PASS", Details: ver}
 }
 
 func toolCheckInfo(cmd, label string, versionArgs ...string) healthCheck {
@@ -270,7 +320,6 @@ func toolCheckInfo(cmd, label string, versionArgs ...string) healthCheck {
 	return healthCheck{Check: label, Status: "PASS", Details: ver}
 }
 
-// getFixedDrives returns drive letters (e.g. "C:", "D:") for fixed disks.
 func getFixedDrives() []string {
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	getLogicalDrives := kernel32.NewProc("GetLogicalDrives")
@@ -283,7 +332,7 @@ func getFixedDrives() []string {
 			letter := string(rune('A' + i))
 			root, _ := syscall.UTF16PtrFromString(letter + `:\`)
 			dt, _, _ := getDriveType.Call(uintptr(unsafe.Pointer(root)))
-			if dt == 3 { // DRIVE_FIXED
+			if dt == 3 {
 				drives = append(drives, letter+":")
 			}
 		}
@@ -306,7 +355,6 @@ func checkDiskSpace(drive string) healthCheck {
 	if r1 == 0 || totalBytes == 0 {
 		return healthCheck{Check: fmt.Sprintf("Disk %s", drive), Status: "WARN", Details: "Could not read disk info"}
 	}
-
 	freeGB := float64(freeBytesAvail) / (1024 * 1024 * 1024)
 	totalGB := float64(totalBytes) / (1024 * 1024 * 1024)
 	pctFree := (float64(freeBytesAvail) / float64(totalBytes)) * 100
@@ -315,15 +363,13 @@ func checkDiskSpace(drive string) healthCheck {
 	rec := ""
 	if pctFree < 5 {
 		status = "FAIL"
-		rec = fmt.Sprintf("Critical: only %.1f%% free on %s. Free up disk space.", pctFree, drive)
+		rec = fmt.Sprintf("Critical: only %.1f%% free on %s.", pctFree, drive)
 	} else if pctFree < 15 {
 		status = "WARN"
-		rec = fmt.Sprintf("Low disk space on %s. Consider cleaning up.", drive)
+		rec = fmt.Sprintf("Low disk space on %s.", drive)
 	}
-
 	return healthCheck{
-		Check:          fmt.Sprintf("Disk %s", drive),
-		Status:         status,
+		Check: fmt.Sprintf("Disk %s", drive), Status: status,
 		Details:        fmt.Sprintf("%.0f GB free / %.0f GB (%.0f%%)", freeGB, totalGB, pctFree),
 		Recommendation: rec,
 	}
@@ -339,7 +385,7 @@ func checkDefender() healthCheck {
 	case "false":
 		return healthCheck{
 			Check: "Windows Defender", Status: "WARN", Details: "Real-time protection disabled",
-			Recommendation: "Consider enabling Windows Defender real-time protection.",
+			Recommendation: "Consider enabling Windows Defender.",
 		}
 	default:
 		return healthCheck{Check: "Windows Defender", Status: "WARN", Details: "Could not determine status"}
@@ -350,17 +396,14 @@ func checkPathLength() healthCheck {
 	pathVal := os.Getenv("PATH")
 	length := len(pathVal)
 	entries := len(strings.Split(pathVal, ";"))
-
 	status := "PASS"
 	rec := ""
 	if length > 7000 {
 		status = "WARN"
-		rec = "PATH is very long. Consider cleaning up unused entries to avoid issues."
+		rec = "PATH is very long. Consider cleaning up."
 	}
-
 	return healthCheck{
-		Check:          "PATH",
-		Status:         status,
+		Check: "PATH", Status: status,
 		Details:        fmt.Sprintf("%d chars, %d entries", length, entries),
 		Recommendation: rec,
 	}
@@ -381,15 +424,6 @@ func cmdOutputTrim(name string, args ...string) string {
 	return strings.TrimSpace(cmdOutput(name, args...))
 }
 
-func appendUnique(slice []string, val string) []string {
-	for _, s := range slice {
-		if s == val {
-			return slice
-		}
-	}
-	return append(slice, val)
-}
-
 // ── Healthcheck screen ─────────────────────────────────────────────
 
 type healthcheckState int
@@ -401,13 +435,14 @@ const (
 )
 
 type healthcheckScreen struct {
-	state   healthcheckState
-	report  healthReport
-	spinner spinner.Model
-	scroll  int
-	err     error
-	width   int
-	height  int
+	state        healthcheckState
+	report       healthReport
+	spinner      spinner.Model
+	scroll       int
+	showDevTools bool
+	err          error
+	width        int
+	height       int
 }
 
 type healthcheckDoneMsg struct {
@@ -419,12 +454,7 @@ func newHealthcheckScreen() healthcheckScreen {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
-	return healthcheckScreen{
-		state:   hcLoading,
-		spinner: sp,
-		width:   80,
-		height:  24,
-	}
+	return healthcheckScreen{state: hcLoading, spinner: sp, width: 80, height: 24}
 }
 
 func (s healthcheckScreen) init() tea.Cmd {
@@ -461,9 +491,9 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					s.scroll--
 				}
 			case "down", "j":
-				if s.scroll < s.maxScroll() {
-					s.scroll++
-				}
+				s.scroll++
+				maxScr := max(s.contentLineCount()-max(s.height-6, 8), 0)
+				s.scroll = min(s.scroll, maxScr)
 			case "pgup":
 				s.scroll -= 8
 				if s.scroll < 0 {
@@ -471,9 +501,10 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 			case "pgdown":
 				s.scroll += 8
-				if s.scroll > s.maxScroll() {
-					s.scroll = s.maxScroll()
-				}
+				maxScr := max(s.contentLineCount()-max(s.height-6, 8), 0)
+				s.scroll = min(s.scroll, maxScr)
+			case "d":
+				s.showDevTools = !s.showDevTools
 			case "r":
 				return s.reload()
 			case "esc":
@@ -506,173 +537,161 @@ func (s healthcheckScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	return s, nil
 }
 
-func (s healthcheckScreen) reportLines() []string {
-	var lines []string
+// ── View ──────────────────────────────────────────────────────────
+
+func (s healthcheckScreen) view(width, height int) string {
+	switch s.state {
+	case hcLoading:
+		return fmt.Sprintf("  %s Running health checks...\n", s.spinner.View())
+	case hcError:
+		return "  " + errorStyle.Render("Error: "+s.err.Error()) + "\n\n  " +
+			helpStyle.Render("Press r to retry.") + "\n"
+	case hcReady:
+		return s.viewReady(width, height)
+	}
+	return ""
+}
+
+func (s healthcheckScreen) viewReady(width, height int) string {
+	panelWidth := width - 4
+	r := s.report
+
+	// Build all lines.
+	var allLines []string
+
+	// System info header.
+	overall := statusStyle(r.OverallStatus).Render(r.OverallStatus)
+	info := helpStyle.Render(fmt.Sprintf("%s · %s", r.Hostname, r.OS))
+	uptime := ""
+	if r.Uptime != "" {
+		uptime = helpStyle.Render(" · up " + r.Uptime)
+	}
+	allLines = append(allLines, fmt.Sprintf("  %s  %s%s", overall, info, uptime))
+
+	counts := fmt.Sprintf("  %s %d  %s %d  %s %d  Total: %d",
+		statusStyle("PASS").Render("PASS"), r.Counts.Pass,
+		statusStyle("WARN").Render("WARN"), r.Counts.Warn,
+		statusStyle("FAIL").Render("FAIL"), r.Counts.Fail,
+		r.Counts.Total)
+	allLines = append(allLines, counts, "")
+
+	// Visible sections in bordered panels — split into individual lines.
+	for _, sec := range r.Sections {
+		panel := s.renderHealthPanel(sec, panelWidth, accent)
+		allLines = append(allLines, strings.Split(panel, "\n")...)
+	}
+
+	// Developer tools: collapsed or expanded.
+	devFound := 0
+	for _, c := range r.DevSection.Checks {
+		if c.Status == "PASS" {
+			devFound++
+		}
+	}
+	if s.showDevTools {
+		panel := s.renderHealthPanel(r.DevSection, panelWidth, dim)
+		allLines = append(allLines, strings.Split(panel, "\n")...)
+	} else {
+		devLine := fmt.Sprintf("  %s (%d/%d found, press d to expand)",
+			helpStyle.Render("Developer Tools"),
+			devFound, len(r.DevSection.Checks))
+		allLines = append(allLines, devLine)
+	}
+
+	// Recommendations.
 	var recs []string
-	for _, sec := range s.report.Sections {
-		lines = append(lines, "section:"+sec.Title)
+	for _, sec := range r.Sections {
 		for _, c := range sec.Checks {
-			lines = append(lines, renderCheckLine(c, s.width))
 			if c.Status != "PASS" && c.Recommendation != "" {
 				recs = appendUnique(recs, c.Recommendation)
 			}
 		}
-		lines = append(lines, "")
 	}
 	if len(recs) > 0 {
-		lines = append(lines, "section:Recommendations")
+		allLines = append(allLines, "")
+		allLines = append(allLines, "  "+lipgloss.NewStyle().Bold(true).Foreground(warning).Render("Recommendations"))
 		for _, rec := range recs {
-			lines = append(lines, "  "+itemDescStyle.Render("• "+rec))
+			allLines = append(allLines, "  "+helpStyle.Render("• "+rec))
 		}
-		lines = append(lines, "")
 	}
-	return lines
+
+	// Scrollable output.
+	maxVisible := max(height-2, 8)
+	totalLines := len(allLines)
+
+	// Clamp scroll to valid range based on actual content.
+	maxScr := max(totalLines-maxVisible, 0)
+	if s.scroll > maxScr {
+		s.scroll = maxScr
+	}
+
+	start := s.scroll
+	end := min(start+maxVisible, totalLines)
+
+	var b strings.Builder
+	for i := start; i < end; i++ {
+		b.WriteString(allLines[i] + "\n")
+	}
+	return b.String()
 }
 
-func (s healthcheckScreen) maxVisibleLines() int {
-	maxVisible := contentAreaHeightForWindow(s.width, s.height, true) - 10
-	if maxVisible < 5 {
-		return 5
+func (s healthcheckScreen) renderHealthPanel(sec healthSection, panelWidth int, borderColor color.Color) string {
+	innerW := max(panelWidth-2, 10)
+	var lines []string
+	for _, c := range sec.Checks {
+		lines = append(lines, renderCheckLine(c, innerW))
 	}
-	return maxVisible
+	content := strings.Join(lines, "\n")
+	return renderTitledPanel(sec.Title, content, panelWidth, len(lines), borderColor)
 }
 
-func (s healthcheckScreen) maxScroll() int {
+// contentLineCount returns an upper bound on total rendered lines.
+func (s healthcheckScreen) contentLineCount() int {
 	if s.state != hcReady {
 		return 0
 	}
-	maxScroll := len(s.reportLines()) - s.maxVisibleLines()
-	if maxScroll < 0 {
-		return 0
+	n := 3 // header
+	for _, sec := range s.report.Sections {
+		n += len(sec.Checks) + 2
 	}
-	return maxScroll
+	if s.showDevTools {
+		n += len(s.report.DevSection.Checks) + 2
+	}
+	n += 10 // recommendations + padding
+	return n
 }
 
 func (s healthcheckScreen) clampScroll() healthcheckScreen {
 	if s.scroll < 0 {
 		s.scroll = 0
 	}
-	maxScroll := s.maxScroll()
-	if s.scroll > maxScroll {
-		s.scroll = maxScroll
-	}
 	return s
-}
-
-func (s healthcheckScreen) view(width, height int) string {
-	var b strings.Builder
-	b.WriteString("  " + sectionTitleStyle.Render("System Health Check") + "\n\n")
-
-	switch s.state {
-	case hcLoading:
-		fmt.Fprintf(&b, "  %s Running checks...\n", s.spinner.View())
-
-	case hcError:
-		b.WriteString("  " + errorStyle.Render("Error: "+s.err.Error()) + "\n")
-
-	case hcReady:
-		r := s.report
-
-		// System info line
-		overall := statusStyle(r.OverallStatus).Render(r.OverallStatus)
-		info := helpStyle.Render(fmt.Sprintf("%s · %s", r.Hostname, r.OS))
-		uptime := ""
-		if r.Uptime != "" {
-			uptime = helpStyle.Render(" · up " + r.Uptime)
-		}
-		fmt.Fprintf(&b, "  %s  %s%s\n\n", overall, info, uptime)
-
-		// Counts
-		b.WriteString(fmt.Sprintf("  %s %d    %s %d    %s %d    Total: %d\n\n",
-			statusStyle("PASS").Render("PASS"), r.Counts.Pass,
-			statusStyle("WARN").Render("WARN"), r.Counts.Warn,
-			statusStyle("FAIL").Render("FAIL"), r.Counts.Fail,
-			r.Counts.Total))
-
-		// Build flat list of renderable lines (section headers + checks + recommendations)
-		lines := s.reportLines()
-		var recs []string
-		for _, sec := range r.Sections {
-			for _, c := range sec.Checks {
-				if c.Status != "PASS" && c.Recommendation != "" {
-					recs = appendUnique(recs, c.Recommendation)
-				}
-			}
-		}
-
-		if len(recs) > 0 {
-			b.WriteString("  " + helpStyle.Render(fmt.Sprintf("%d recommendation(s) listed at the end of the report.", len(recs))) + "\n")
-		}
-
-		// Scrollable display
-		maxVisible := height - 10
-		if maxVisible < 5 {
-			maxVisible = 5
-		}
-		totalLines := len(lines)
-		start := s.scroll
-		if totalLines > maxVisible && start > totalLines-maxVisible {
-			start = totalLines - maxVisible
-		}
-		if start < 0 {
-			start = 0
-		}
-		end := start + maxVisible
-		if end > totalLines {
-			end = totalLines
-		}
-
-		for i := start; i < end; i++ {
-			line := lines[i]
-			if strings.HasPrefix(line, "section:") {
-				title := strings.TrimPrefix(line, "section:")
-				b.WriteString("  " + lipgloss.NewStyle().Bold(true).Foreground(secondary).Render(title) + "\n")
-			} else {
-				b.WriteString(line + "\n")
-			}
-		}
-
-		if totalLines > maxVisible {
-			b.WriteString(fmt.Sprintf("\n  %s\n", helpStyle.Render(
-				fmt.Sprintf("Showing %d-%d of %d (↑↓/PgUp/PgDn to scroll)", start+1, end, totalLines))))
-		} else {
-			b.WriteString("\n  " + helpStyle.Render("Press r to rerun checks or tab to switch screens") + "\n")
-		}
-
-	}
-
-	return b.String()
 }
 
 func (s healthcheckScreen) helpKeys() []key.Binding {
 	switch s.state {
 	case hcLoading:
-		return []key.Binding{}
+		return nil
 	case hcError:
-		return []key.Binding{keyRefresh, keyTabs}
+		return []key.Binding{keyRefresh}
 	case hcReady:
-		bindings := []key.Binding{keyScroll, keyRefresh}
-		if s.scroll > 0 {
-			bindings = append(bindings, keyEscClear)
+		bindings := []key.Binding{
+			keyScroll,
+			key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "dev tools")),
+			keyRefresh,
 		}
-		bindings = append(bindings, keyTabs)
 		return bindings
 	}
-	return []key.Binding{keyTabs}
+	return nil
 }
 
 func renderCheckLine(c healthCheck, width int) string {
 	status := statusStyle(c.Status).Render(fmt.Sprintf("%-4s", c.Status))
 	name := lipgloss.NewStyle().Bold(true).Width(20).Render(c.Check)
-	maxDetail := width - 34
-	if maxDetail < 20 {
-		maxDetail = 20
-	}
+	maxDetail := max(width-34, 20)
 	detail := helpStyle.Render(truncate(c.Details, maxDetail))
 	return fmt.Sprintf("  %s  %s  %s", status, name, detail)
 }
-
-// ── View helpers ───────────────────────────────────────────────────
 
 func statusStyle(status string) lipgloss.Style {
 	switch strings.ToUpper(status) {
@@ -695,4 +714,13 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+func appendUnique(slice []string, val string) []string {
+	for _, s := range slice {
+		if s == val {
+			return slice
+		}
+	}
+	return append(slice, val)
 }

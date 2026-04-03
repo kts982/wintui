@@ -25,10 +25,6 @@ var (
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "cancel"),
 	)
-	keyEscClear = key.NewBinding(
-		key.WithKeys("esc"),
-		key.WithHelp("esc", "clear"),
-	)
 	keyRefresh = key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "refresh"),
