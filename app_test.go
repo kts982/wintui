@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -136,7 +135,7 @@ func TestPackageDataChangedReloadsInactiveDataScreens(t *testing.T) {
 	}
 }
 
-func TestPackageDataChangedUsesSequentialRefresh(t *testing.T) {
+func TestPackageDataChangedTriggersRefresh(t *testing.T) {
 	a := app{
 		activeTab: 1, // Install
 		screens: map[screenID]screen{
@@ -149,10 +148,9 @@ func TestPackageDataChangedUsesSequentialRefresh(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected refresh command")
 	}
-
-	msg := cmd()
-	if got := fmt.Sprintf("%T", msg); got != "tea.sequenceMsg" {
-		t.Fatalf("refresh command type = %s, want tea.sequenceMsg", got)
+	// Workspace should be recreated.
+	if _, ok := a.screens[screenWorkspace].(workspaceScreen); !ok {
+		t.Fatalf("workspace screen was not recreated: %T", a.screens[screenWorkspace])
 	}
 }
 

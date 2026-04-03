@@ -479,8 +479,8 @@ func (a app) handlePackageDataChanged(msg packageDataChangedMsg) (app, tea.Cmd) 
 	return a, tea.Sequence(cmds...)
 }
 
-func packageRefreshOrder(origin screenID) []screenID {
-	return []screenID{screenWorkspace, screenPackages, screenUpgrade}
+func packageRefreshOrder(_ screenID) []screenID {
+	return []screenID{screenWorkspace}
 }
 
 func (a app) updateScreen(id screenID, msg tea.Msg) (app, tea.Cmd) {

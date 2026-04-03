@@ -24,7 +24,6 @@ const (
 	workspaceEmpty
 	workspaceConfirm
 	workspaceExecuting
-	workspaceDone
 )
 
 // workspaceItem is a unified list entry for both upgradeable and installed packages.
@@ -235,15 +234,6 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 				return s, nil
 			}
-		}
-
-		// Done state — list with final status icons.
-		if s.state == workspaceDone {
-			if msg.String() == "r" {
-				result, cmd := s.resetAndReload()
-				return result, cmd
-			}
-			return s, nil
 		}
 
 		// Filter input.
@@ -572,7 +562,6 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 
 func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 	s.modal.phase = execPhaseComplete
-	s.modal.log = s.exec.lines
 	s.selected = make(map[string]bool)
 	cache.invalidate()
 	return s, func() tea.Msg { return packageDataChangedMsg{origin: screenWorkspace} }
@@ -598,8 +587,6 @@ func (s workspaceScreen) view(width, height int) string {
 		if s.modal != nil {
 			return s.modal.view(width, height)
 		}
-		return s.viewReady(width, height)
-	case workspaceDone:
 		return s.viewReady(width, height)
 	}
 	return ""
@@ -657,8 +644,8 @@ func (s workspaceScreen) renderList(items []workspaceItem, nUpgradeable int, l l
 	var updatesPanelH, installedPanelH int
 	if nUpgradeable > 0 && nInstalled > 0 {
 		maxUpdatesH := max(availableH*2/5, 5)
-		updatesPanelH = min(nUpgradeable+2, maxUpdatesH) // +2 for top+bottom border
-		installedPanelH = availableH - updatesPanelH - 1 // -1 for gap between panels
+		updatesPanelH = min(nUpgradeable+2, maxUpdatesH)     // +2 for top+bottom border
+		installedPanelH = max(availableH-updatesPanelH-1, 4) // -1 for gap, min 4
 	} else if nUpgradeable > 0 {
 		updatesPanelH = availableH
 	} else {
@@ -774,7 +761,7 @@ func (s workspaceScreen) renderPanelItems(items []workspaceItem, globalOffset, m
 	return strings.Join(lines, "\n")
 }
 
-func (s workspaceScreen) renderItemText(item workspaceItem, maxWidth int, isCursor bool) string {
+func (s workspaceScreen) renderItemText(item workspaceItem, _ int, isCursor bool) string {
 	nameStyle := itemStyle // white
 	if isCursor {
 		nameStyle = itemActiveStyle // bold pink
@@ -804,10 +791,6 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 		return s.modal.helpKeys()
 	}
 	switch s.state {
-	case workspaceDone:
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
-		}
 	case workspaceReady:
 		// fall through
 	default:

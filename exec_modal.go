@@ -26,7 +26,6 @@ type execModal struct {
 	items         []batchItem
 	itemMap       map[string]*batchItem
 	idx           int // currently running item index
-	log           []string
 	spinner       spinner.Model
 	forceElevated bool // true when retrying via Ctrl+E
 }
@@ -62,10 +61,6 @@ func (m execModal) actionVerb() string {
 	default:
 		return m.actionTitle() + "ing"
 	}
-}
-
-func (m execModal) active() bool {
-	return len(m.items) > 0
 }
 
 // view renders the modal centered in the content area (below chrome).
