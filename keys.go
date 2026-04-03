@@ -17,14 +17,6 @@ var (
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "select"),
 	)
-	keyInstallSelected = key.NewBinding(
-		key.WithKeys("enter"),
-		key.WithHelp("enter", "install"),
-	)
-	keyEsc = key.NewBinding(
-		key.WithKeys("esc"),
-		key.WithHelp("esc", "back"),
-	)
 	keyEscOrLeft = key.NewBinding(
 		key.WithKeys("esc", "left"),
 		key.WithHelp("←/esc", "back"),
@@ -40,14 +32,6 @@ var (
 	keyRefresh = key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "refresh"),
-	)
-	keyToggle = key.NewBinding(
-		key.WithKeys(" ", "x"),
-		key.WithHelp("space", "toggle"),
-	)
-	keyToggleAll = key.NewBinding(
-		key.WithKeys("a"),
-		key.WithHelp("a", "all"),
 	)
 	keyConfirmY = key.NewBinding(
 		key.WithKeys("y"),
@@ -73,25 +57,9 @@ var (
 		key.WithKeys("up", "down", "pgup", "pgdown"),
 		key.WithHelp("↑↓/pg", "scroll"),
 	)
-	keyFollow = key.NewBinding(
-		key.WithKeys("f", "end"),
-		key.WithHelp("f/end", "follow"),
-	)
-	keyLog = key.NewBinding(
-		key.WithKeys("l"),
-		key.WithHelp("l", "log"),
-	)
 	keyCleanAll = key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "clean all"),
-	)
-	keyShowSkipped = key.NewBinding(
-		key.WithKeys("v"),
-		key.WithHelp("v", "show skipped"),
-	)
-	keyFocusInstallable = key.NewBinding(
-		key.WithKeys("v"),
-		key.WithHelp("v", "focus installable"),
 	)
 	keyOpen = key.NewBinding(
 		key.WithKeys("o"),

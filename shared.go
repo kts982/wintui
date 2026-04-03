@@ -51,14 +51,6 @@ func batchResultCounts(errs []error) (successCount, failCount int) {
 	return successCount, failCount
 }
 
-func valueAt[T any](values []T, index int) T {
-	var zero T
-	if index < 0 || index >= len(values) {
-		return zero
-	}
-	return values[index]
-}
-
 func packageSummary(pkgs []Package) string {
 	total := len(pkgs)
 	winget, msstore, system := 0, 0, 0

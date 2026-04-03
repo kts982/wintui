@@ -80,7 +80,3 @@ func contentAreaHeightForWindow(width, height int, hasHelp bool) int {
 	}
 	return contentHeight
 }
-
-func useCompactHelp(width int) bool {
-	return width > 0 && width < 128
-}

@@ -3,7 +3,6 @@ package main
 import (
 	"strings"
 
-	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 
 	tea "charm.land/bubbletea/v2"
@@ -53,10 +52,6 @@ func (l *executionLog) appendLine(line string) {
 	l.sync()
 }
 
-func (l executionLog) fullOutput() string {
-	return strings.Join(l.lines, "\n")
-}
-
 func (l executionLog) currentOutput() string {
 	return strings.Join(l.current, "\n")
 }
@@ -71,37 +66,6 @@ func (l *executionLog) setDoneExpanded(expanded bool) {
 		l.follow = true
 		l.vp.GotoBottom()
 	}
-}
-
-func (l executionLog) helpKeys() []key.Binding {
-	bindings := []key.Binding{keyScroll}
-	if !l.follow {
-		bindings = append(bindings, keyFollow)
-	}
-	bindings = append(bindings, keyEscCancel)
-	return bindings
-}
-
-func (l executionLog) helpKeysWithoutCancel() []key.Binding {
-	bindings := []key.Binding{keyScroll}
-	if !l.follow {
-		bindings = append(bindings, keyFollow)
-	}
-	return bindings
-}
-
-func (l executionLog) doneHelpKeys() []key.Binding {
-	if !l.hasOutput() {
-		return nil
-	}
-	bindings := []key.Binding{keyLog}
-	if l.expanded {
-		bindings = append(bindings, keyScroll)
-		if !l.follow {
-			bindings = append(bindings, keyFollow)
-		}
-	}
-	return bindings
 }
 
 func (l *executionLog) update(msg tea.Msg) (tea.Cmd, bool) {
@@ -153,50 +117,6 @@ func (l *executionLog) setSize(width, height int) {
 		vpH = 5
 	}
 	l.vp.SetHeight(vpH)
-}
-
-// setDoneSize adjusts the viewport height for the done state where
-// extra chrome (result summary, hints) takes more vertical space.
-func (l *executionLog) setDoneSize(width, height, reserve int) {
-	l.vp.SetWidth(width - 8)
-	vpH := height - reserve
-	if vpH < 5 {
-		vpH = 5
-	}
-	l.vp.SetHeight(vpH)
-}
-
-func (l executionLog) view(width, height int) string {
-	return indentBlock(l.vp.View(), 2)
-}
-
-func (l executionLog) doneView(width, height, reserve int) string {
-	if !l.hasOutput() {
-		return ""
-	}
-
-	log := l
-	log.vp.SetWidth(width - 8)
-
-	if !log.expanded {
-		previewHeight := min(6, max(4, len(log.lines)))
-		log.vp.SetHeight(previewHeight)
-		log.vp.GotoBottom()
-		var b strings.Builder
-		b.WriteString("  " + helpStyle.Render("Log preview — press l to expand") + "\n")
-		b.WriteString(indentBlock(log.vp.View(), 2))
-		return b.String()
-	}
-
-	vpH := height - reserve
-	if vpH < 5 {
-		vpH = 5
-	}
-	log.vp.SetHeight(vpH)
-	var b strings.Builder
-	b.WriteString("  " + helpStyle.Render("Execution log — press l to hide") + "\n")
-	b.WriteString(indentBlock(log.vp.View(), 2))
-	return b.String()
 }
 
 func (l *executionLog) sync() {

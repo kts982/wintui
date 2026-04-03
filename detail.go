@@ -100,11 +100,6 @@ func newDetailPanel() detailPanel {
 	return detailPanel{state: detailHidden, spinner: sp, windowWidth: 80, windowHeight: 24}
 }
 
-// show starts loading details for a package.
-func (p detailPanel) show(pkgID, source string) (detailPanel, tea.Cmd) {
-	return p.showWithVersion(Package{ID: pkgID, Source: source}, "", false)
-}
-
 func (p detailPanel) showWithVersion(pkg Package, selectedVersion string, allowVersionSelect bool) (detailPanel, tea.Cmd) {
 	samePackage := p.pkgID == pkg.ID && p.source == pkg.Source
 

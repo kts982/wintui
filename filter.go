@@ -3,7 +3,6 @@ package main
 import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/lipgloss/v2"
-	"github.com/sahilm/fuzzy"
 )
 
 // listFilter provides type-to-filter for package lists.
@@ -49,34 +48,4 @@ func (f listFilter) apply() listFilter {
 	f.active = false
 	f.input.Blur()
 	return f
-}
-
-// filterPackages returns only matching packages.
-func (f listFilter) filterPackages(pkgs []Package) []Package {
-	if f.query == "" {
-		return pkgs
-	}
-	var names []string
-	for _, p := range pkgs {
-		names = append(names, p.Name+" "+p.ID)
-	}
-	matches := fuzzy.Find(f.query, names)
-	var out []Package
-	for _, m := range matches {
-		out = append(out, pkgs[m.Index])
-	}
-	return out
-}
-
-// view renders the filter input or active filter label.
-func (f listFilter) view() string {
-	if f.active {
-		return "  " + f.input.View()
-	}
-	if f.query != "" {
-		return "  " + lipgloss.NewStyle().Foreground(accent).Render("Filter: ") +
-			helpStyle.Render(f.query) + "  " +
-			helpStyle.Render("(/ edit • esc clear)")
-	}
-	return ""
 }

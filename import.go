@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"unicode"
 
-	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -101,64 +99,7 @@ func newImportModel() importModel {
 	}
 }
 
-// start begins the import flow by scanning for export files.
-func (m importModel) start(installed []Package) (importModel, tea.Cmd) {
-	m.active = true
-	m.state = importScanning
-	m.err = nil
-	m.statusMsg = ""
-	m.packages = nil
-	m.files = nil
-	m.selected = make(map[int]bool)
-	m.showAll = false
-	m.batchTotal = 0
-	m.ctx, m.cancel = context.WithCancel(context.Background())
-	m.progress, _ = m.progress.start()
-	return m, tea.Batch(m.spinner.Tick, tickProgress(), scanExportFilesCtx(m.ctx, installed))
-}
-
 // ── File scanning & loading ────────────────────────────────────────
-
-func scanExportFilesCtx(ctx context.Context, installed []Package) tea.Cmd {
-	return func() tea.Msg {
-		if ctx.Err() != nil {
-			return importFilesMsg{err: fmt.Errorf("cancelled")}
-		}
-		desktop, err := desktopDir()
-		if err != nil {
-			return importFilesMsg{err: err}
-		}
-		pattern := filepath.Join(desktop, "wintui_packages_*.json")
-		files, err := filepath.Glob(pattern)
-		if err != nil {
-			return importFilesMsg{err: err}
-		}
-		// Sort by modification time, newest first
-		sort.Slice(files, func(i, j int) bool {
-			fi, _ := os.Stat(files[i])
-			fj, _ := os.Stat(files[j])
-			if fi == nil || fj == nil {
-				return files[i] > files[j]
-			}
-			return fi.ModTime().After(fj.ModTime())
-		})
-		if len(files) == 0 {
-			return importFilesMsg{err: fmt.Errorf("no wintui_packages_*.json found on Desktop — export first with e")}
-		}
-		if ctx.Err() != nil {
-			return importFilesMsg{err: fmt.Errorf("cancelled")}
-		}
-		// Single file: auto-load it
-		if len(files) == 1 {
-			pkgs, loadErr := loadImportFile(files[0], installed)
-			if loadErr != nil {
-				return importLoadedMsg{err: loadErr}
-			}
-			return importLoadedMsg{packages: pkgs}
-		}
-		return importFilesMsg{files: files}
-	}
-}
 
 func loadImportFile(path string, installed []Package) ([]importPkg, error) {
 	data, err := os.ReadFile(path)
@@ -736,48 +677,4 @@ func (m importModel) view(width, height int) string {
 	}
 
 	return b.String()
-}
-
-func (m importModel) helpKeys() []key.Binding {
-	switch m.state {
-	case importScanning:
-		return []key.Binding{keyEscCancel}
-	case importFileSelect:
-		return []key.Binding{keyUp, keyDown, keyEnter, keyEsc}
-	case importReview:
-		installable, _, _ := m.reviewCounts()
-		bindings := make([]key.Binding, 0, 6)
-		visible := m.visiblePackageIndices()
-		if len(visible) > 0 {
-			bindings = append(bindings, keyUp, keyDown)
-		}
-		if index, ok := m.currentVisiblePackageIndex(); ok {
-			pkg := m.packages[index]
-			if !pkg.Installed && !pkg.NonCanonical {
-				bindings = append(bindings, keyToggle)
-			}
-		}
-		if installable > 0 {
-			bindings = append(bindings, keyToggleAll)
-		}
-		if m.skippedCount() > 0 {
-			if m.showAll {
-				bindings = append(bindings, keyFocusInstallable)
-			} else {
-				bindings = append(bindings, keyShowSkipped)
-			}
-		}
-		if m.selectedCount() > 0 {
-			bindings = append(bindings, keyInstallSelected)
-		}
-		bindings = append(bindings, keyEsc)
-		return bindings
-	case importConfirm:
-		return []key.Binding{keyConfirmY}
-	case importInstalling:
-		return []key.Binding{keyEscCancel}
-	case importDone:
-		return []key.Binding{keyEnter, keyEsc}
-	}
-	return []key.Binding{keyEsc}
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -11,23 +10,8 @@ import (
 )
 
 const (
-	swHide       = 0
-	swShowNormal = 1
+	swHide = 0
 )
-
-func relaunchElevatedRetry(req retryRequest) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-
-	args, err := req.startupArgs()
-	if err != nil {
-		return err
-	}
-
-	return relaunchAsAdmin(exe, args, swShowNormal)
-}
 
 func relaunchAsAdmin(exe string, args []string, showCmd int) error {
 	verb, err := windows.UTF16PtrFromString("runas")

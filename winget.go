@@ -306,27 +306,6 @@ func likelyBenefitsFromElevation(err error, output string) bool {
 	return strings.Contains(lower, "1603") || strings.Contains(lower, "0x80070643")
 }
 
-type elevationRetryKind int
-
-const (
-	elevationRetryNone elevationRetryKind = iota
-	elevationRetrySoft
-	elevationRetryHard
-)
-
-func classifyElevationRetry(err error, output string) elevationRetryKind {
-	if err == nil {
-		return elevationRetryNone
-	}
-	if requiresElevation(err, output) {
-		return elevationRetryHard
-	}
-	if likelyBenefitsFromElevation(err, output) {
-		return elevationRetrySoft
-	}
-	return elevationRetryNone
-}
-
 func appendPreferredSourceArg(args []string, source string) []string {
 	if source != "winget" && source != "msstore" {
 		source = appSettings.Source

@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 )
 
 type retryOp string
@@ -19,11 +18,6 @@ type retryItem struct {
 	Name    string `json:"name"`
 	Source  string `json:"source"`
 	Version string `json:"version"`
-}
-
-type elevationRetryInfo struct {
-	req  *retryRequest
-	hard bool
 }
 
 type retryRequest struct {
@@ -56,42 +50,6 @@ func (r retryRequest) valid() bool {
 		return true
 	}
 	return r.ID != "" && r.Op != ""
-}
-
-func (r retryRequest) startupArgs() ([]string, error) {
-	args := []string{"--retry-op", string(r.Op)}
-	if r.isBatch() {
-		batch, err := encodeRetryItems(r.Items)
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, "--retry-batch", batch)
-	} else {
-		args = append(args, "--id", r.ID)
-		if r.Name != "" {
-			args = append(args, "--name", r.Name)
-		}
-		if r.Source != "" {
-			args = append(args, "--source", r.Source)
-		}
-		if r.Version != "" {
-			args = append(args, "--package-version", r.Version)
-		}
-	}
-	return args, nil
-}
-
-func newRetryItem(pkg Package, version string) retryItem {
-	return retryItem{
-		ID:      pkg.ID,
-		Name:    pkg.Name,
-		Source:  pkg.Source,
-		Version: version,
-	}
-}
-
-func newRetryRequestForPackage(op retryOp, pkg Package, version string) *retryRequest {
-	return newRetryRequestFromItems(op, []retryItem{newRetryItem(pkg, version)})
 }
 
 func newRetryRequestFromItems(op retryOp, items []retryItem) *retryRequest {
@@ -132,30 +90,6 @@ func decodeRetryItems(payload string) ([]retryItem, error) {
 		return nil, err
 	}
 	return items, nil
-}
-
-func retryHintText(req *retryRequest) string {
-	target := "the failed package"
-	if req != nil && req.isBatch() {
-		target = "the failed packages"
-	}
-	return fmt.Sprintf("Press Ctrl+e to retry %s with elevated privileges.", target)
-}
-
-func retryWarningText(req *retryRequest) string {
-	if req == nil {
-		return ""
-	}
-	switch req.Op {
-	case retryOpInstall:
-		return "Retrying elevated may install machine-wide instead of per-user for some packages."
-	case retryOpUpgrade:
-		return "Retrying elevated may change installer behavior for some packages."
-	case retryOpUninstall:
-		return "Retrying elevated may help remove packages blocked by permissions or services."
-	default:
-		return ""
-	}
 }
 
 func tabForRetry(_ retryRequest) int {
