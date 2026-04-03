@@ -522,6 +522,8 @@ func (s workspaceScreen) toggleSelection() (screen, tea.Cmd) {
 	// Is this a search result or install queue item?
 	inSearchOrQueue := s.cursor < len(queue)+len(search)
 
+	inSearch := s.cursor >= len(queue) && s.cursor < len(queue)+len(search)
+
 	if inSearchOrQueue {
 		// Toggle in/out of install queue.
 		if s.installQueueMap[k] {
@@ -536,6 +538,12 @@ func (s workspaceScreen) toggleSelection() (screen, tea.Cmd) {
 		} else {
 			s.installQueueMap[k] = true
 			s.installQueue = append(s.installQueue, item)
+			// Auto-close search results after selecting from search.
+			if inSearch {
+				s.searchResults = nil
+				s.searchQuery = ""
+				s.cursor = 0
+			}
 		}
 	} else {
 		// Regular installed/upgradeable toggle.
@@ -1028,15 +1036,33 @@ func (s workspaceScreen) renderItemText(item workspaceItem, _ int, isCursor bool
 	if isCursor {
 		nameStyle = itemActiveStyle // bold pink
 	}
+	name := nameStyle.Render(item.pkg.Name)
+
+	// Check for a custom selected version.
+	customVer := s.selectedVersions[item.key()]
 
 	if item.upgradeable {
-		name := nameStyle.Render(item.pkg.Name)
-		ver := helpStyle.Render(item.installed + " → " + item.available)
-		return name + "  " + ver
+		ver := item.installed + " → " + item.available
+		if customVer != "" && customVer != item.available {
+			ver = item.installed + " → " + customVer
+		}
+		return name + "  " + helpStyle.Render(ver)
 	}
-	name := nameStyle.Render(item.pkg.Name)
-	ver := helpStyle.Render(item.installed)
-	return name + "  " + ver
+
+	// Install queue or search result: show version (custom or available).
+	if item.installed == "" {
+		ver := item.available
+		if customVer != "" {
+			ver = customVer
+		}
+		if ver != "" {
+			return name + "  " + helpStyle.Render(ver)
+		}
+		return name
+	}
+
+	// Regular installed package.
+	return name + "  " + helpStyle.Render(item.installed)
 }
 
 // viewBatchList renders the batch items with inline status icons.
