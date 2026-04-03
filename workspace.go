@@ -1086,16 +1086,48 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 	if s.state != workspaceReady {
 		return nil
 	}
-	// Compact help — most important keys + ? for full help.
-	bindings := []key.Binding{
-		key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
-		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search & install")),
-		key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade")),
-		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")),
+
+	// Determine which section the cursor is in.
+	queue, search, upgradeable, _ := s.displayItems()
+	nQueue := len(queue)
+	nSearch := len(search)
+	nUpgradeable := len(upgradeable)
+
+	inQueue := s.cursor < nQueue
+	inSearch := s.cursor >= nQueue && s.cursor < nQueue+nSearch
+	inUpgrades := s.cursor >= nQueue+nSearch && s.cursor < nQueue+nSearch+nUpgradeable
+
+	// Context-sensitive compact help.
+	var bindings []key.Binding
+
+	switch {
+	case inQueue:
+		bindings = []key.Binding{
+			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "remove")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install")),
+			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search & install")),
+		}
+	case inSearch:
+		bindings = []key.Binding{
+			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "add to queue")),
+			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search & install")),
+		}
+	case inUpgrades:
+		bindings = []key.Binding{
+			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
+			key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade")),
+			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")),
+			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search & install")),
+		}
+	default: // installed
+		bindings = []key.Binding{
+			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
+			key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")),
+			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search & install")),
+		}
 	}
-	if len(s.installQueue) > 0 {
-		bindings = append(bindings, key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install queued")))
-	}
+
 	bindings = append(bindings, key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")))
 	return bindings
 }

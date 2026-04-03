@@ -352,24 +352,37 @@ func (a app) useCompactHeader() bool {
 	return a.height < 32 || a.width < 110
 }
 
+func (a app) adminBadge() string {
+	if isElevated() {
+		return lipgloss.NewStyle().Foreground(success).Render("● admin")
+	}
+	return lipgloss.NewStyle().Foreground(warning).Render("● user")
+}
+
 func (a app) renderLogo() string {
+	badge := a.adminBadge()
+
 	if a.useCompactHeader() {
 		title := lipgloss.NewStyle().Foreground(accent).Bold(true).Render("WinTUI")
 		subtitle := lipgloss.NewStyle().Foreground(dim).Italic(true).Render("Windows Package Manager")
-		return "  " + title + "  " + subtitle + "\n"
+		left := "  " + title + "  " + subtitle
+		return left + "  " + badge + "\n"
 	}
 
 	n := len(logoGradient)
 	var lines []string
 	for i, line := range asciiLogo {
-		// Convert spring position to a gradient index
 		idx := int(math.Round(a.logoRows[i].pos))
-		idx = ((idx % n) + n) % n // ensure positive modulo
+		idx = ((idx % n) + n) % n
 		color := logoGradient[idx]
 		styled := lipgloss.NewStyle().Foreground(color).Bold(true).Render(line)
 		lines = append(lines, "  "+styled)
 	}
 	subtitle := lipgloss.NewStyle().Foreground(dim).Italic(true).Render("  Windows Package Manager")
+	// Align badge with the end of the ASCII logo (~52 chars).
+	logoWidth := len([]rune(asciiLogo[0])) + 2 // +2 for indent
+	gap := max(logoWidth-lipgloss.Width(subtitle)-lipgloss.Width(badge), 2)
+	subtitle += strings.Repeat(" ", gap) + badge
 	lines = append(lines, subtitle)
 	return strings.Join(lines, "\n") + "\n"
 }
@@ -401,19 +414,7 @@ func (a app) renderTabBar() string {
 		}
 	}
 	bar := lipgloss.JoinHorizontal(lipgloss.Bottom, parts...)
-
-	// Admin badge
-	var adminBadge string
-	if isElevated() {
-		adminBadge = lipgloss.NewStyle().Foreground(success).Render("● admin")
-	} else {
-		adminBadge = lipgloss.NewStyle().Foreground(warning).Render("● user")
-	}
-
-	// Join admin badge aligned to the bottom of the tab row.
-	badgeBlock := lipgloss.NewStyle().PaddingLeft(2).Render(adminBadge)
-	tabLine := lipgloss.JoinHorizontal(lipgloss.Bottom, " "+bar, badgeBlock)
-	return tabLine + "\n"
+	return lipgloss.NewStyle().PaddingLeft(1).Render(bar) + "\n"
 }
 
 // tabHitTest returns the tab index at x position, or -1.
