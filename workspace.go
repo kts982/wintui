@@ -405,13 +405,15 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 
 	case streamMsg:
-		if s.state == workspaceExecuting && s.modal != nil {
+		// Ignore stream messages if batch was cancelled.
+		if s.state == workspaceExecuting && s.modal != nil && s.modal.phase == execPhaseRunning {
 			s.exec.appendLine(string(msg))
 			return s, awaitStream(nil, s.streamOut, s.streamErr)
 		}
 
 	case streamDoneMsg:
-		if s.state == workspaceExecuting && s.modal != nil && s.modal.idx < len(s.modal.items) {
+		// Don't advance if batch was cancelled (phase already set to complete).
+		if s.modal != nil && s.modal.phase == execPhaseRunning && s.modal.idx < len(s.modal.items) {
 			s.modal.items[s.modal.idx].output = s.exec.currentOutput()
 			if msg.err != nil {
 				s.modal.items[s.modal.idx].status = batchFailed
@@ -896,6 +898,8 @@ func (s workspaceScreen) renderSections(l layout) string {
 		b.WriteString("  " + s.searchInput.View() + "\n")
 	} else if s.searchLoading {
 		b.WriteString("  " + s.spinner.View() + " Searching...\n")
+	} else if s.err != nil {
+		b.WriteString("  " + errorStyle.Render("Search error: "+s.err.Error()) + "\n")
 	} else if s.filter.active {
 		b.WriteString("  " + s.filter.input.View() + "\n")
 	} else if s.filter.query != "" {
