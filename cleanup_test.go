@@ -35,8 +35,8 @@ func TestCleanupReadyViewShowsEstimatedSize(t *testing.T) {
 	s.totalBytes = s.targets[0].bytes + s.targets[1].bytes
 
 	got := s.view(120, 24)
-	if !strings.Contains(got, "Estimated reclaimable size: 2.5 MB") {
-		t.Fatalf("view() = %q, want estimated reclaimable size", got)
+	if !strings.Contains(got, "2.5 MB") {
+		t.Fatalf("view() = %q, want size in panel title", got)
 	}
 }
 

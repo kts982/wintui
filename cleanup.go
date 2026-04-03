@@ -19,17 +19,18 @@ import (
 type cleanupState int
 
 const (
-	cleanupLoading cleanupState = iota
-	cleanupReady
-	cleanupConfirm
-	cleanupExecuting
-	cleanupDone
-	cleanupEmpty
+	cleanupLoading   cleanupState = iota
+	cleanupReady                  // targets scanned, awaiting action
+	cleanupConfirm                // confirm deletion
+	cleanupExecuting              // deleting
+	cleanupDone                   // results shown
+	cleanupEmpty                  // nothing to clean
 )
 
 type cleanupScreen struct {
 	state      cleanupState
 	targets    []cleanupTarget
+	selected   map[int]bool // selected targets for partial cleanup
 	cursor     int
 	spinner    spinner.Model
 	progress   progressBar
@@ -38,6 +39,8 @@ type cleanupScreen struct {
 	failed     int
 	totalBytes int64
 	freedBytes int64
+	width      int
+	height     int
 	ctx        context.Context
 	cancel     context.CancelFunc
 	cancelled  bool
@@ -55,10 +58,13 @@ func newCleanupScreen() cleanupScreen {
 	ctx, cancel := context.WithCancel(context.Background())
 	return cleanupScreen{
 		state:    cleanupLoading,
+		selected: make(map[int]bool),
 		spinner:  sp,
 		progress: newProgressBar(50),
 		ctx:      ctx,
 		cancel:   cancel,
+		width:    80,
+		height:   24,
 	}
 }
 
@@ -109,7 +115,6 @@ func cleanupTargetSize(path string) int64 {
 	if !info.IsDir() {
 		return info.Size()
 	}
-
 	var total int64
 	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
 		if err != nil || info == nil || info.IsDir() {
@@ -129,6 +134,8 @@ func (s cleanupScreen) reload() (cleanupScreen, tea.Cmd) {
 	s.totalBytes = 0
 	s.freedBytes = 0
 	s.cancelled = false
+	s.selected = make(map[int]bool)
+	s.cursor = 0
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.progress, _ = s.progress.start()
 	return s, tea.Batch(s.spinner.Tick, tickProgress(), scanTempFilesCmd(s.ctx))
@@ -136,6 +143,11 @@ func (s cleanupScreen) reload() (cleanupScreen, tea.Cmd) {
 
 func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		s.width = msg.Width
+		s.height = msg.Height
+		return s, nil
+
 	case tea.KeyPressMsg:
 		if msg.String() == "r" && (s.state == cleanupReady || s.state == cleanupEmpty || s.state == cleanupDone) {
 			return s.reload()
@@ -162,22 +174,38 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				if s.cursor < len(s.targets)-1 {
 					s.cursor++
 				}
+			case "space":
+				s.selected[s.cursor] = !s.selected[s.cursor]
+				if !s.selected[s.cursor] {
+					delete(s.selected, s.cursor)
+				}
+			case "a":
+				if len(s.selected) == len(s.targets) {
+					s.selected = make(map[int]bool)
+				} else {
+					for i := range s.targets {
+						s.selected[i] = true
+					}
+				}
 			case "enter":
 				s.state = cleanupConfirm
 			case "esc":
-				if s.cursor > 0 {
+				if len(s.selected) > 0 {
+					s.selected = make(map[int]bool)
+				} else if s.cursor > 0 {
 					s.cursor = 0
 				}
 			}
 
 		case cleanupConfirm:
 			switch msg.String() {
-			case "y", "Y":
+			case "enter":
 				s.state = cleanupExecuting
 				s.cancelled = false
 				s.ctx, s.cancel = context.WithCancel(context.Background())
 				s.progress, _ = s.progress.start()
-				targets := s.targets
+				// Delete selected or all.
+				targets := s.cleanupTargets()
 				ctx := s.ctx
 				return s, tea.Batch(s.spinner.Tick, tickProgress(), func() tea.Msg {
 					deleted, failed := 0, 0
@@ -195,7 +223,7 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					}
 					return cleanupDoneMsg{deleted: deleted, failed: failed, freedBytes: freedBytes}
 				})
-			case "n", "N", "esc":
+			case "esc":
 				s.state = cleanupReady
 			}
 
@@ -251,82 +279,141 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	return s, nil
 }
 
-func (s cleanupScreen) view(width, height int) string {
-	var b strings.Builder
-	b.WriteString("  " + sectionTitleStyle.Render("Temp File Cleanup") + "\n\n")
+// cleanupTargets returns selected targets, or all if none selected.
+func (s cleanupScreen) cleanupTargets() []cleanupTarget {
+	if len(s.selected) == 0 {
+		return s.targets
+	}
+	var targets []cleanupTarget
+	for i, t := range s.targets {
+		if s.selected[i] {
+			targets = append(targets, t)
+		}
+	}
+	return targets
+}
 
+func (s cleanupScreen) selectedBytes() int64 {
+	if len(s.selected) == 0 {
+		return s.totalBytes
+	}
+	var total int64
+	for i := range s.selected {
+		if i < len(s.targets) {
+			total += s.targets[i].bytes
+		}
+	}
+	return total
+}
+
+// ── View ──────────────────────────────────────────────────────────
+
+func (s cleanupScreen) view(width, height int) string {
 	switch s.state {
 	case cleanupLoading:
-		fmt.Fprintf(&b, "  %s Scanning temp directory...\n\n", s.spinner.View())
-		b.WriteString("  " + s.progress.view() + "\n")
+		return fmt.Sprintf("  %s Scanning temp directory...\n\n  %s\n", s.spinner.View(), s.progress.view())
 
 	case cleanupEmpty:
 		if s.err != nil {
-			b.WriteString("  " + errorStyle.Render("Error: "+s.err.Error()) + "\n")
-		} else {
-			b.WriteString("  " + successStyle.Render("No old temp files found. All clean!") + "\n")
+			return "  " + errorStyle.Render("Error: "+s.err.Error()) + "\n\n  " +
+				helpStyle.Render("Press r to scan again.") + "\n"
 		}
-		b.WriteString("\n  " + helpStyle.Render("Press r to scan again or tab to switch screens") + "\n")
+		return "  " + successStyle.Render("No old temp files found. All clean!") + "\n\n  " +
+			helpStyle.Render("Press r to scan again.") + "\n"
 
 	case cleanupReady:
-		b.WriteString(fmt.Sprintf("  %s\n",
-			warnStyle.Render(fmt.Sprintf("%d item(s) older than 7 days will be removed.", len(s.targets)))))
-		b.WriteString("  " + helpStyle.Render("Estimated reclaimable size: "+formatBytes(s.totalBytes)) + "\n")
-		b.WriteString("  " + helpStyle.Render("Preview of cleanup targets") + "\n\n")
-
-		maxVisible := height - 12
-		if maxVisible < 5 {
-			maxVisible = 5
-		}
-		start := s.cursor
-		maxStart := len(s.targets) - maxVisible
-		if maxStart < 0 {
-			maxStart = 0
-		}
-		if start > maxStart {
-			start = maxStart
-		}
-		end := start + maxVisible
-		if end > len(s.targets) {
-			end = len(s.targets)
-		}
-		for i := start; i < end; i++ {
-			name := filepath.Base(s.targets[i].path)
-			fmt.Fprintf(&b, "  • %s\n", itemStyle.Render(name))
-		}
-		if len(s.targets) > maxVisible {
-			b.WriteString(fmt.Sprintf("\n  %s\n",
-				helpStyle.Render(fmt.Sprintf("Showing %d-%d of %d (↑↓ to scroll)", start+1, end, len(s.targets)))))
-		}
-		b.WriteString("\n  " + helpStyle.Render(fmt.Sprintf("Press enter to delete all %d item(s).", len(s.targets))) + "\n")
+		return s.viewReady(width, height)
 
 	case cleanupConfirm:
-		b.WriteString(fmt.Sprintf("  Delete all %d temp item(s)?\n\n",
-			len(s.targets)))
-		b.WriteString("  " + helpStyle.Render("Estimated reclaimable size: "+formatBytes(s.totalBytes)) + "\n\n")
-		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
+		targets := s.cleanupTargets()
+		bg := s.viewReady(width, height)
+		return s.viewConfirm(bg, width, height, len(targets))
 
 	case cleanupExecuting:
-		fmt.Fprintf(&b, "  %s Cleaning up...\n\n", s.spinner.View())
-		b.WriteString("  " + s.progress.view() + "\n")
+		return fmt.Sprintf("  %s Cleaning up...\n\n  %s\n", s.spinner.View(), s.progress.view())
 
 	case cleanupDone:
-		if s.cancelled {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				warnStyle.Render(fmt.Sprintf("Cleanup cancelled after deleting %d item(s).", s.deleted))))
-			b.WriteString("  " + helpStyle.Render("Freed "+formatBytes(s.freedBytes)+" before cancellation.") + "\n")
-		} else {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				successStyle.Render(fmt.Sprintf("Deleted %d item(s).", s.deleted))))
-			b.WriteString("  " + helpStyle.Render("Freed "+formatBytes(s.freedBytes)+".") + "\n")
-		}
-		if s.failed > 0 {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				warnStyle.Render(fmt.Sprintf("%d item(s) could not be removed (in use or locked).", s.failed))))
-		}
-		b.WriteString("\n  " + helpStyle.Render("Press r to scan again or tab to switch screens") + "\n")
+		return s.viewDone()
+	}
+	return ""
+}
+
+func (s cleanupScreen) viewReady(width, height int) string {
+	panelWidth := width - 4
+	availH := max(height-4, 8)
+
+	// Summary line.
+	nSelected := len(s.selected)
+	title := fmt.Sprintf("Cleanup Targets (%d items, %s)", len(s.targets), formatBytes(s.totalBytes))
+	if nSelected > 0 {
+		title = fmt.Sprintf("Cleanup Targets (%d items, %s / %d selected, %s)",
+			len(s.targets), formatBytes(s.totalBytes), nSelected, formatBytes(s.selectedBytes()))
 	}
 
+	innerH := max(availH-2, 4) // minus border
+	maxVisible := innerH
+
+	start, end := scrollWindow(s.cursor, len(s.targets), maxVisible)
+	visible := s.targets[start:end]
+
+	var lines []string
+	for i, target := range visible {
+		globalIdx := start + i
+		cursor := cursorBlankStr
+		if globalIdx == s.cursor {
+			cursor = cursorStr
+		}
+		sel := checkbox(s.selected[globalIdx])
+		name := filepath.Base(target.path)
+		size := helpStyle.Render(formatBytes(target.bytes))
+
+		nameStyle := itemStyle
+		if globalIdx == s.cursor {
+			nameStyle = itemActiveStyle
+		}
+		lines = append(lines, cursor+sel+" "+nameStyle.Render(name)+"  "+size)
+	}
+
+	content := strings.Join(lines, "\n")
+	panel := renderTitledPanel(title, content, panelWidth, innerH, accent)
+
+	return panel + "\n"
+}
+
+func (s cleanupScreen) viewConfirm(bg string, width, height, count int) string {
+	title := "Confirm Cleanup"
+	body := fmt.Sprintf("Delete %d item(s)?\nEstimated space to free: %s", count, formatBytes(s.selectedBytes()))
+
+	var content strings.Builder
+	content.WriteString(sectionTitleStyle.Render(title) + "\n")
+	content.WriteString(helpStyle.Render(strings.Repeat("─", 40)) + "\n")
+	content.WriteString(warnStyle.Render(body) + "\n\n")
+	content.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accent).Render("enter") + " delete  •  " +
+		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("esc") + " cancel")
+
+	style := lipgloss.NewStyle().
+		Width(min(width-8, 60)).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(accent).
+		Padding(1, 2)
+
+	rendered := style.Render(content.String())
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, rendered)
+}
+
+func (s cleanupScreen) viewDone() string {
+	var b strings.Builder
+	if s.cancelled {
+		b.WriteString("  " + warnStyle.Render(fmt.Sprintf("Cleanup cancelled after deleting %d item(s).", s.deleted)) + "\n")
+		b.WriteString("  " + helpStyle.Render("Freed "+formatBytes(s.freedBytes)+" before cancellation.") + "\n")
+	} else {
+		b.WriteString("  " + successStyle.Render(fmt.Sprintf("Deleted %d item(s).", s.deleted)) + "\n")
+		b.WriteString("  " + helpStyle.Render("Freed "+formatBytes(s.freedBytes)+".") + "\n")
+	}
+	if s.failed > 0 {
+		b.WriteString("  " + warnStyle.Render(fmt.Sprintf("%d item(s) could not be removed (in use or locked).", s.failed)) + "\n")
+	}
+	b.WriteString("\n  " + helpStyle.Render("Press r to scan again.") + "\n")
 	return b.String()
 }
 
@@ -334,7 +421,6 @@ func formatBytes(bytes int64) string {
 	if bytes <= 0 {
 		return "0 B"
 	}
-
 	units := []string{"B", "KB", "MB", "GB", "TB"}
 	value := float64(bytes)
 	unit := 0
@@ -342,7 +428,6 @@ func formatBytes(bytes int64) string {
 		value /= 1024
 		unit++
 	}
-
 	if unit == 0 || value >= 10 {
 		return fmt.Sprintf("%.0f %s", value, units[unit])
 	}
@@ -354,17 +439,22 @@ func (s cleanupScreen) helpKeys() []key.Binding {
 	case cleanupLoading, cleanupExecuting:
 		return []key.Binding{keyEscCancel}
 	case cleanupEmpty, cleanupDone:
-		return []key.Binding{keyRefresh, keyTabs}
+		return []key.Binding{keyRefresh}
 	case cleanupReady:
-		bindings := []key.Binding{keyUp, keyDown, keyCleanAll, keyRefresh}
-		if s.cursor > 0 {
-			bindings = append(bindings, keyEscClear)
+		bindings := []key.Binding{
+			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
+			key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "select all")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "clean")),
+			keyRefresh,
 		}
 		return bindings
 	case cleanupConfirm:
-		return []key.Binding{keyConfirmY}
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+			keyEscCancel,
+		}
 	}
-	return []key.Binding{keyTabs}
+	return nil
 }
 
 // cleanupDoneMsg is sent when temp file deletion completes.

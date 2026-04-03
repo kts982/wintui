@@ -33,10 +33,6 @@ var (
 		key.WithKeys("r"),
 		key.WithHelp("r", "refresh"),
 	)
-	keyConfirmY = key.NewBinding(
-		key.WithKeys("y"),
-		key.WithHelp("y/n", "confirm"),
-	)
 	keySave = key.NewBinding(
 		key.WithKeys("s"),
 		key.WithHelp("s", "save"),
@@ -56,10 +52,6 @@ var (
 	keyScroll = key.NewBinding(
 		key.WithKeys("up", "down", "pgup", "pgdown"),
 		key.WithHelp("↑↓/pg", "scroll"),
-	)
-	keyCleanAll = key.NewBinding(
-		key.WithKeys("enter"),
-		key.WithHelp("enter", "clean all"),
 	)
 	keyOpen = key.NewBinding(
 		key.WithKeys("o"),
