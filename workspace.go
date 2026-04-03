@@ -1084,7 +1084,7 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 	// Compact help — most important keys + ? for full help.
 	bindings := []key.Binding{
 		key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
-		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search remote")),
+		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search & install")),
 		key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade")),
 		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")),
 	}
@@ -1107,13 +1107,13 @@ func (s workspaceScreen) fullHelpKeys() [][]key.Binding {
 	actions := []key.Binding{
 		key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade selected")),
 		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall selected")),
-		key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install queued")),
 		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "select all updates")),
 	}
 	search := []key.Binding{
-		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search remote packages")),
+		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search for apps")),
 		key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter current list")),
-		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh packages")),
+		key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install queued")),
+		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	}
 	general := []key.Binding{
 		key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "pick version (in details)")),
