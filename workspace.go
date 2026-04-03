@@ -808,7 +808,7 @@ func (s workspaceScreen) view(width, height int) string {
 	case workspaceLoading:
 		return s.viewLoading()
 	case workspaceEmpty:
-		return "  " + helpStyle.Render("No packages found. Press r to refresh.") + "\n"
+		return "  " + helpStyle.Render("No packages found. Press s to search or r to refresh.") + "\n"
 	case workspaceReady:
 		return s.viewReady(width, height)
 	case workspaceConfirm, workspaceExecuting:
@@ -908,7 +908,12 @@ func (s workspaceScreen) renderSections(l layout) string {
 	}
 
 	if len(sections) == 0 {
-		return "  " + helpStyle.Render("No packages found.") + "\n"
+		msg := "No packages found."
+		if s.filter.query != "" {
+			msg = fmt.Sprintf("No matches for %q. Press esc to clear filter.", s.filter.query)
+		}
+		b.WriteString("  " + helpStyle.Render(msg) + "\n")
+		return b.String()
 	}
 
 	// Allocate heights: fixed sections get their requested height,

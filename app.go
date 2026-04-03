@@ -410,8 +410,9 @@ func (a app) renderTabBar() string {
 		adminBadge = lipgloss.NewStyle().Foreground(warning).Render("● user")
 	}
 
-	// Indent the entire tab bar consistently.
-	tabLine := lipgloss.NewStyle().PaddingLeft(1).Render(bar) + "  " + adminBadge
+	// Join admin badge aligned to the bottom of the tab row.
+	badgeBlock := lipgloss.NewStyle().PaddingLeft(2).Render(adminBadge)
+	tabLine := lipgloss.JoinHorizontal(lipgloss.Bottom, " "+bar, badgeBlock)
 	return tabLine + "\n"
 }
 
