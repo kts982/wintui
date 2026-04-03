@@ -7,8 +7,8 @@
 
 A terminal user interface for **winget** (Windows Package Manager), built with Go and the [Charmbracelet](https://charm.sh) TUI libraries.
 
-Browse, install, upgrade, and manage Windows packages without leaving the terminal.
-WinTUI also includes a headless CLI mode for scripts and a built-in auto-elevation helper that can keep a batch moving with a single UAC prompt.
+Browse, search, install, upgrade, and manage Windows packages without leaving the terminal.
+WinTUI features a split-panel workspace, batch operations with a single UAC prompt, and a headless CLI mode for scripting.
 
 ![WinTUI demo](demo.gif)
 
@@ -43,12 +43,15 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 
 ## Features
 
-**Package Management**
-- **Upgrade** — open directly to the available updates list, select packages or upgrade all, with live streaming logs
-- **Installed** — browse packages across `winget`, `msstore`, and `system` sources with selectable checkboxes
-- **Install** — search and install new packages with live streaming output
-- **Package Details** — inspect package metadata, choose an explicit target version, and compare installed vs. target upgrade details (`i`, `v`)
-- **Export / Import** — export installed packages to JSON (`e`) and restore on another machine (`m`)
+**Unified Packages Screen**
+- **Split-panel layout** — package list on the left, detail summary on the right
+- **Bordered sections** — Updates Available, Installed, Search Results, and Install Queue with package counts and active focus highlighting
+- **Search & Install** — press `s` to search the winget catalog, `Space` to queue packages, `i` to batch install
+- **Upgrade** — select upgradeable packages and press `u` to batch upgrade
+- **Uninstall** — select installed packages and press `x` to batch uninstall
+- **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), and scrollable metadata
+- **Batch Execution Modal** — review selected packages, watch live progress with per-package spinners, view compact results with `Ctrl+E` elevated retry
+- **Version Selection** — pick a specific version to install or upgrade to from the detail panel
 - **Headless CLI** — use `--check`, `--list`, and `--json` for scripts, Task Scheduler, or CI without launching the TUI
 
 **System Utilities**
@@ -57,15 +60,15 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Settings** — persistent config for winget options (scope, architecture, silent/interactive, force, purge, etc.)
 
 **UX**
-- Tab-based navigation with number keys, `Tab`/`Shift+Tab`, or mouse clicks
+- 4-tab layout: Packages, Cleanup, Health, Settings
+- Boxed tab bar with animated gradient ASCII logo
+- Context-sensitive help bar that adapts to the active section
+- Full help panel on `?` with grouped keybindings
+- Fuzzy filter (`/`) on the installed package list
 - Per-tab screen state preserved across tab switches
-- Fuzzy filter (`/`) on package lists
-- Gradient progress bars on all loading states
-- Streaming execution view for install, upgrade, and uninstall operations
-- Post-run log preview with `l` to expand/collapse execution output
-- Cancellable operations (`Esc`)
-- Built-in `Auto Elevate` support for hard admin-required actions, plus `Ctrl+e` to retry failed elevation-candidate actions; batch retries only rerun failed items
-- Context-aware help bar
+- Built-in elevated helper — silent + auto-elevate runs everything elevated upfront, avoiding UAC popups from installers
+- `Ctrl+E` elevated retry on the result modal when auto-elevate is off
+- Responsive layout — detail panel hides on narrow terminals, compact header on small screens
 
 ## Usage
 
@@ -73,7 +76,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 .\wintui.exe
 ```
 
-> **Tip:** Some operations require administrator privileges. Run in an elevated terminal for full functionality, or press `Ctrl+e` when WinTUI offers an elevated retry. The tab bar shows `● admin` / `● user` status.
+> **Tip:** Some operations require administrator privileges. The subtitle bar shows `● admin` / `● user` status. Enable **Silent** mode + **Auto Elevate** in Settings for hands-off elevated operations, or press `Ctrl+E` on the result modal when a package fails.
 
 ### Headless CLI
 
@@ -95,25 +98,33 @@ Further documentation:
 
 ## Keyboard Shortcuts
 
+### Packages Screen
+
 | Key | Action |
 |---|---|
-| `1-6` | Switch tabs |
-| `Tab` / `Shift+Tab` | Cycle tabs |
 | `↑↓` / `j/k` | Navigate |
-| `Space` | Toggle selection |
-| `Enter` | Select / confirm |
-| `/` | Filter list |
-| `i` | Package details |
-| `v` | Choose package version (detail view) / reveal skipped import entries |
-| `c` | Reset selected package version to latest (detail view) |
+| `Space` | Select package / add to install queue |
+| `Enter` / `→` / `l` | Open package details |
+| `←` / `Esc` / `h` | Close details / cancel |
+| `s` | Search & install (search winget catalog) |
+| `/` | Filter installed packages |
+| `u` | Upgrade selected |
+| `x` | Uninstall selected |
+| `i` | Install queued packages |
+| `a` | Select all available updates |
+| `v` | Pick version (in detail view) |
+| `c` | Reset to latest version (in detail view) |
 | `o` | Open homepage (in detail view) |
-| `r` | Refresh data |
-| `Ctrl+e` | Retry elevated (when offered) |
-| `l` | Expand / collapse saved execution log after a run |
-| `e` | Export packages (Installed tab) |
-| `m` | Import from export JSON (Installed tab) |
-| `u` | Upgrade all (Upgrade tab) / uninstall selected (Installed tab) |
-| `Esc` | Cancel / back |
+| `r` | Refresh package data |
+| `Ctrl+E` | Retry failed packages elevated (result modal) |
+| `?` | Toggle full help panel |
+
+### Global
+
+| Key | Action |
+|---|---|
+| `1-4` | Switch tabs |
+| `Tab` / `Shift+Tab` | Cycle tabs |
 | `q` | Quit |
 
 ## Settings
@@ -131,13 +142,11 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 | Skip Dependencies | don't process dependencies |
 | Purge on Uninstall | delete all package files |
 | Include Unknown Versions | show packages with unknown versions |
-| Auto Elevate | automatically request admin rights for hard elevation errors |
+| Auto Elevate | automatically request admin rights |
 
-`Action Mode` applies to install, upgrade, and uninstall requests where the underlying package supports it.
+**Action Mode: Silent + Auto Elevate** runs all install/upgrade/uninstall operations through the elevated helper upfront, avoiding UAC popups from installers that elevate themselves.
 
-`Default Source` controls install/search preference only; uninstall works against the installed package database regardless of that setting.
-
-`Auto Elevate` tries the built-in elevated helper automatically for hard permission errors. When a run still fails, `Ctrl+e` retries only the failed elevation-candidate items.
+**Auto Elevate** (without silent mode) retries automatically on hard permission errors. When a batch finishes with failures, the result modal offers `Ctrl+E` to retry only the failed elevation-candidate packages.
 
 For deeper behavior details and examples, see:
 - [CLI reference](docs/cli.md)
@@ -158,7 +167,6 @@ The validation suite runs `gofmt`, `go test`, `go vet`, `staticcheck`, and `go b
 Optional Git hooks are included in `.githooks/pre-commit` and `.githooks/pre-push`.
 
 Maintainers can regenerate `demo.gif` from `demo.cast` with `agg`.
-Maintainers can validate the local WinGet manifest with `winget validate .\packaging\winget\manifests\k\kts982\WinTUI\0.1.0`.
 
 ## Built With
 
