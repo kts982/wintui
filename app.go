@@ -428,6 +428,8 @@ func (a app) screenHasTextInput() bool {
 	switch s := a.activeScreen().(type) {
 	case installScreen:
 		return s.state == installInput
+	case workspaceScreen:
+		return s.searchActive || s.filter.active
 	default:
 		return false
 	}

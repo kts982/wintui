@@ -227,6 +227,15 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					if s.cancel != nil {
 						s.cancel()
 					}
+					// Mark remaining queued items as skipped and finish.
+					for i := range s.modal.items {
+						if s.modal.items[i].status == batchQueued {
+							s.modal.items[i].status = batchFailed
+							s.modal.items[i].err = fmt.Errorf("cancelled")
+						}
+					}
+					s.modal.phase = execPhaseComplete
+					return s, nil
 				}
 				return s, nil
 			case execPhaseComplete:
@@ -397,6 +406,32 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		s.cursor = 0
 		return s, s.focusSummary()
+
+	case startRetryMsg:
+		// Handle startup retry requests (e.g., from elevated relaunch).
+		ritems := msg.req.items()
+		var targets []workspaceItem
+		for _, ri := range ritems {
+			targets = append(targets, workspaceItem{
+				pkg: Package{ID: ri.ID, Name: ri.Name, Source: ri.Source, Version: ri.Version},
+			})
+		}
+		if len(targets) == 0 {
+			return s, nil
+		}
+		bi := make([]batchItem, len(targets))
+		for i, t := range targets {
+			bi[i] = batchItem{item: t, status: batchQueued}
+		}
+		m := newExecModal(string(msg.req.Op), bi)
+		m.phase = execPhaseRunning
+		s.modal = &m
+		s.state = workspaceExecuting
+		s.exec.reset()
+		return s, tea.Batch(
+			s.modal.spinner.Tick,
+			func() tea.Msg { return startWorkspaceBatchMsg{} },
+		)
 	}
 
 	return s, nil
@@ -639,9 +674,10 @@ func (s workspaceScreen) beginAction(action string) (screen, tea.Cmd) {
 
 	// If nothing selected, act on the focused item.
 	if len(targets) == 0 && action != "install" {
-		items := s.filteredItems()
-		if s.cursor < len(items) {
-			item := items[s.cursor]
+		queue, search, upgradeable, installed := s.displayItems()
+		all := concat(queue, search, upgradeable, installed)
+		if s.cursor < len(all) {
+			item := all[s.cursor]
 			if action == "upgrade" && !item.upgradeable {
 				return s, nil
 			}
@@ -699,10 +735,14 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 	if s.modal.forceElevated {
 		// Route through elevated helper for Ctrl+E retry.
 		var initErr error
-		if s.modal.action == "upgrade" {
+		switch s.modal.action {
+		case "upgrade":
 			version := s.selectedVersions[item.key()]
 			_, outChan, errChan, initErr = upgradePackageElevatedStreamCtx(item.pkg.ID, item.pkg.Source, version)
-		} else {
+		case "install":
+			version := s.selectedVersions[item.key()]
+			_, outChan, errChan, initErr = installPackageElevatedStreamCtx(item.pkg.ID, item.pkg.Source, version)
+		default: // uninstall
 			_, outChan, errChan, initErr = uninstallPackageElevatedStreamCtx(item.pkg)
 		}
 		if initErr != nil {
