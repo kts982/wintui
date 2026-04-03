@@ -126,9 +126,10 @@ func (s *settingsScreen) cycleBackward() {
 }
 
 func (s settingsScreen) view(width, height int) string {
-	var b strings.Builder
-	b.WriteString("  " + sectionTitleStyle.Render("Settings") + "\n\n")
+	panelWidth := width - 4
 
+	// Build settings list.
+	var lines []string
 	for i, def := range settingDefs {
 		cursor := cursorBlankStr
 		labelStyle := itemStyle
@@ -139,29 +140,40 @@ func (s settingsScreen) view(width, height int) string {
 
 		val := appSettings.getValue(def.key)
 		valDisplay := renderSettingValue(def, val)
-
 		label := labelStyle.Render(fmt.Sprintf("%-24s", def.label))
 		desc := itemDescStyle.Render(def.desc)
-
-		fmt.Fprintf(&b, "  %s%s %s  %s\n", cursor, label, valDisplay, desc)
+		lines = append(lines, fmt.Sprintf("%s%s %s  %s", cursor, label, valDisplay, desc))
 	}
 
-	b.WriteString("\n")
-	b.WriteString(s.renderDetailPanel(width, height > 0 && height < 28))
-	b.WriteString("\n\n")
+	// Settings panel.
+	title := "Settings"
+	if s.dirty {
+		title = "Settings (unsaved)"
+	}
+	content := strings.Join(lines, "\n")
+	panel := renderTitledPanel(title, content, panelWidth, len(lines), accent)
 
-	// Config file path
-	b.WriteString("  " + helpStyle.Render("Config: "+configPath()) + "\n\n")
+	// Detail panel for focused setting.
+	detail := s.renderDetailPanel(panelWidth, height > 0 && height < 28)
 
-	// Status
+	// Status line.
+	var status string
 	if s.errMsg != "" {
-		b.WriteString("  " + errorStyle.Render(s.errMsg) + "\n")
+		status = "  " + errorStyle.Render(s.errMsg)
 	} else if s.saved {
-		b.WriteString("  " + successStyle.Render("Settings saved!") + "\n")
-	} else if s.dirty {
-		b.WriteString("  " + warnStyle.Render("Unsaved changes") + "\n")
+		status = "  " + successStyle.Render("Settings saved!")
 	}
 
+	// Config path.
+	configLine := "  " + helpStyle.Render("Config: "+configPath())
+
+	var b strings.Builder
+	b.WriteString(panel + "\n")
+	b.WriteString(detail + "\n")
+	b.WriteString(configLine + "\n")
+	if status != "" {
+		b.WriteString(status + "\n")
+	}
 	return b.String()
 }
 
@@ -192,34 +204,26 @@ func renderSettingValue(def settingDef, val string) string {
 	return val
 }
 
-func (s settingsScreen) renderDetailPanel(width int, compact bool) string {
+func (s settingsScreen) renderDetailPanel(panelWidth int, compact bool) string {
 	def := settingDefs[s.cursor]
 	val := appSettings.getValue(def.key)
 
-	lines := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(accent).Render(def.label),
-		helpStyle.Render("Current: " + def.choiceLabel(valOrOnOff(def, val))),
-	}
+	var lines []string
+	lines = append(lines, infoStyle.Render("Current: "+def.choiceLabel(valOrOnOff(def, val))))
 	if hint := strings.TrimSpace(def.currentHint(val)); hint != "" {
-		lines = append(lines, hint)
+		lines = append(lines, itemStyle.Render(hint))
 	}
 	if !compact {
 		if detail := strings.TrimSpace(def.detail); detail != "" {
-			lines = append(lines, "", detail)
+			lines = append(lines, "")
+			for _, dl := range strings.Split(detail, "\n") {
+				lines = append(lines, helpStyle.Render(dl))
+			}
 		}
-		lines = append(lines, "", helpStyle.Render("enter/space/right next • left previous • s save • r defaults"))
-	} else {
-		lines = append(lines, "", helpStyle.Render("s save • r defaults"))
 	}
 
-	panel := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(secondary).
-		Padding(0, 1)
-	if width > 10 {
-		panel = panel.Width(width - 6)
-	}
-	return indentBlock(panel.Render(strings.Join(lines, "\n")), 2)
+	content := strings.Join(lines, "\n")
+	return renderTitledPanel(def.label, content, panelWidth, len(lines), secondary)
 }
 
 func valOrOnOff(def settingDef, val string) string {
