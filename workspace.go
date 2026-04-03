@@ -899,7 +899,9 @@ func (s workspaceScreen) renderSections(l layout) string {
 	} else if s.searchLoading {
 		b.WriteString("  " + s.spinner.View() + " Searching...\n")
 	} else if s.err != nil {
-		b.WriteString("  " + errorStyle.Render("Search error: "+s.err.Error()) + "\n")
+		b.WriteString("  " + errorStyle.Render("Search error: "+s.err.Error()) + "  " + helpStyle.Render("(s to search again)") + "\n")
+	} else if s.searchQuery != "" && len(s.searchResults) == 0 && len(s.installQueue) == 0 {
+		b.WriteString("  " + helpStyle.Render(fmt.Sprintf("No results for %q. Press s to search again.", s.searchQuery)) + "\n")
 	} else if s.filter.active {
 		b.WriteString("  " + s.filter.input.View() + "\n")
 	} else if s.filter.query != "" {
@@ -907,7 +909,10 @@ func (s workspaceScreen) renderSections(l layout) string {
 	}
 
 	availableH := l.list.H
-	if s.searchActive || s.searchLoading || s.filter.active || s.filter.query != "" {
+	hasTopBar := s.searchActive || s.searchLoading || s.err != nil ||
+		(s.searchQuery != "" && len(s.searchResults) == 0 && len(s.installQueue) == 0) ||
+		s.filter.active || s.filter.query != ""
+	if hasTopBar {
 		availableH--
 	}
 
