@@ -387,6 +387,12 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.searchResults = nil
 		} else {
 			s.searchQuery = msg.query
+			// Default empty source to "winget" for search results.
+			for i := range msg.results {
+				if msg.results[i].Source == "" {
+					msg.results[i].Source = "winget"
+				}
+			}
 			s.searchResults = msg.results
 		}
 		s.cursor = 0
@@ -953,16 +959,17 @@ func (s workspaceScreen) renderPanelItems(items []workspaceItem, globalOffset, m
 			cursor = cursorStr
 		}
 		isCursor := globalIdx == s.cursor
-		// Show batch status icon if this package is in a batch.
+		// Show batch status icon if this package is in a batch,
+		// or install queue selection, or regular selection.
 		var sel string
 		if s.modal != nil && s.modal.itemMap != nil {
 			if bi, ok := s.modal.itemMap[item.key()]; ok {
 				sel = " " + bi.statusIcon(s.modal.spinner) + " "
 			} else {
-				sel = checkbox(s.selected[item.key()])
+				sel = checkbox(s.selected[item.key()] || s.installQueueMap[item.key()])
 			}
 		} else {
-			sel = checkbox(s.selected[item.key()])
+			sel = checkbox(s.selected[item.key()] || s.installQueueMap[item.key()])
 		}
 		row := cursor + sel + " " + s.renderItemText(item, innerWidth, isCursor)
 		lines = append(lines, row)
