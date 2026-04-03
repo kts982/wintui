@@ -127,18 +127,37 @@ func (s workspaceScreen) init() tea.Cmd {
 		}
 	}
 	return tea.Batch(s.spinner.Tick, func() tea.Msg {
-		installed, err := getInstalledCtx(s.ctx)
-		if err != nil {
-			return workspaceDataMsg{err: err}
+		type result struct {
+			pkgs []Package
+			err  error
 		}
-		cache.setInstalled(installed)
-		upgradeable, err := getUpgradeableCtx(s.ctx)
-		if err != nil {
-			// Installed data is still valid even if upgrade check fails.
-			return workspaceDataMsg{installed: installed, err: err}
+		instCh := make(chan result, 1)
+		upgrCh := make(chan result, 1)
+
+		go func() {
+			pkgs, err := getInstalledCtx(s.ctx)
+			instCh <- result{pkgs, err}
+		}()
+		go func() {
+			pkgs, err := getUpgradeableCtx(s.ctx)
+			upgrCh <- result{pkgs, err}
+		}()
+
+		instResult := <-instCh
+		upgrResult := <-upgrCh
+
+		if instResult.err != nil {
+			return workspaceDataMsg{err: instResult.err}
 		}
-		cache.setUpgradeable(upgradeable)
-		return workspaceDataMsg{installed: installed, upgradeable: upgradeable}
+		cache.setInstalled(instResult.pkgs)
+		if upgrResult.err == nil {
+			cache.setUpgradeable(upgrResult.pkgs)
+		}
+		return workspaceDataMsg{
+			installed:   instResult.pkgs,
+			upgradeable: upgrResult.pkgs,
+			err:         upgrResult.err,
+		}
 	})
 }
 
