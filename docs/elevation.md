@@ -1,108 +1,90 @@
-# Elevation And Retry Behavior
+# Elevation and Retry Behavior
 
 WinTUI supports three elevation paths:
 
 1. Run the whole app from an already elevated terminal
-2. Let `Auto Elevate` handle hard admin-required failures automatically
-3. Press `Ctrl+e` after a failed action to retry only the failed elevation-candidate items
+2. **Silent + Auto Elevate** — all operations run elevated upfront via the helper
+3. **Auto Elevate** — hard admin failures are retried automatically
+4. **Ctrl+E** in the result modal — retry only the failed elevation-candidate packages
 
-## Auto Elevate
+## Silent + Auto Elevate (Recommended)
 
-`Auto Elevate` is configured from the Settings tab.
+When both **Action Mode: Silent** and **Auto Elevate** are enabled in Settings:
 
-When it is enabled:
-- WinTUI detects hard elevation errors from `winget`
-- starts a local named-pipe listener
-- launches an elevated helper process
-- reuses that helper for later elevated commands in the same session
+- All install, upgrade, and uninstall operations run through the elevated helper from the start
+- No installer UAC popups — the elevated helper already has admin rights
+- A single UAC prompt when the helper first starts, then reused for all subsequent operations
 
-The goal is to keep a batch moving with at most one UAC prompt instead of relaunching the full app for every package.
+This is the smoothest experience for hands-off package management.
+
+## Auto Elevate (Non-Silent)
+
+When **Auto Elevate** is on but Action Mode is default or interactive:
+
+- Operations run non-elevated first
+- If winget reports a hard elevation error, WinTUI automatically retries through the elevated helper
+- Soft failures (like 1603) are not auto-retried
 
 ## Elevated Helper
 
-The elevated helper is an internal WinTUI mode:
+The elevated helper is an internal WinTUI process:
 
 ```text
 wintui helper --pipe <pipe_name>
 ```
 
-The main TUI stays in the original window and streams command output through a Windows named pipe.
+The main TUI stays in the original window. Commands are sent through a Windows named pipe, and output streams back in real-time.
+
+### Lifecycle
+
+- Started on first elevation need (single UAC prompt)
+- Reused for all subsequent elevated operations in the session
+- Shut down automatically when the TUI exits
 
 ### Security
 
-- The pipe is restricted to the current user SID
+- The pipe is restricted to the current user's SID
 - The helper refuses to run unless it is elevated
+- The helper process runs hidden (SW_HIDE) — no visible console window
 
 ## What Triggers Elevation
 
 ### Hard elevation cases
 
-These are treated as administrator-required failures.
+These are treated as administrator-required failures and auto-retried when Auto Elevate is on:
 
-Examples:
-- `0x8a150056`
-- `0x80073d28`
-- messages containing `administrator privileges`
-
-If `Auto Elevate` is on, WinTUI will try the helper automatically.
-If `Auto Elevate` is off, WinTUI will show a retry hint after the run fails.
+- `0x8a150056` — package requires administrator privileges
+- `0x80073d28` — installer requires administrator privileges
+- Messages containing `administrator privileges`, `requires elevation`, `run as admin`
 
 ### Soft elevation candidates
 
-These are not guaranteed admin-only failures, but retrying elevated may help.
+These may benefit from elevation but are not guaranteed admin-only failures:
 
-Examples:
-- `1603`
-- `0x80070643`
+- `1603` — installer fatal error
+- `0x80070643` — installer error
 
-For these cases, WinTUI does not auto-elevate.
-Instead, it shows a softer post-run hint and lets you decide whether to retry with `Ctrl+e`.
+WinTUI does not auto-retry these. Instead, the result modal offers `Ctrl+E`.
 
-## Ctrl+E Retry
+## Ctrl+E Retry (Result Modal)
 
-`Ctrl+e` is offered only when WinTUI has a concrete retry target.
+When Auto Elevate is off and a batch completes with elevation-candidate failures, the result modal shows:
 
-Behavior:
-- retries only the failed/current items
-- does not rerun packages that already succeeded
-- preserves explicit target versions for install and upgrade retries
+```
+ctrl+e retry elevated · enter close
+```
 
-### Per action
+Pressing `Ctrl+E`:
+- Extracts only the failed packages that could benefit from elevation
+- Creates a new batch routed through the elevated helper
+- Runs the retry batch (single UAC prompt if helper not already active)
+- Shows results in a new modal
 
-#### Install
-
-- single-package retry
-- warning text notes that elevated retry may install machine-wide instead of per-user
-
-#### Upgrade
-
-- single-package and batch retry
-- only failed upgrade items are retried
-- warning text notes that elevated retry may change installer behavior
-
-#### Uninstall
-
-- single-package and batch retry
-- only failed uninstall items are retried
-- warning text notes that elevated retry may help with permissions or service-related removal problems
-
-## Fallback Behavior
-
-If the helper cannot be started:
-- WinTUI keeps the original package failure visible
-- manual `Ctrl+e` still falls back to the older full-process elevated relaunch with retry arguments
-
-That fallback is less elegant because it opens a separate elevated WinTUI session, but it keeps the action recoverable.
-
-## Current Limitation
-
-Once a run is actively executing through the elevated helper, WinTUI does not provide true remote cancellation yet.
-Because of that:
-- helper-backed runs no longer pretend `Esc` can cancel them
-- the UI keeps the execution state honest until the helper command completes
+This does not rerun packages that already succeeded.
 
 ## Recommended Usage
 
-- Leave `Auto Elevate` on for the smoothest experience with admin-required packages
-- Run WinTUI elevated from the start if you know you are about to do many machine-level installs or upgrades
-- Use `Ctrl+e` when a soft installer failure looks like it may be privilege-related
+- **Silent + Auto Elevate** for the smoothest experience (all operations elevated upfront)
+- **Auto Elevate only** if you want to see installer UI but still handle admin failures automatically
+- **Auto Elevate off** if you prefer full control — use `Ctrl+E` in the result modal when needed
+- **Run elevated** from the start if you know you are doing many machine-level operations
