@@ -11,3 +11,4 @@ rsrc_windows*.syso
 /.mcp.json
 /.winget-pkgs-submission/
 .npm-cache/
+demo.mp4
