@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // scrollWindow calculates visible range for long lists.
@@ -49,6 +50,20 @@ func batchResultCounts(errs []error) (successCount, failCount int) {
 		}
 	}
 	return successCount, failCount
+}
+
+// humanDuration formats a duration as a short human-readable string.
+func humanDuration(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "<1m"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
 }
 
 func packageSummary(pkgs []Package) string {

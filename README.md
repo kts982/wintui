@@ -60,6 +60,8 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Settings** — persistent config for winget options (scope, architecture, silent/interactive, force, purge, etc.)
 
 **UX**
+- **Disk-persistent cache** — instant startup from cached data, background refresh for always-fresh results, per-package incremental updates after actions
+- **Update count badge** in the tab bar — see available updates at a glance before winget finishes refreshing
 - 4-tab layout: Packages, Cleanup, Health, Settings
 - Boxed tab bar with animated gradient ASCII logo
 - Context-sensitive help bar that adapts to the active section

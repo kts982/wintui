@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/color"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -60,6 +61,12 @@ type workspaceScreen struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 
+	// Background refresh.
+	refreshing    bool      // background refresh in flight
+	cacheAge      time.Time // when displayed data was last cached (zero = fresh)
+	refreshCtx    context.Context
+	refreshCancel context.CancelFunc
+
 	// Search/install integration.
 	searchInput     textinput.Model
 	searchActive    bool            // true when search input is focused
@@ -75,6 +82,7 @@ func newWorkspaceScreen() workspaceScreen {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
 	ctx, cancel := context.WithCancel(context.Background())
+	refreshCtx, refreshCancel := context.WithCancel(context.Background())
 	si := textinput.New()
 	si.Placeholder = "search winget packages..."
 	siStyles := si.Styles()
@@ -100,6 +108,8 @@ func newWorkspaceScreen() workspaceScreen {
 		installQueueMap:  make(map[string]bool),
 		ctx:              ctx,
 		cancel:           cancel,
+		refreshCtx:       refreshCtx,
+		refreshCancel:    refreshCancel,
 	}
 }
 
@@ -115,10 +125,30 @@ type workspaceDataMsg struct {
 	installed   []Package
 	upgradeable []Package
 	err         error
+	fromDisk    bool      // true if loaded from disk cache
+	savedAt     time.Time // when the disk cache was written
 }
 
+// backgroundRefreshMsg carries fresh data from a background refresh.
+type backgroundRefreshMsg struct {
+	installed   []Package
+	upgradeable []Package
+	err         error
+}
+
+// incrementalUpdateMsg carries a per-package verification result after an action.
+type incrementalUpdateMsg struct {
+	action string    // "install", "upgrade", "uninstall"
+	pkg    Package   // the targeted package
+	result []Package // result of winget list --id --exact (0 or 1 entries)
+	err    error
+}
+
+// startBackgroundRefreshMsg triggers a background refresh (used after post-action delay).
+type startBackgroundRefreshMsg struct{}
+
 func (s workspaceScreen) init() tea.Cmd {
-	// Try cache first.
+	// Phase A: try in-memory cache (tab switches within a session).
 	inst, instOK := cache.getInstalled()
 	upgr, upgrOK := cache.getUpgradeable()
 	if instOK && upgrOK {
@@ -126,9 +156,27 @@ func (s workspaceScreen) init() tea.Cmd {
 			return workspaceDataMsg{installed: inst, upgradeable: upgr}
 		}
 	}
-	return tea.Batch(s.spinner.Tick, func() tea.Msg {
-		// Run both in parallel. If either fails due to source contention,
-		// the data from the successful call is still usable.
+
+	// Phase B: try disk cache (app restart within 24h).
+	diskInst, diskUpgr, savedAt, diskOK := cache.loadFromDisk()
+	if diskOK {
+		return func() tea.Msg {
+			return workspaceDataMsg{
+				installed:   diskInst,
+				upgradeable: diskUpgr,
+				fromDisk:    true,
+				savedAt:     savedAt,
+			}
+		}
+	}
+
+	// Phase C: cold start — show spinner, fetch from winget.
+	return tea.Batch(s.spinner.Tick, s.fetchPackages())
+}
+
+// fetchPackages runs parallel winget list + upgrade with sequential fallback.
+func (s workspaceScreen) fetchPackages() tea.Cmd {
+	return func() tea.Msg {
 		type result struct {
 			pkgs []Package
 			err  error
@@ -172,7 +220,56 @@ func (s workspaceScreen) init() tea.Cmd {
 			upgradeable: upgrResult.pkgs,
 			err:         upgrResult.err,
 		}
-	})
+	}
+}
+
+// startBackgroundRefresh runs a full refresh in the background, returning backgroundRefreshMsg.
+func (s workspaceScreen) startBackgroundRefresh() tea.Cmd {
+	ctx := s.refreshCtx
+	return func() tea.Msg {
+		type result struct {
+			pkgs []Package
+			err  error
+		}
+		instCh := make(chan result, 1)
+		upgrCh := make(chan result, 1)
+
+		go func() {
+			pkgs, err := getInstalledCtx(ctx)
+			instCh <- result{pkgs, err}
+		}()
+		go func() {
+			pkgs, err := getUpgradeableCtx(ctx)
+			upgrCh <- result{pkgs, err}
+		}()
+
+		instResult := <-instCh
+		upgrResult := <-upgrCh
+
+		if instResult.err != nil {
+			pkgs, err := getInstalledCtx(ctx)
+			if err != nil {
+				return backgroundRefreshMsg{err: err}
+			}
+			instResult = result{pkgs, nil}
+		}
+		if upgrResult.err != nil {
+			pkgs, err := getUpgradeableCtx(ctx)
+			if err == nil {
+				upgrResult = result{pkgs, nil}
+			}
+		}
+
+		cache.setInstalled(instResult.pkgs)
+		if upgrResult.err == nil {
+			cache.setUpgradeable(upgrResult.pkgs)
+		}
+		return backgroundRefreshMsg{
+			installed:   instResult.pkgs,
+			upgradeable: upgrResult.pkgs,
+			err:         upgrResult.err,
+		}
+	}
 }
 
 // buildItems merges installed and upgradeable into a grouped list.
@@ -274,7 +371,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			case execPhaseComplete:
 				switch msg.String() {
 				case "enter":
-					result, cmd := s.resetAndReload()
+					result, cmd := s.dismissModalAndRefresh()
 					return result, cmd
 				case "ctrl+e":
 					if s.modal.hasElevationCandidates() {
@@ -358,7 +455,63 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.state = workspaceReady
 			s.cursor = 0
 		}
+		if msg.fromDisk {
+			// Show stale data immediately, start background refresh.
+			s.cacheAge = msg.savedAt
+			s.refreshing = true
+			return s, tea.Batch(s.focusSummary(), s.startBackgroundRefresh())
+		}
 		return s, s.focusSummary()
+
+	case backgroundRefreshMsg:
+		s.refreshing = false
+		if msg.err != nil && msg.installed == nil {
+			// Background refresh failed; keep stale data.
+			return s, nil
+		}
+		// Don't overwrite state if a modal/execution is active — just update the data.
+		// The state transition will happen when the modal is dismissed.
+		if s.state == workspaceConfirm || s.state == workspaceExecuting {
+			s.items = buildItems(msg.installed, msg.upgradeable)
+			s.cacheAge = time.Time{}
+			return s, nil
+		}
+		// Preserve cursor position by key.
+		var cursorKey string
+		if s.cursor >= 0 && s.cursor < len(s.items) {
+			cursorKey = s.items[s.cursor].key()
+		}
+		s.items = buildItems(msg.installed, msg.upgradeable)
+		s.cacheAge = time.Time{} // data is now fresh
+		if len(s.items) == 0 {
+			s.state = workspaceEmpty
+		} else {
+			s.state = workspaceReady
+			// Restore cursor.
+			s.cursor = 0
+			for i, item := range s.items {
+				if item.key() == cursorKey {
+					s.cursor = i
+					break
+				}
+			}
+		}
+		return s, s.focusSummary()
+
+	case incrementalUpdateMsg:
+		// Skip stale results from a cancelled batch (e.g. after r refresh).
+		if msg.err == nil && s.state != workspaceLoading {
+			s.applyIncrementalUpdate(msg)
+			return s, s.focusSummary()
+		}
+		return s, nil
+
+	case startBackgroundRefreshMsg:
+		if !s.refreshing {
+			s.refreshing = true
+			return s, s.startBackgroundRefresh()
+		}
+		return s, nil
 
 	case spinner.TickMsg:
 		if s.detail.visible() {
@@ -511,17 +664,100 @@ func (s *workspaceScreen) resetAndReload() (workspaceScreen, tea.Cmd) {
 	if s.cancel != nil {
 		s.cancel()
 	}
+	if s.refreshCancel != nil {
+		s.refreshCancel()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
+	refreshCtx, refreshCancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	s.cancel = cancel
+	s.refreshCtx = refreshCtx
+	s.refreshCancel = refreshCancel
 	s.modal = nil
 	s.state = workspaceLoading
 	s.items = nil
 	s.cursor = 0
 	s.err = nil
+	s.refreshing = false
+	s.cacheAge = time.Time{}
 	s.exec.reset()
 	cache.invalidate()
+	cache.deleteDiskCache()
 	return *s, s.init()
+}
+
+// applyIncrementalUpdate patches the item list in-place after a single package action.
+func (s *workspaceScreen) applyIncrementalUpdate(msg incrementalUpdateMsg) {
+	key := packageSourceKey(msg.pkg.ID, msg.pkg.Source)
+
+	switch msg.action {
+	case "install":
+		if len(msg.result) > 0 {
+			pkg := msg.result[0]
+			newItem := workspaceItem{pkg: pkg, installed: pkg.Version}
+			if pkg.Available != "" {
+				newItem.upgradeable = true
+				newItem.available = pkg.Available
+			}
+			s.items = append(s.items, newItem)
+		}
+	case "upgrade":
+		for i, item := range s.items {
+			if item.key() == key {
+				if len(msg.result) > 0 {
+					s.items[i].pkg.Version = msg.result[0].Version
+					s.items[i].installed = msg.result[0].Version
+				}
+				s.items[i].upgradeable = false
+				s.items[i].available = ""
+				s.items[i].pkg.Available = ""
+				break
+			}
+		}
+	case "uninstall":
+		if len(msg.result) == 0 {
+			// Confirmed removed — filter out.
+			newItems := make([]workspaceItem, 0, len(s.items))
+			for _, item := range s.items {
+				if item.key() != key {
+					newItems = append(newItems, item)
+				}
+			}
+			s.items = newItems
+			if s.cursor >= len(s.items) {
+				s.cursor = max(len(s.items)-1, 0)
+			}
+		}
+	}
+
+	// Sync in-memory + disk cache from current items.
+	var installed, upgradeable []Package
+	for _, item := range s.items {
+		installed = append(installed, item.pkg)
+		if item.upgradeable {
+			upgradeable = append(upgradeable, item.pkg)
+		}
+	}
+	cache.setInstalled(installed)
+	cache.setUpgradeable(upgradeable)
+}
+
+// dismissModalAndRefresh closes the completion modal and starts a background refresh.
+func (s *workspaceScreen) dismissModalAndRefresh() (workspaceScreen, tea.Cmd) {
+	s.modal = nil
+	s.state = workspaceReady
+	if len(s.items) == 0 {
+		s.state = workspaceEmpty
+	}
+	// Start a background refresh for eventual consistency.
+	if s.refreshCancel != nil {
+		s.refreshCancel()
+	}
+	refreshCtx, refreshCancel := context.WithCancel(context.Background())
+	s.refreshCtx = refreshCtx
+	s.refreshCancel = refreshCancel
+	s.refreshing = true
+	return *s, s.startBackgroundRefresh()
 }
 
 func (s *workspaceScreen) focusSummary() tea.Cmd {
@@ -819,15 +1055,30 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 
 func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 	s.modal.phase = execPhaseComplete
+	action := s.modal.action
 	s.selected = make(map[string]bool)
-	if s.modal.action == "install" {
+	if action == "install" {
 		s.installQueue = nil
 		s.installQueueMap = make(map[string]bool)
 		s.searchResults = nil
 		s.searchQuery = ""
 	}
-	cache.invalidate()
-	return s, func() tea.Msg { return packageDataChangedMsg{origin: screenWorkspace} }
+
+	// Emit incremental lookups for each successful item, using s.ctx so they
+	// are cancelled if the user does a manual refresh (resetAndReload).
+	ctx := s.ctx
+	var cmds []tea.Cmd
+	for _, bi := range s.modal.items {
+		if bi.status == batchDone {
+			pkg := bi.item.pkg
+			act := action
+			cmds = append(cmds, func() tea.Msg {
+				result, err := lookupSinglePackageCtx(ctx, pkg.ID, pkg.Source)
+				return incrementalUpdateMsg{action: act, pkg: pkg, result: result, err: err}
+			})
+		}
+	}
+	return s, tea.Batch(cmds...)
 }
 
 // ── View ──────────────────────────────────────────────────────────
@@ -857,6 +1108,32 @@ func (s workspaceScreen) view(width, height int) string {
 
 func (s workspaceScreen) viewLoading() string {
 	return "  " + s.spinner.View() + " Loading packages...\n"
+}
+
+// cacheStatusText returns a dim status string like "cached 2h ago · refreshing...".
+func (s workspaceScreen) cacheStatusText() string {
+	if s.cacheAge.IsZero() && !s.refreshing {
+		return ""
+	}
+	var parts []string
+	if !s.cacheAge.IsZero() {
+		parts = append(parts, "cached "+humanDuration(time.Since(s.cacheAge))+" ago")
+	}
+	if s.refreshing {
+		parts = append(parts, "refreshing...")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// upgradeCount returns the number of upgradeable items in the current list.
+func (s workspaceScreen) upgradeCount() int {
+	n := 0
+	for _, item := range s.items {
+		if item.upgradeable {
+			n++
+		}
+	}
+	return n
 }
 
 func (s workspaceScreen) viewReady(width, height int) string {
@@ -947,6 +1224,12 @@ func (s workspaceScreen) renderSections(l layout) string {
 		}
 		sections = append(sections, sectionDef{title: title, items: installed, offset: offset})
 		offset += len(installed)
+	}
+
+	// Cache status indicator (rendered as a line above the sections).
+	if status := s.cacheStatusText(); status != "" {
+		b.WriteString("  " + helpStyle.Render(status) + "\n")
+		availableH--
 	}
 
 	if len(sections) == 0 {

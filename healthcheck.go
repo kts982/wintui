@@ -54,15 +54,14 @@ func runHealthcheck() (healthReport, error) {
 		r.OS = ver
 	}
 
-	if boot := cmdOutputTrim("wmic", "os", "get", "LastBootUpTime"); boot != "" {
-		lines := strings.Split(boot, "\n")
-		for _, l := range lines {
-			l = strings.TrimSpace(l)
-			if len(l) > 14 && l[0] >= '0' && l[0] <= '9' {
-				t, err := time.Parse("20060102150405", l[:14])
-				if err == nil {
-					r.Uptime = time.Since(t).Truncate(time.Minute).String()
-				}
+	// Use PowerShell CIM instead of deprecated wmic.
+	if boot := cmdOutputTrim("powershell", "-NoProfile", "-Command",
+		"(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString('yyyyMMddHHmmss')"); boot != "" {
+		boot = strings.TrimSpace(boot)
+		if len(boot) >= 14 {
+			t, err := time.Parse("20060102150405", boot[:14])
+			if err == nil {
+				r.Uptime = time.Since(t).Truncate(time.Minute).String()
 			}
 		}
 	}

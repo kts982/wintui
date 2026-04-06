@@ -192,8 +192,8 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.quitting = true
 			return a, tea.Quit
 		case "q":
-			// Don't quit if the active screen has text input (install/search)
-			if !a.screenHasTextInput() {
+			// Don't quit if the active screen blocks shortcuts (modal, detail, executing) or has text input
+			if !blockGlobalShortcuts && !a.screenHasTextInput() {
 				a.quitting = true
 				return a, tea.Quit
 			}
@@ -407,6 +407,14 @@ func (a app) renderTabBar() string {
 	var parts []string
 	for i, t := range tabs {
 		label := fmt.Sprintf("%d %s", i+1, t.label)
+		// Add upgrade count badge to Packages tab.
+		if t.id == screenWorkspace {
+			if ws, ok := a.screens[screenWorkspace].(workspaceScreen); ok {
+				if n := ws.upgradeCount(); n > 0 {
+					label += fmt.Sprintf(" (%d↑)", n)
+				}
+			}
+		}
 		if i == a.activeTab {
 			parts = append(parts, tabBoxActive.Render(label))
 		} else {
@@ -421,7 +429,15 @@ func (a app) renderTabBar() string {
 func (a app) tabHitTest(x int) int {
 	pos := 2 // leading indent
 	for i, t := range tabs {
-		tabWidth := 2 + len(t.label) // "N label"
+		label := fmt.Sprintf("%d %s", i+1, t.label)
+		if t.id == screenWorkspace {
+			if ws, ok := a.screens[screenWorkspace].(workspaceScreen); ok {
+				if n := ws.upgradeCount(); n > 0 {
+					label += fmt.Sprintf(" (%d↑)", n)
+				}
+			}
+		}
+		tabWidth := len([]rune(label))
 		if x >= pos && x < pos+tabWidth {
 			return i
 		}

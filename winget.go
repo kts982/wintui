@@ -109,6 +109,20 @@ func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
 	return parseWingetTable(out), nil
 }
 
+// lookupSinglePackageCtx fetches the installed state of a single package by ID.
+// Used for incremental cache updates after install/upgrade/uninstall.
+func lookupSinglePackageCtx(ctx context.Context, id, source string) ([]Package, error) {
+	args := []string{"list", "--id", id, "--exact"}
+	if source != "" {
+		args = append(args, "--source", source)
+	}
+	out, err := runWingetCtx(ctx, args...)
+	if err != nil && len(out) == 0 {
+		return nil, err
+	}
+	return parseWingetTable(out), nil
+}
+
 // ── High-level action operations (mutating, need package agreements) ─
 
 func installCommandArgs(id, source, version string) []string {
