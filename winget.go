@@ -237,6 +237,7 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 	// Map known winget exit/installer codes to friendly descriptions.
 	replacements := map[string]string{
 		"0x8a150002": "package not found or no applicable installer",
+		"0x8a150003": "installer command failed",
 		"0x8a15000e": "upgrade not applicable (already up to date)",
 		"0x8a150011": "package not found",
 		"0x8a150014": "no installed package found matching input criteria",
@@ -245,6 +246,7 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 		"0x8a15002b": "install technology differs from installed version (package manages its own updates)",
 		"0x8a15002c": "some packages failed to upgrade",
 		"0x8a150006": "installer failed (the installer process was terminated)",
+		"0x8a150052": "portable package could not replace files (close the running app before upgrading)",
 		"0x8a150056": "package requires administrator privileges to install",
 		"0x80073d28": "installer requires administrator privileges (try running as admin)",
 		"0x80073cf3": "package install failed (conflicting package)",
@@ -449,22 +451,23 @@ func normalizeActionStreamLine(action retryOp, line string) string {
 
 // PackageDetail holds extended info from `winget show`.
 type PackageDetail struct {
-	Name          string
-	ID            string
-	Source        string
-	Version       string
-	Publisher     string
-	PublisherURL  string
-	Description   string
-	Homepage      string
-	License       string
-	Copyright     string
-	ReleaseNotes  string
-	ReleaseDate   string
-	Tags          string
-	InstallerType string
-	InstallerURL  string
-	Moniker       string
+	Name            string
+	ID              string
+	Source          string
+	Version         string
+	Publisher       string
+	PublisherURL    string
+	Description     string
+	Homepage        string
+	License         string
+	Copyright       string
+	ReleaseNotes    string
+	ReleaseNotesURL string
+	ReleaseDate     string
+	Tags            string
+	InstallerType   string
+	InstallerURL    string
+	Moniker         string
 }
 
 func appendVersionArg(args []string, version string) []string {
@@ -533,6 +536,8 @@ func parseWingetShow(output string) PackageDetail {
 			d.Copyright = val
 		case "Release Notes":
 			d.ReleaseNotes = val
+		case "Release Notes Url":
+			d.ReleaseNotesURL = val
 		case "Release Date":
 			d.ReleaseDate = val
 		case "Tags":

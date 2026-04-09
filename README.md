@@ -46,12 +46,13 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 **Unified Packages Screen**
 - **Split-panel layout** — package list on the left, detail summary on the right
 - **Bordered sections** — Updates Available, Installed, Search Results, and Install Queue with package counts and active focus highlighting
-- **Search & Install** — press `s` to search the winget catalog, `Space` to queue packages, `i` to batch install
-- **Upgrade** — select upgradeable packages and press `u` to batch upgrade
-- **Uninstall** — select installed packages and press `x` to batch uninstall
-- **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), and scrollable metadata
+- **Normalized package actions** — press `Space` to stage the focused package, `g` to apply staged changes, or use `i` / `u` / `x` for direct install, upgrade, and uninstall accelerators
+- **Search & Install** — press `s` to search the winget catalog, `Space` to queue packages, `i` to install the focused result or the full install queue
+- **Upgrade / Uninstall** — stage packages across sections, then apply them together, or use `u` / `x` on the focused package or current selection
+- **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), release notes (`n` when available), and scrollable metadata
 - **Batch Execution Modal** — review selected packages, watch live progress with per-package spinners, view compact results with `Ctrl+E` elevated retry
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
+- **Self-upgrade handoff** — upgrading `kts982.WinTUI` now restarts through a temporary helper so the running `.exe` can be replaced cleanly
 - **Headless CLI** — use `--check`, `--list`, and `--json` for scripts, Task Scheduler, or CI without launching the TUI
 
 **System Utilities**
@@ -78,7 +79,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 .\wintui.exe
 ```
 
-> **Tip:** Some operations require administrator privileges. The subtitle bar shows `● admin` / `● user` status. Enable **Silent** mode + **Auto Elevate** in Settings for hands-off elevated operations, or press `Ctrl+E` on the result modal when a package fails.
+> **Tip:** Some operations require administrator privileges. The subtitle bar shows `● admin` / `● user` status. Enable **Silent** mode + **Auto Elevate** in Settings for hands-off elevated operations, or press `Ctrl+E` on the result modal when a package fails. When WinTUI upgrades itself, the result modal will offer a restart handoff to finish the replacement and relaunch the app.
 
 ### Headless CLI
 
@@ -105,18 +106,20 @@ Further documentation:
 | Key | Action |
 |---|---|
 | `↑↓` / `j/k` | Navigate |
-| `Space` | Select package / add to install queue |
+| `Space` | Stage package / queue search result |
 | `Enter` / `→` / `l` | Open package details |
 | `←` / `Esc` / `h` | Close details / cancel |
 | `s` | Search & install (search winget catalog) |
 | `/` | Filter installed packages |
-| `u` | Upgrade selected |
-| `x` | Uninstall selected |
-| `i` | Install queued packages |
-| `a` | Select all available updates |
+| `g` | Apply staged changes |
+| `u` | Upgrade selected or focused package |
+| `x` | Uninstall selected or focused package |
+| `i` | Install queued packages or focused search result |
+| `a` | Stage all available updates |
 | `v` | Pick version (in detail view) |
 | `c` | Reset to latest version (in detail view) |
 | `o` | Open homepage (in detail view) |
+| `n` | Open release notes URL (in detail view, when available) |
 | `r` | Refresh package data |
 | `Ctrl+E` | Retry failed packages elevated (result modal) |
 | `?` | Toggle full help panel |

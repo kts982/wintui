@@ -8,6 +8,7 @@ License: MPL-2.0
 Release Notes:
   Fixed a startup crash on some systems.
   Improved browser performance and memory usage.
+Release Notes Url: https://www.mozilla.org/firefox/releases/
 Release Date: 2026-03-20
 Tags:
   browser
@@ -15,4 +16,3 @@ Tags:
 Installer Type: wix
 Installer Url: https://download.mozilla.org/?product=firefox-latest
 Moniker: firefox
-

@@ -147,6 +147,10 @@ type incrementalUpdateMsg struct {
 // startBackgroundRefreshMsg triggers a background refresh (used after post-action delay).
 type startBackgroundRefreshMsg struct{}
 
+type selfUpgradeScheduledMsg struct {
+	err error
+}
+
 func (s workspaceScreen) init() tea.Cmd {
 	// Phase A: try in-memory cache (tab switches within a session).
 	inst, instOK := cache.getInstalled()
@@ -371,8 +375,16 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			case execPhaseComplete:
 				switch msg.String() {
 				case "enter":
+					if s.modal.hasPendingSelfUpgrade() {
+						return s.schedulePendingSelfUpgrade()
+					}
 					result, cmd := s.dismissModalAndRefresh()
 					return result, cmd
+				case "esc":
+					if s.modal.hasPendingSelfUpgrade() {
+						result, cmd := s.dismissModalAndRefresh()
+						return result, cmd
+					}
 				case "ctrl+e":
 					if s.modal.hasElevationCandidates() {
 						retryItems := s.modal.elevationCandidateItems()
@@ -437,6 +449,8 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, s.searchInput.Focus()
 		case "i":
 			return s.beginAction("install")
+		case "g":
+			return s.beginApplyAction()
 		case "u":
 			return s.beginAction("upgrade")
 		case "x", "delete":
@@ -512,6 +526,21 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, s.startBackgroundRefresh()
 		}
 		return s, nil
+
+	case selfUpgradeScheduledMsg:
+		if msg.err != nil {
+			if s.modal != nil {
+				for i := range s.modal.items {
+					if s.modal.items[i].status == batchPendingRestart {
+						s.modal.items[i].status = batchFailed
+						s.modal.items[i].err = fmt.Errorf("self-upgrade handoff failed: %v", msg.err)
+						break
+					}
+				}
+			}
+			return s, nil
+		}
+		return s, tea.Quit
 
 	case spinner.TickMsg:
 		if s.detail.visible() {
@@ -613,7 +642,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		bi := make([]batchItem, len(targets))
 		for i, t := range targets {
-			bi[i] = batchItem{item: t, status: batchQueued}
+			bi[i] = batchItem{action: msg.req.Op, item: t, status: batchQueued}
 		}
 		m := newExecModal(string(msg.req.Op), bi)
 		m.phase = execPhaseRunning
@@ -760,6 +789,24 @@ func (s *workspaceScreen) dismissModalAndRefresh() (workspaceScreen, tea.Cmd) {
 	return *s, s.startBackgroundRefresh()
 }
 
+func (s workspaceScreen) schedulePendingSelfUpgrade() (screen, tea.Cmd) {
+	if s.modal == nil {
+		return s, nil
+	}
+	item, ok := s.modal.pendingSelfUpgradeItem()
+	if !ok {
+		return s, nil
+	}
+
+	version := s.selectedVersions[item.item.key()]
+	source := item.item.pkg.Source
+	return s, func() tea.Msg {
+		return selfUpgradeScheduledMsg{
+			err: startSelfUpgradeHandoff(source, version),
+		}
+	}
+}
+
 func (s *workspaceScreen) focusSummary() tea.Cmd {
 	queue, search, upgradeable, installed := s.displayItems()
 	all := concat(queue, search, upgradeable, installed)
@@ -854,6 +901,65 @@ func (s workspaceScreen) filteredItems() []workspaceItem {
 	return matches
 }
 
+func (s workspaceScreen) focusedItemContext() (workspaceItem, string, bool) {
+	queue, search, upgradeable, installed := s.displayItems()
+	all := concat(queue, search, upgradeable, installed)
+	if s.cursor < 0 || s.cursor >= len(all) {
+		return workspaceItem{}, "", false
+	}
+
+	item := all[s.cursor]
+	switch {
+	case s.cursor < len(queue):
+		return item, "queue", true
+	case s.cursor < len(queue)+len(search):
+		return item, "search", true
+	case s.cursor < len(queue)+len(search)+len(upgradeable):
+		return item, "upgrade", true
+	default:
+		return item, "installed", true
+	}
+}
+
+func newBatchItem(action retryOp, item workspaceItem) batchItem {
+	return batchItem{action: action, item: item, status: batchQueued}
+}
+
+func batchContainsAction(items []batchItem, action retryOp) bool {
+	for _, item := range items {
+		if item.action == action {
+			return true
+		}
+	}
+	return false
+}
+
+func batchModalAction(items []batchItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	action := items[0].action
+	for _, item := range items[1:] {
+		if item.action != action {
+			return "apply"
+		}
+	}
+	return string(action)
+}
+
+func sortBatchItems(items []batchItem) []batchItem {
+	var regular []batchItem
+	var self []batchItem
+	for _, item := range items {
+		if isSelfUpgradeBatchItem(item) {
+			self = append(self, item)
+			continue
+		}
+		regular = append(regular, item)
+	}
+	return append(regular, self...)
+}
+
 // displayItems returns the full ordered list for rendering and navigation:
 // install queue → search results → upgradeable → installed.
 func (s workspaceScreen) displayItems() (queue, search, upgradeable, installed []workspaceItem) {
@@ -937,12 +1043,25 @@ func (s workspaceScreen) updateFilter(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 
 // ── Actions ───────────────────────────────────────────────────────
 
+func (s workspaceScreen) openBatchModal(items []batchItem) (screen, tea.Cmd) {
+	if len(items) == 0 {
+		return s, nil
+	}
+	items = sortBatchItems(items)
+	m := newExecModal(batchModalAction(items), items)
+	s.modal = &m
+	s.state = workspaceConfirm
+	return s, nil
+}
+
 func (s workspaceScreen) beginAction(action string) (screen, tea.Cmd) {
-	var targets []workspaceItem
+	var items []batchItem
 
 	if action == "install" {
 		// Install uses the install queue.
-		targets = append(targets, s.installQueue...)
+		for _, item := range s.installQueue {
+			items = append(items, newBatchItem(retryOpInstall, item))
+		}
 	} else {
 		// Collect selected items that match the action.
 		for _, item := range s.items {
@@ -952,35 +1071,67 @@ func (s workspaceScreen) beginAction(action string) (screen, tea.Cmd) {
 			if action == "upgrade" && !item.upgradeable {
 				continue
 			}
-			targets = append(targets, item)
+			items = append(items, newBatchItem(retryOp(action), item))
 		}
 	}
 
-	// If nothing selected, act on the focused item.
-	if len(targets) == 0 && action != "install" {
-		queue, search, upgradeable, installed := s.displayItems()
-		all := concat(queue, search, upgradeable, installed)
-		if s.cursor < len(all) {
-			item := all[s.cursor]
-			if action == "upgrade" && !item.upgradeable {
-				return s, nil
+	// If nothing is staged, fall back to the focused item when it matches.
+	if len(items) == 0 {
+		item, section, ok := s.focusedItemContext()
+		if ok {
+			switch action {
+			case "install":
+				if section == "queue" || section == "search" {
+					items = append(items, newBatchItem(retryOpInstall, item))
+				}
+			case "upgrade":
+				if item.upgradeable {
+					items = append(items, newBatchItem(retryOpUpgrade, item))
+				}
+			case "uninstall":
+				if section != "queue" && section != "search" {
+					items = append(items, newBatchItem(retryOpUninstall, item))
+				}
 			}
-			targets = []workspaceItem{item}
 		}
 	}
 
-	if len(targets) == 0 {
-		return s, nil
+	return s.openBatchModal(items)
+}
+
+func (s workspaceScreen) beginApplyAction() (screen, tea.Cmd) {
+	var items []batchItem
+
+	for _, item := range s.installQueue {
+		items = append(items, newBatchItem(retryOpInstall, item))
+	}
+	for _, item := range s.items {
+		if !s.selected[item.key()] {
+			continue
+		}
+		action := retryOpUninstall
+		if item.upgradeable {
+			action = retryOpUpgrade
+		}
+		items = append(items, newBatchItem(action, item))
 	}
 
-	items := make([]batchItem, len(targets))
-	for i, t := range targets {
-		items[i] = batchItem{item: t, status: batchQueued}
+	if len(items) == 0 {
+		item, section, ok := s.focusedItemContext()
+		if !ok {
+			return s, nil
+		}
+		switch section {
+		case "queue", "search":
+			items = append(items, newBatchItem(retryOpInstall, item))
+		case "upgrade":
+			items = append(items, newBatchItem(retryOpUpgrade, item))
+		case "installed":
+			items = append(items, newBatchItem(retryOpUninstall, item))
+		}
 	}
-	m := newExecModal(action, items)
-	s.modal = &m
-	s.state = workspaceConfirm
-	return s, nil
+
+	return s.openBatchModal(items)
 }
 
 type startWorkspaceBatchMsg struct{}
@@ -1009,9 +1160,19 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 		return s.finishBatch()
 	}
 
-	s.modal.items[s.modal.idx].status = batchRunning
-	item := s.modal.items[s.modal.idx].item
-	s.exec.appendSection(fmt.Sprintf("== %s (%s) ==", item.pkg.Name, item.pkg.ID))
+	current := &s.modal.items[s.modal.idx]
+	item := current.item
+	s.exec.appendSection(fmt.Sprintf("== %s %s (%s) ==", actionTitle(current.action), item.pkg.Name, item.pkg.ID))
+
+	if isSelfUpgradeBatchItem(*current) {
+		current.status = batchPendingRestart
+		current.output = "WinTUI will restart from a temporary helper to complete its own upgrade."
+		s.exec.appendLine("WinTUI will restart from a temporary helper to complete its own upgrade.")
+		s.modal.idx++
+		return s.processNextBatchItem()
+	}
+
+	current.status = batchRunning
 
 	var outChan <-chan string
 	var errChan <-chan error
@@ -1019,28 +1180,28 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 	if s.modal.forceElevated {
 		// Route through elevated helper for Ctrl+E retry.
 		var initErr error
-		switch s.modal.action {
-		case "upgrade":
+		switch current.action {
+		case retryOpUpgrade:
 			version := s.selectedVersions[item.key()]
 			_, outChan, errChan, initErr = upgradePackageElevatedStreamCtx(item.pkg.ID, item.pkg.Source, version)
-		case "install":
+		case retryOpInstall:
 			version := s.selectedVersions[item.key()]
 			_, outChan, errChan, initErr = installPackageElevatedStreamCtx(item.pkg.ID, item.pkg.Source, version)
 		default: // uninstall
 			_, outChan, errChan, initErr = uninstallPackageElevatedStreamCtx(item.pkg)
 		}
 		if initErr != nil {
-			s.modal.items[s.modal.idx].status = batchFailed
-			s.modal.items[s.modal.idx].err = fmt.Errorf("elevation failed: %v", initErr)
+			current.status = batchFailed
+			current.err = fmt.Errorf("elevation failed: %v", initErr)
 			s.modal.idx++
 			return s.processNextBatchItem()
 		}
 	} else {
-		switch s.modal.action {
-		case "upgrade":
+		switch current.action {
+		case retryOpUpgrade:
 			version := s.selectedVersions[item.key()]
 			_, outChan, errChan = upgradePackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
-		case "install":
+		case retryOpInstall:
 			version := s.selectedVersions[item.key()]
 			_, outChan, errChan = installPackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
 		default: // uninstall
@@ -1055,9 +1216,8 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 
 func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 	s.modal.phase = execPhaseComplete
-	action := s.modal.action
 	s.selected = make(map[string]bool)
-	if action == "install" {
+	if batchContainsAction(s.modal.items, retryOpInstall) {
 		s.installQueue = nil
 		s.installQueueMap = make(map[string]bool)
 		s.searchResults = nil
@@ -1071,7 +1231,7 @@ func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 	for _, bi := range s.modal.items {
 		if bi.status == batchDone {
 			pkg := bi.item.pkg
-			act := action
+			act := string(bi.action)
 			cmds = append(cmds, func() tea.Msg {
 				result, err := lookupSinglePackageCtx(ctx, pkg.ID, pkg.Source)
 				return incrementalUpdateMsg{action: act, pkg: pkg, result: result, err: err}
@@ -1198,7 +1358,7 @@ func (s workspaceScreen) renderSections(l layout) string {
 	offset := 0
 
 	if len(queue) > 0 {
-		title := fmt.Sprintf("Selected for Install (%d)", len(queue))
+		title := fmt.Sprintf("Install Queue (%d)", len(queue))
 		sections = append(sections, sectionDef{title: title, items: queue, offset: offset, fixedH: len(queue) + 2})
 		offset += len(queue)
 	}
@@ -1429,27 +1589,28 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 	case inQueue:
 		bindings = []key.Binding{
 			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "remove")),
+			key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "apply")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install")),
-			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search & install")),
 		}
 	case inSearch:
 		bindings = []key.Binding{
-			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "add to queue")),
-			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search & install")),
+			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "queue")),
+			key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "apply")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install")),
 		}
 	case inUpgrades:
 		bindings = []key.Binding{
-			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
+			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "stage")),
+			key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "apply")),
 			key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade")),
 			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")),
-			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search & install")),
 		}
 	default: // installed
 		bindings = []key.Binding{
-			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
+			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "stage")),
+			key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "apply")),
 			key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")),
-			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search & install")),
 		}
 	}
 
@@ -1462,19 +1623,20 @@ func (s workspaceScreen) fullHelpKeys() [][]key.Binding {
 	navigation := []key.Binding{
 		key.NewBinding(key.WithKeys("↑/k"), key.WithHelp("↑/k", "move up")),
 		key.NewBinding(key.WithKeys("↓/j"), key.WithHelp("↓/j", "move down")),
-		key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select package")),
+		key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "stage focused")),
 		key.NewBinding(key.WithKeys("enter/→"), key.WithHelp("enter/→", "open details")),
 		key.NewBinding(key.WithKeys("←/esc"), key.WithHelp("←/esc", "close details")),
 	}
 	actions := []key.Binding{
-		key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade selected")),
-		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall selected")),
-		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "select all updates")),
+		key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "apply staged changes")),
+		key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install queued/focused")),
+		key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade selected/focused")),
+		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall selected/focused")),
+		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "stage all updates")),
 	}
 	search := []key.Binding{
 		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search for apps")),
 		key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter current list")),
-		key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install queued")),
 		key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	}
 	general := []key.Binding{

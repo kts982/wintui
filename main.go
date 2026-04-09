@@ -34,6 +34,7 @@ var rootCmd = &cobra.Command{
 	Long:  `A modern, interactive terminal user interface for the Windows Package Manager (winget).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		appSettings = LoadSettings()
+		cleanupStaleSelfUpdateHelpers()
 
 		if listFlag && checkFlag {
 			return fmt.Errorf("--list and --check cannot be used together")

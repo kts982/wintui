@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
 
 PackageIdentifier: kts982.WinTUI
-PackageVersion: 2.0.1
+PackageVersion: 2.1.0
 PackageLocale: en-US
 Publisher: kts982
 PublisherUrl: https://github.com/kts982
@@ -28,10 +28,10 @@ Tags:
   - package-manager
   - cli
 ReleaseNotes: |-
-  - Added a disk-persistent package cache for faster startup with background refresh.
-  - Added an update-count badge and cache-status indicator on the Packages tab.
-  - Improved search, empty-state feedback, and cancel/error handling for package actions.
-  - Polished the execution flow, including safer modal quit behavior and health check fixes.
-ReleaseNotesUrl: https://github.com/kts982/wintui/releases/tag/v2.0.1
+  - Added a unified apply flow (`g`) so staged installs, upgrades, and uninstalls can run in one mixed batch.
+  - Normalized Packages screen actions: `Space` stages items, while `i`, `u`, and `x` remain direct accelerators.
+  - Added self-upgrade handoff for the installed WinGet build of WinTUI so the running portable executable can be replaced cleanly.
+  - Improved package details with target-aware "What's New" headings, release-notes links (`n`), and a small-terminal scroll fix.
+ReleaseNotesUrl: https://github.com/kts982/wintui/releases/tag/v2.1.0
 ManifestType: defaultLocale
 ManifestVersion: 1.10.0

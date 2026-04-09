@@ -13,10 +13,12 @@ const (
 	batchRunning
 	batchDone
 	batchFailed
+	batchPendingRestart
 )
 
 // batchItem pairs a workspace item with its execution status.
 type batchItem struct {
+	action retryOp
 	item   workspaceItem
 	status batchItemStatus
 	err    error
@@ -34,6 +36,8 @@ func (b batchItem) statusIcon(sp spinner.Model) string {
 		return lipgloss.NewStyle().Foreground(success).Bold(true).Render("✓")
 	case batchFailed:
 		return lipgloss.NewStyle().Foreground(danger).Bold(true).Render("✗")
+	case batchPendingRestart:
+		return lipgloss.NewStyle().Foreground(warning).Bold(true).Render("↺")
 	}
 	return " "
 }
@@ -52,6 +56,8 @@ func (b batchItem) statusText() string {
 			return errorStyle.Render(b.err.Error())
 		}
 		return errorStyle.Render("failed")
+	case batchPendingRestart:
+		return warnStyle.Render("restart to finish")
 	}
 	return ""
 }
@@ -65,6 +71,8 @@ func batchCounters(items []batchItem) (completed, failed, total int) {
 			completed++
 		case batchFailed:
 			failed++
+			completed++
+		case batchPendingRestart:
 			completed++
 		}
 	}

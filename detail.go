@@ -332,8 +332,13 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 			}
 			return p, nil, true
 		case "o":
-			if p.state == detailReady && p.detail.Homepage != "" {
-				openURL(p.detail.Homepage)
+			if p.state == detailReady && p.canOpenHomepage() {
+				openExternalURL(p.detail.Homepage)
+			}
+			return p, nil, true
+		case "n":
+			if p.state == detailReady && p.canOpenReleaseNotes() {
+				openExternalURL(p.detail.ReleaseNotesURL)
 			}
 			return p, nil, true
 		case "v":
@@ -384,12 +389,34 @@ func (p detailPanel) helpKeys() []key.Binding {
 			if p.selectedVersion != "" {
 				bindings = append(bindings, keyUseLatest)
 			}
-			bindings = append(bindings, keyOpen, keyEscOrLeft)
+			if p.canOpenHomepage() {
+				bindings = append(bindings, keyOpen)
+			}
+			if p.canOpenReleaseNotes() {
+				bindings = append(bindings, keyReleaseNotes)
+			}
+			bindings = append(bindings, keyEscOrLeft)
 			return bindings
 		}
-		return []key.Binding{keyScroll, keyOpen, keyEscOrLeft}
+		bindings := []key.Binding{keyScroll}
+		if p.canOpenHomepage() {
+			bindings = append(bindings, keyOpen)
+		}
+		if p.canOpenReleaseNotes() {
+			bindings = append(bindings, keyReleaseNotes)
+		}
+		bindings = append(bindings, keyEscOrLeft)
+		return bindings
 	}
 	return nil
+}
+
+func (p detailPanel) canOpenHomepage() bool {
+	return strings.TrimSpace(p.detail.Homepage) != ""
+}
+
+func (p detailPanel) canOpenReleaseNotes() bool {
+	return strings.TrimSpace(p.detail.ReleaseNotesURL) != ""
 }
 
 func appendDetailField(lines *[]string, label, value string) {
@@ -401,7 +428,7 @@ func appendDetailField(lines *[]string, label, value string) {
 		value))
 }
 
-func appendDetailSection(lines *[]string, heading string, d PackageDetail, includeReleaseNotes bool) {
+func appendDetailSection(lines *[]string, heading, releaseNotesHeading string, d PackageDetail) {
 	*lines = append(*lines, "")
 	*lines = append(*lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(accent).Render(heading))
 	appendDetailField(lines, "Version", d.Version)
@@ -426,11 +453,23 @@ func appendDetailSection(lines *[]string, heading string, d PackageDetail, inclu
 		}
 	}
 
-	if includeReleaseNotes && d.ReleaseNotes != "" {
+	if d.ReleaseNotes != "" || d.ReleaseNotesURL != "" {
 		*lines = append(*lines, "")
-		*lines = append(*lines, "  "+lipgloss.NewStyle().Bold(true).Render("Release Notes"))
-		for _, rl := range strings.Split(d.ReleaseNotes, "\n") {
-			*lines = append(*lines, "  "+rl)
+		heading := "Release Notes"
+		if releaseNotesHeading != "" {
+			heading = releaseNotesHeading
+		}
+		*lines = append(*lines, "  "+lipgloss.NewStyle().Bold(true).Render(heading))
+		if d.ReleaseNotes != "" {
+			for _, rl := range strings.Split(d.ReleaseNotes, "\n") {
+				*lines = append(*lines, "  "+rl)
+			}
+		}
+		if d.ReleaseNotesURL != "" {
+			if d.ReleaseNotes != "" {
+				*lines = append(*lines, "")
+			}
+			*lines = append(*lines, "  "+lipgloss.NewStyle().Foreground(secondary).Underline(true).Render(d.ReleaseNotesURL))
 		}
 	}
 }
@@ -473,15 +512,37 @@ func (p detailPanel) detailLines(totalWidth int) []string {
 	if p.allowVersionSelect {
 		sectionTitle = "Target Details"
 	}
-	appendDetailSection(&lines, sectionTitle, p.detail, true)
+	appendDetailSection(&lines, sectionTitle, p.releaseNotesHeading(), p.detail)
 
 	panelWidth := max(24, totalWidth-4)
 	return wrapDetailLines(lines, detailContentWidth(panelWidth))
 }
 
-func (p detailPanel) innerHeight() int {
+func (p detailPanel) releaseNotesHeading() string {
+	if !p.allowVersionSelect {
+		return "Release Notes"
+	}
+	version := strings.TrimSpace(p.detail.Version)
+	if version == "" {
+		version = strings.TrimSpace(p.targetVersion())
+	}
+	if version == "" || strings.EqualFold(version, "latest") {
+		return "What's New"
+	}
+	return "What's New in " + version
+}
+
+func (p detailPanel) overlayHeight() int {
 	contentHeight := contentAreaHeightForWindow(p.windowWidth, p.windowHeight, true)
-	innerHeight := contentHeight - 6
+	overlayHeight := contentHeight - 2
+	if overlayHeight < 1 {
+		return 1
+	}
+	return overlayHeight
+}
+
+func (p detailPanel) visibleDetailHeight(totalHeight int) int {
+	innerHeight := totalHeight - 6
 	if innerHeight < 5 {
 		return 5
 	}
@@ -493,7 +554,7 @@ func (p detailPanel) maxScroll() int {
 		return 0
 	}
 	totalLines := len(p.detailLines(p.windowWidth))
-	maxScroll := totalLines - p.innerHeight()
+	maxScroll := totalLines - p.visibleDetailHeight(p.overlayHeight())
 	if maxScroll < 0 {
 		return 0
 	}
@@ -559,10 +620,7 @@ func (p detailPanel) view(width, height int) string {
 
 		visibleLines := p.detailLines(width)
 
-		innerHeight := height - 6
-		if innerHeight < 5 {
-			innerHeight = 5
-		}
+		innerHeight := p.visibleDetailHeight(height)
 		totalLines := len(visibleLines)
 		start := p.scroll
 		if totalLines > innerHeight && start > totalLines-innerHeight {
@@ -587,11 +645,23 @@ func (p detailPanel) view(width, height int) string {
 			if p.selectedVersion != "" {
 				help = "  ↑↓/PgUp/PgDn scroll • v change version • c latest • esc close"
 			}
-			if p.detail.Homepage != "" {
+			if p.canOpenHomepage() {
 				help += " • o open homepage"
 			}
-		} else if p.detail.Homepage != "" {
-			help = "  ↑↓/PgUp/PgDn scroll • o open homepage • esc close"
+			if p.canOpenReleaseNotes() {
+				help += " • n release notes"
+			}
+		} else {
+			if p.canOpenHomepage() {
+				help = "  ↑↓/PgUp/PgDn scroll • o open homepage • esc close"
+			}
+			if p.canOpenReleaseNotes() {
+				if p.canOpenHomepage() {
+					help = "  ↑↓/PgUp/PgDn scroll • o open homepage • n release notes • esc close"
+				} else {
+					help = "  ↑↓/PgUp/PgDn scroll • n release notes • esc close"
+				}
+			}
 		}
 		b.WriteString(helpStyle.Render(help))
 		if p.versionErr != "" {
@@ -659,3 +729,5 @@ func openURL(url string) {
 		exec.Command("xdg-open", url).Start()
 	}
 }
+
+var openExternalURL = openURL

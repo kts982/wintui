@@ -1,9 +1,13 @@
 package main
 
 import (
+	"regexp"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 )
+
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func keyMsg(keyName string) tea.KeyPressMsg {
 	switch keyName {
@@ -37,4 +41,8 @@ func bindingHelps(bindings []key.Binding) []key.Help {
 		helps[i] = binding.Help()
 	}
 	return helps
+}
+
+func stripANSI(s string) string {
+	return ansiEscapePattern.ReplaceAllString(s, "")
 }

@@ -73,20 +73,21 @@ func TestParseWingetTableFixtures(t *testing.T) {
 func TestParseWingetShowFixture(t *testing.T) {
 	got := parseWingetShow(strings.ReplaceAll(loadWingetFixture(t, "show_firefox.txt"), "\n", "\r\n"))
 	want := PackageDetail{
-		Name:          "Mozilla Firefox",
-		ID:            "Mozilla.Firefox",
-		Version:       "138.0.1",
-		Publisher:     "Mozilla",
-		PublisherURL:  "https://www.mozilla.org",
-		Description:   "Fast, private browsing for everyone.",
-		Homepage:      "https://www.mozilla.org/firefox/",
-		License:       "MPL-2.0",
-		ReleaseNotes:  "Fixed a startup crash on some systems.\nImproved browser performance and memory usage.",
-		ReleaseDate:   "2026-03-20",
-		Tags:          "browser\nfirefox",
-		InstallerType: "wix",
-		InstallerURL:  "https://download.mozilla.org/?product=firefox-latest",
-		Moniker:       "firefox",
+		Name:            "Mozilla Firefox",
+		ID:              "Mozilla.Firefox",
+		Version:         "138.0.1",
+		Publisher:       "Mozilla",
+		PublisherURL:    "https://www.mozilla.org",
+		Description:     "Fast, private browsing for everyone.",
+		Homepage:        "https://www.mozilla.org/firefox/",
+		License:         "MPL-2.0",
+		ReleaseNotes:    "Fixed a startup crash on some systems.\nImproved browser performance and memory usage.",
+		ReleaseNotesURL: "https://www.mozilla.org/firefox/releases/",
+		ReleaseDate:     "2026-03-20",
+		Tags:            "browser\nfirefox",
+		InstallerType:   "wix",
+		InstallerURL:    "https://download.mozilla.org/?product=firefox-latest",
+		Moniker:         "firefox",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseWingetShow() = %#v, want %#v", got, want)
@@ -155,6 +156,22 @@ func TestFriendlyWingetErrorMapsInstallerExitCode(t *testing.T) {
 	err := friendlyWingetError(assertErr("exit status 1"), "", "Installer failed with exit code: 1603")
 	got := err.Error()
 	want := "installer failed with a fatal error (1603)"
+	if got != want {
+		t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
+	}
+}
+
+func TestFriendlyWingetErrorMapsSelfUpgradeCodes(t *testing.T) {
+	err := friendlyWingetError(assertErr("exit status 1"), "", "0x8a150052")
+	got := err.Error()
+	want := "portable package could not replace files (close the running app before upgrading) (0x8a150052)"
+	if got != want {
+		t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
+	}
+
+	err = friendlyWingetError(assertErr("exit status 1"), "", "0x8a150003")
+	got = err.Error()
+	want = "installer command failed (0x8a150003)"
 	if got != want {
 		t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
 	}

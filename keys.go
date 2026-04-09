@@ -53,6 +53,10 @@ var (
 		key.WithKeys("o"),
 		key.WithHelp("o", "open link"),
 	)
+	keyReleaseNotes = key.NewBinding(
+		key.WithKeys("n"),
+		key.WithHelp("n", "release notes"),
+	)
 	keyVersion = key.NewBinding(
 		key.WithKeys("v"),
 		key.WithHelp("v", "versions"),

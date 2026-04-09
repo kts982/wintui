@@ -8,7 +8,7 @@ submitted with minimal reshaping.
 ### Validate
 
 ```powershell
-winget validate .\packaging\winget\manifests\k\kts982\WinTUI\0.1.0
+winget validate .\packaging\winget\manifests\k\kts982\WinTUI\<version>
 ```
 
 ### Test with a local manifest
@@ -17,7 +17,7 @@ Local manifest installs must be enabled in WinGet settings before testing:
 
 ```powershell
 winget settings --enable LocalManifestFiles
-winget install --manifest .\packaging\winget\manifests\k\kts982\WinTUI\0.1.0
+winget install --manifest .\packaging\winget\manifests\k\kts982\WinTUI\<version>
 ```
 
 ### Submit
