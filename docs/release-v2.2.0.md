@@ -12,7 +12,7 @@ WinTUI v2.2.0 introduces per-package rules, an ignore toggle, and a live command
 
 ## Docs
 
-- New [Per-package rules reference](../docs/package-rules.md) — full list of supported rules, the `i` toggle's state machine, an example `settings.json`, and behavior notes.
+- New [Per-package rules reference](https://github.com/kts982/wintui/blob/main/docs/package-rules.md) — full list of supported rules, the `i` toggle's state machine, an example `settings.json`, and behavior notes.
 
 ## Notes
 
