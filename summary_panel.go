@@ -168,8 +168,8 @@ func (p summaryPanel) view() string {
 		return p.renderEmpty()
 	}
 
-	// Inner dimensions: border takes 2, padding(0,1) takes 2.
-	innerWidth := max(p.width-6, 8)
+	// Inner dimensions: border takes 2, horizontal padding(0,1) takes 2.
+	innerWidth := max(p.width-4, 8)
 	maxLines := max(p.height-2, 3) // available content lines inside border
 
 	var lines []string
@@ -238,8 +238,8 @@ func (p summaryPanel) view() string {
 	content := strings.Join(lines, "\n")
 
 	style := lipgloss.NewStyle().
-		Width(max(p.width-2, 1)).
-		Height(max(p.height-2, 1)).
+		Width(max(p.width, 1)).
+		Height(max(p.height, 1)).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(dim).
 		Padding(0, 1)
@@ -249,8 +249,8 @@ func (p summaryPanel) view() string {
 
 func (p summaryPanel) renderEmpty() string {
 	style := lipgloss.NewStyle().
-		Width(max(p.width-2, 1)).
-		Height(max(p.height-2, 1)).
+		Width(max(p.width, 1)).
+		Height(max(p.height, 1)).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(dim).
 		Padding(0, 1).

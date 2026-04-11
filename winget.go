@@ -251,6 +251,7 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 		"0x80073d28": "installer requires administrator privileges (try running as admin)",
 		"0x80073cf3": "package install failed (conflicting package)",
 		"0x80073d02": "installation blocked by a running process",
+		"0x80072efd": "network connection failed while reaching the package source (check VPN/proxy/firewall)",
 		"1603":       "installer failed with a fatal error",
 		"1618":       "another installation is already in progress",
 		"1638":       "another version of this product is already installed",

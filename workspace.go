@@ -96,7 +96,7 @@ func newWorkspaceScreen() workspaceScreen {
 		state:            workspaceLoading,
 		width:            80,
 		height:           24,
-		layout:           computeLayout(80, 24, true),
+		layout:           computeLayout(80, 24),
 		selected:         make(map[string]bool),
 		selectedVersions: make(map[string]string),
 		spinner:          sp,
@@ -332,7 +332,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
-		s.layout = computeLayout(msg.Width, msg.Height, true)
+		s.layout = computeLayout(msg.Width, contentAreaHeightForWindow(msg.Width, msg.Height, true))
 		s.summary.setSize(s.layout.detail.W, s.layout.detail.H)
 		s.detail = s.detail.withWindowSize(msg.Width, msg.Height)
 		return s, nil
@@ -1297,7 +1297,7 @@ func (s workspaceScreen) upgradeCount() int {
 }
 
 func (s workspaceScreen) viewReady(width, height int) string {
-	l := computeLayout(width, height, true)
+	l := computeLayout(width, height)
 
 	// Render list panel using all sections.
 	listView := s.renderSections(l)
@@ -1316,11 +1316,15 @@ func (s workspaceScreen) viewReady(width, height int) string {
 
 // sectionDef describes one panel section for rendering.
 type sectionDef struct {
-	title  string
-	items  []workspaceItem
-	offset int // global cursor offset for this section
-	fixedH int // 0 = flexible, >0 = fixed height (for small sections)
+	title    string
+	items    []workspaceItem
+	offset   int // global cursor offset for this section
+	desiredH int // preferred panel height including borders
+	minH     int // minimum usable panel height including borders
+	exact    bool
 }
+
+const minScrollableSectionHeight = 6 // border(2) + at least 4 visible rows
 
 func (s workspaceScreen) renderSections(l layout) string {
 	panelWidth := l.list.W
@@ -1359,12 +1363,25 @@ func (s workspaceScreen) renderSections(l layout) string {
 
 	if len(queue) > 0 {
 		title := fmt.Sprintf("Install Queue (%d)", len(queue))
-		sections = append(sections, sectionDef{title: title, items: queue, offset: offset, fixedH: len(queue) + 2})
+		sections = append(sections, sectionDef{
+			title:    title,
+			items:    queue,
+			offset:   offset,
+			desiredH: len(queue) + 2,
+			minH:     3,
+			exact:    true,
+		})
 		offset += len(queue)
 	}
 	if len(search) > 0 {
 		title := fmt.Sprintf("Search Results (%d)", len(search))
-		sections = append(sections, sectionDef{title: title, items: search, offset: offset})
+		sections = append(sections, sectionDef{
+			title:    title,
+			items:    search,
+			offset:   offset,
+			desiredH: len(search) + 2,
+			minH:     minScrollableSectionHeight,
+		})
 		offset += len(search)
 	}
 	if len(upgradeable) > 0 {
@@ -1373,7 +1390,13 @@ func (s workspaceScreen) renderSections(l layout) string {
 		if selCount > 0 {
 			title = fmt.Sprintf("Updates Available (%d / %d selected)", len(upgradeable), selCount)
 		}
-		sections = append(sections, sectionDef{title: title, items: upgradeable, offset: offset, fixedH: len(upgradeable) + 2})
+		sections = append(sections, sectionDef{
+			title:    title,
+			items:    upgradeable,
+			offset:   offset,
+			desiredH: len(upgradeable) + 2,
+			minH:     minScrollableSectionHeight,
+		})
 		offset += len(upgradeable)
 	}
 	if len(installed) > 0 {
@@ -1382,7 +1405,13 @@ func (s workspaceScreen) renderSections(l layout) string {
 		if selCount > 0 {
 			title = fmt.Sprintf("Installed (%d / %d selected)", len(installed), selCount)
 		}
-		sections = append(sections, sectionDef{title: title, items: installed, offset: offset})
+		sections = append(sections, sectionDef{
+			title:    title,
+			items:    installed,
+			offset:   offset,
+			desiredH: len(installed) + 2,
+			minH:     minScrollableSectionHeight,
+		})
 		offset += len(installed)
 	}
 
@@ -1401,21 +1430,7 @@ func (s workspaceScreen) renderSections(l layout) string {
 		return b.String()
 	}
 
-	// Allocate heights: fixed sections get their requested height,
-	// flexible sections split the remainder.
-	fixedTotal := 0
-	flexCount := 0
-	for _, sec := range sections {
-		if sec.fixedH > 0 {
-			fixedTotal += sec.fixedH + 1 // +1 for gap
-		} else {
-			flexCount++
-		}
-	}
-	flexH := 0
-	if flexCount > 0 {
-		flexH = max((availableH-fixedTotal)/flexCount, 4)
-	}
+	sectionHeights := allocateSectionHeights(sections, availableH)
 
 	// Determine which section has the cursor.
 	cursorSection := -1
@@ -1428,10 +1443,7 @@ func (s workspaceScreen) renderSections(l layout) string {
 
 	// Render each section.
 	for i, sec := range sections {
-		panelH := sec.fixedH
-		if panelH == 0 {
-			panelH = flexH
-		}
+		panelH := sectionHeights[i]
 		innerH := max(panelH-2, 1) // minus top+bottom border
 
 		borderColor := dim
@@ -1447,6 +1459,82 @@ func (s workspaceScreen) renderSections(l layout) string {
 	}
 
 	return b.String()
+}
+
+func allocateSectionHeights(sections []sectionDef, availableH int) []int {
+	if len(sections) == 0 {
+		return nil
+	}
+
+	panelBudget := max(availableH, 0)
+	if panelBudget == 0 {
+		return make([]int, len(sections))
+	}
+
+	heights := make([]int, len(sections))
+	used := 0
+	for i, sec := range sections {
+		h := max(sec.minH, 3)
+		if sec.exact {
+			h = max(min(sec.desiredH, panelBudget), 3)
+		}
+		heights[i] = h
+		used += h
+	}
+
+	// If the preferred minimums do not fit, shrink from the bottom up while
+	// keeping at least a 1-line interior (3 total rows with borders).
+	for used > panelBudget {
+		shrunk := false
+		for i := len(heights) - 1; i >= 0 && used > panelBudget; i-- {
+			if heights[i] <= 3 {
+				continue
+			}
+			heights[i]--
+			used--
+			shrunk = true
+		}
+		if !shrunk {
+			break
+		}
+	}
+
+	remaining := panelBudget - used
+
+	// First, grow sections toward their preferred content height.
+	for remaining > 0 {
+		progressed := false
+		for i, sec := range sections {
+			target := max(sec.desiredH, heights[i])
+			if heights[i] >= target {
+				continue
+			}
+			heights[i]++
+			remaining--
+			progressed = true
+			if remaining == 0 {
+				break
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+
+	// Any leftover space should keep the last flexible section stretched to the
+	// bottom so the left column uses all available height.
+	if remaining > 0 {
+		target := len(heights) - 1
+		for i := len(sections) - 1; i >= 0; i-- {
+			if !sections[i].exact {
+				target = i
+				break
+			}
+		}
+		heights[target] += remaining
+	}
+
+	return heights
 }
 
 // renderTitledPanel renders a bordered panel with a title in the top border.

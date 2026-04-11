@@ -44,14 +44,15 @@ const minDetailWidth = 30
 const maxDetailWidth = 50
 
 // computeLayout calculates panel rectangles for a split-panel screen.
-func computeLayout(termWidth, termHeight int, hasHelp bool) layout {
+// termHeight is the usable content height below app chrome and above the help bar.
+func computeLayout(termWidth, termHeight int) layout {
 	l := layout{
 		termWidth:  termWidth,
 		termHeight: termHeight,
 		compact:    useCompactHeaderForSize(termWidth, termHeight),
 	}
 
-	l.contentHeight = max(contentAreaHeightForWindow(termWidth, termHeight, hasHelp), 1)
+	l.contentHeight = max(termHeight, 1)
 	l.contentWidth = termWidth
 
 	// Decide whether to show the detail panel.

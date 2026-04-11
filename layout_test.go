@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestComputeLayoutShowsDetailOnWideTerminal(t *testing.T) {
-	l := computeLayout(120, 40, true)
+	l := computeLayout(120, 40)
 	if !l.hasDetail {
 		t.Fatal("expected detail panel on 120-wide terminal")
 	}
@@ -19,7 +19,7 @@ func TestComputeLayoutShowsDetailOnWideTerminal(t *testing.T) {
 }
 
 func TestComputeLayoutHidesDetailOnNarrowTerminal(t *testing.T) {
-	l := computeLayout(80, 30, true)
+	l := computeLayout(80, 30)
 	if l.hasDetail {
 		t.Fatal("expected no detail panel on 80-wide terminal")
 	}
@@ -32,18 +32,18 @@ func TestComputeLayoutHidesDetailOnNarrowTerminal(t *testing.T) {
 }
 
 func TestComputeLayoutThresholdBoundary(t *testing.T) {
-	below := computeLayout(splitPanelThreshold-1, 30, true)
+	below := computeLayout(splitPanelThreshold-1, 30)
 	if below.hasDetail {
 		t.Fatal("expected no detail panel below threshold")
 	}
-	at := computeLayout(splitPanelThreshold, 30, true)
+	at := computeLayout(splitPanelThreshold, 30)
 	if !at.hasDetail {
 		t.Fatal("expected detail panel at threshold")
 	}
 }
 
 func TestLayoutWithLogExpanded(t *testing.T) {
-	l := computeLayout(120, 40, true)
+	l := computeLayout(120, 40)
 	baseH := l.list.H
 
 	withLog := l.withLogExpanded(10)
@@ -62,7 +62,7 @@ func TestLayoutWithLogExpanded(t *testing.T) {
 }
 
 func TestLayoutWithLogExpandedTinyTerminal(t *testing.T) {
-	l := computeLayout(80, 8, true)
+	l := computeLayout(80, 8)
 
 	withLog := l.withLogExpanded(20)
 	// Panels should never go negative.
@@ -79,7 +79,7 @@ func TestLayoutWithLogExpandedTinyTerminal(t *testing.T) {
 }
 
 func TestLayoutWithLogExpandedZeroLines(t *testing.T) {
-	l := computeLayout(120, 40, true)
+	l := computeLayout(120, 40)
 	same := l.withLogExpanded(0)
 	if same.log.H != 0 {
 		t.Fatalf("log.H = %d, want 0 for zero log lines", same.log.H)
@@ -90,7 +90,7 @@ func TestLayoutWithLogExpandedZeroLines(t *testing.T) {
 }
 
 func TestLayoutMaxVisibleItems(t *testing.T) {
-	l := computeLayout(120, 40, true)
+	l := computeLayout(120, 40)
 	items := l.maxVisibleItems(2)
 	if items < 1 {
 		t.Fatalf("maxVisibleItems = %d, want >= 1", items)
@@ -101,9 +101,21 @@ func TestLayoutMaxVisibleItems(t *testing.T) {
 }
 
 func TestLayoutMaxVisibleItemsTinyTerminal(t *testing.T) {
-	l := computeLayout(80, 5, true)
+	l := computeLayout(80, 5)
 	items := l.maxVisibleItems(4)
 	if items < 1 {
 		t.Fatalf("maxVisibleItems = %d, want >= 1 even on tiny terminal", items)
+	}
+}
+
+func TestContentAreaHeightForWindowFeedsComputeLayoutWithoutDoubleSubtraction(t *testing.T) {
+	contentH := contentAreaHeightForWindow(132, 43, true)
+	l := computeLayout(132, contentH)
+
+	if l.contentHeight != contentH {
+		t.Fatalf("contentHeight = %d, want %d", l.contentHeight, contentH)
+	}
+	if l.list.H != contentH {
+		t.Fatalf("list.H = %d, want %d", l.list.H, contentH)
 	}
 }

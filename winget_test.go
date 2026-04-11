@@ -177,6 +177,19 @@ func TestFriendlyWingetErrorMapsSelfUpgradeCodes(t *testing.T) {
 	}
 }
 
+func TestFriendlyWingetErrorMapsConnectivityCode(t *testing.T) {
+	err := friendlyWingetError(
+		assertErr("exit status 0x80072efd"),
+		"An unexpected error occurred while executing the command:\nInternetOpenUrl() failed.",
+		"",
+	)
+	got := err.Error()
+	want := "network connection failed while reaching the package source (check VPN/proxy/firewall) (0x80072efd): An unexpected error occurred while executing the command:\nInternetOpenUrl() failed."
+	if got != want {
+		t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
+	}
+}
+
 func TestLikelyBenefitsFromElevationTreats1603AsSoftRetryCandidate(t *testing.T) {
 	err := assertErr("installer failed with a fatal error (1603)")
 	if !likelyBenefitsFromElevation(err, "Uninstall failed with exit code: 1603") {
