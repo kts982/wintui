@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
 
 PackageIdentifier: kts982.WinTUI
 PackageVersion: 2.2.0
@@ -36,4 +36,4 @@ ReleaseNotes: |-
   - Made the batch modal body scrollable with `↑↓`, `PgUp/PgDn`, `Home/End` so large batches no longer push the actions line or bottom border off-screen.
 ReleaseNotesUrl: https://github.com/kts982/wintui/releases/tag/v2.2.0
 ManifestType: defaultLocale
-ManifestVersion: 1.10.0
+ManifestVersion: 1.12.0
