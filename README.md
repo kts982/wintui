@@ -49,8 +49,8 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Normalized package actions** — press `Space` to stage the focused package, `g` to apply staged changes, or use `i` / `u` / `x` for direct install, upgrade, and uninstall accelerators
 - **Search & Install** — press `s` to search the winget catalog, `Space` to queue packages, `i` to install the focused result or the full install queue
 - **Upgrade / Uninstall** — stage packages across sections, then apply them together, or use `u` / `x` on the focused package or current selection
-- **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), release notes (`n` when available), and scrollable metadata
-- **Batch Execution Modal** — review selected packages, watch live progress with per-package spinners, view compact results with `Ctrl+E` elevated retry
+- **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), release notes (`n` when available), a live command preview showing exactly what winget will run (including per-package overrides), and scrollable metadata
+- **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners, view compact results with `Ctrl+E` elevated retry
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
 - **Self-upgrade handoff** — upgrading `kts982.WinTUI` now restarts through a temporary helper so the running `.exe` can be replaced cleanly
 - **Headless CLI** — use `--check`, `--list`, and `--json` for scripts, Task Scheduler, or CI without launching the TUI
@@ -120,6 +120,9 @@ Further documentation:
 | `c` | Reset to latest version (in detail view) |
 | `o` | Open homepage (in detail view) |
 | `n` | Open release notes URL (in detail view, when available) |
+| `p` | Open per-package rules editor (in detail view) |
+| `i` | Toggle ignore on the focused package (in detail view) |
+| `?` | Expand winget command preview for each item (in batch confirm modal) |
 | `r` | Refresh package data |
 | `Ctrl+E` | Retry failed packages elevated (result modal) |
 | `?` | Toggle full help panel |
@@ -153,9 +156,18 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 
 **Auto Elevate** (without silent mode) retries automatically on hard permission errors. When a batch finishes with failures, the result modal offers `Ctrl+E` to retry only the failed elevation-candidate packages.
 
+### Per-Package Rules
+
+Any of the settings above can be overridden for a specific package, and packages can be ignored from the Updates list. Open a package's detail view and press `p` for the rules editor or `i` to toggle ignore.
+
+Supported rules: `scope`, `architecture`, `elevate`, `ignore`, `ignore_version`. Ignored packages are hidden from Updates with a `(N hidden)` count on the section header.
+
+For the full rule reference and behavior details, see [Per-package rules](docs/package-rules.md).
+
 For deeper behavior details and examples, see:
 - [CLI reference](docs/cli.md)
 - [Elevation and retry behavior](docs/elevation.md)
+- [Per-package rules](docs/package-rules.md)
 
 ## Development
 

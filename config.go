@@ -6,6 +6,72 @@ import (
 	"path/filepath"
 )
 
+// PackageOverride holds per-package option overrides and ignore rules.
+// Empty/nil fields mean "use the global default".
+type PackageOverride struct {
+	Scope         string `json:"scope,omitempty"`
+	Architecture  string `json:"architecture,omitempty"`
+	Elevate       *bool  `json:"elevate,omitempty"`
+	Ignore        bool   `json:"ignore,omitempty"`
+	IgnoreVersion string `json:"ignore_version,omitempty"`
+}
+
+func (o PackageOverride) isEmpty() bool {
+	return o.Scope == "" && o.Architecture == "" && o.Elevate == nil &&
+		!o.Ignore && o.IgnoreVersion == ""
+}
+
+func (o PackageOverride) getValue(key string) string {
+	switch key {
+	case "scope":
+		return o.Scope
+	case "architecture":
+		return o.Architecture
+	case "elevate":
+		if o.Elevate == nil {
+			return ""
+		}
+		return boolStr(*o.Elevate)
+	case "ignore":
+		if o.Ignore {
+			return "all"
+		}
+		if o.IgnoreVersion != "" {
+			return o.IgnoreVersion
+		}
+		return ""
+	}
+	return ""
+}
+
+func (o *PackageOverride) setValue(key, val string) {
+	switch key {
+	case "scope":
+		o.Scope = val
+	case "architecture":
+		o.Architecture = val
+	case "elevate":
+		if val == "" {
+			o.Elevate = nil
+		} else {
+			b := val == "true"
+			o.Elevate = &b
+		}
+	case "ignore":
+		switch val {
+		case "":
+			o.Ignore = false
+			o.IgnoreVersion = ""
+		case "all":
+			o.Ignore = true
+			o.IgnoreVersion = ""
+		default:
+			o.Ignore = false
+			o.IgnoreVersion = val
+		}
+	}
+}
+
 // Settings holds user-configurable winget options.
 type Settings struct {
 	// Install/Upgrade scope: "user", "machine", or "" (winget default)
@@ -37,6 +103,10 @@ type Settings struct {
 
 	// Attempt to automatically elevate commands that require admin
 	AutoElevate bool `json:"auto_elevate"`
+
+	// Per-package option overrides, keyed by source-qualified package key.
+	// New writes use "<source>:<id>"; reads also support legacy plain-ID keys.
+	Packages map[string]PackageOverride `json:"packages,omitempty"`
 }
 
 // DefaultSettings returns settings with sensible defaults.
@@ -50,6 +120,132 @@ func DefaultSettings() Settings {
 }
 
 var appSettings = DefaultSettings()
+
+func packageRuleKey(pkgID, source string) string {
+	if source == "" {
+		return pkgID
+	}
+	return source + ":" + pkgID
+}
+
+func packageRuleKeys(pkgID, source string) []string {
+	if source == "" {
+		return []string{pkgID}
+	}
+	return []string{packageRuleKey(pkgID, source), pkgID}
+}
+
+func (s Settings) lookupOverride(pkgID, source string) (string, PackageOverride, bool) {
+	if s.Packages == nil {
+		return "", PackageOverride{}, false
+	}
+	for _, key := range packageRuleKeys(pkgID, source) {
+		if o, ok := s.Packages[key]; ok {
+			return key, o, true
+		}
+	}
+	return "", PackageOverride{}, false
+}
+
+// effectiveSettings returns a copy of s with per-package overrides applied.
+func (s Settings) effectiveSettings(pkgID, source string) Settings {
+	_, o, ok := s.lookupOverride(pkgID, source)
+	if !ok {
+		return s
+	}
+	eff := s
+	if o.Scope != "" {
+		eff.Scope = o.Scope
+	}
+	if o.Architecture != "" {
+		eff.Architecture = o.Architecture
+	}
+	if o.Elevate != nil {
+		eff.AutoElevate = *o.Elevate
+	}
+	return eff
+}
+
+func (s Settings) packageElevateOverride(pkgID, source string) *bool {
+	_, o, ok := s.lookupOverride(pkgID, source)
+	if !ok {
+		return nil
+	}
+	return o.Elevate
+}
+
+func (s *Settings) setOverride(pkgID, source string, o PackageOverride) {
+	primaryKey := packageRuleKey(pkgID, source)
+	legacyKey := pkgID
+	if o.isEmpty() {
+		if s.Packages != nil {
+			delete(s.Packages, primaryKey)
+			if primaryKey != legacyKey {
+				delete(s.Packages, legacyKey)
+			}
+			if len(s.Packages) == 0 {
+				s.Packages = nil
+			}
+		}
+		return
+	}
+	if s.Packages == nil {
+		s.Packages = make(map[string]PackageOverride)
+	}
+	if primaryKey != legacyKey {
+		delete(s.Packages, legacyKey)
+	}
+	s.Packages[primaryKey] = o
+}
+
+func (s Settings) getOverride(pkgID, source string) PackageOverride {
+	_, o, ok := s.lookupOverride(pkgID, source)
+	if !ok {
+		return PackageOverride{}
+	}
+	return o
+}
+
+func (s Settings) hasOverride(pkgID, source string) bool {
+	_, o, ok := s.lookupOverride(pkgID, source)
+	return ok && !o.isEmpty()
+}
+
+// isIgnored returns true if the package should be hidden from the upgrade list.
+func (s Settings) isIgnored(pkgID, source, availableVersion string) bool {
+	_, o, ok := s.lookupOverride(pkgID, source)
+	if !ok {
+		return false
+	}
+	if o.Ignore {
+		return true
+	}
+	return o.IgnoreVersion != "" && o.IgnoreVersion == availableVersion
+}
+
+// expireVersionIgnores clears version-specific ignores where the available
+// version has moved past the ignored version. Returns true if any were cleared.
+func (s *Settings) expireVersionIgnores(upgradeable []Package) bool {
+	if s.Packages == nil {
+		return false
+	}
+	changed := false
+	for _, pkg := range upgradeable {
+		_, o, ok := s.lookupOverride(pkg.ID, pkg.Source)
+		if !ok || o.IgnoreVersion == "" {
+			continue
+		}
+		if pkg.Available != "" && pkg.Available != o.IgnoreVersion {
+			o.IgnoreVersion = ""
+			s.setOverride(pkg.ID, pkg.Source, o)
+			changed = true
+		}
+	}
+	if changed && len(s.Packages) == 0 {
+		s.Packages = nil
+	}
+	return changed
+}
 
 // configPath returns the path to the settings JSON file.
 func configPath() string {
@@ -80,6 +276,20 @@ func SaveSettings(s Settings) error {
 		return err
 	}
 	return os.WriteFile(configPath(), data, 0644)
+}
+
+func persistSettings(next Settings) error {
+	if err := SaveSettings(next); err != nil {
+		return err
+	}
+	appSettings = next
+	return nil
+}
+
+func persistPackageOverride(pkgID, source string, o PackageOverride) error {
+	next := appSettings
+	next.setOverride(pkgID, source, o)
+	return persistSettings(next)
 }
 
 // BuildInstallArgs returns extra winget flags based on current settings.
@@ -346,11 +556,119 @@ func (s *Settings) setValue(key, val string) {
 	}
 }
 
+func settingsEqual(a, b Settings) bool {
+	return a.Scope == b.Scope &&
+		a.InstallMode == b.InstallMode &&
+		a.Force == b.Force &&
+		a.Architecture == b.Architecture &&
+		a.AllowReboot == b.AllowReboot &&
+		a.SkipDependencies == b.SkipDependencies &&
+		a.PurgeOnUninstall == b.PurgeOnUninstall &&
+		a.IncludeUnknown == b.IncludeUnknown &&
+		a.Source == b.Source &&
+		a.AutoElevate == b.AutoElevate &&
+		packagesEqual(a.Packages, b.Packages)
+}
+
+func packagesEqual(a, b map[string]PackageOverride) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, va := range a {
+		vb, ok := b[k]
+		if !ok {
+			return false
+		}
+		if va.Scope != vb.Scope || va.Architecture != vb.Architecture ||
+			va.Ignore != vb.Ignore || va.IgnoreVersion != vb.IgnoreVersion {
+			return false
+		}
+		if (va.Elevate == nil) != (vb.Elevate == nil) {
+			return false
+		}
+		if va.Elevate != nil && *va.Elevate != *vb.Elevate {
+			return false
+		}
+	}
+	return true
+}
+
 func boolStr(b bool) string {
 	if b {
 		return "true"
 	}
 	return "false"
+}
+
+var overrideDefs = []settingDef{
+	{
+		key:     "ignore",
+		label:   "Ignore",
+		desc:    "Hide from upgrade list",
+		stype:   settingChoice,
+		choices: []string{"", "all"},
+		choiceLabels: map[string]string{
+			"":    "none",
+			"all": "all versions",
+		},
+		choiceHints: map[string]string{
+			"":    "Show upgrade notifications normally.",
+			"all": "Permanently hide this package from the upgrade list.",
+		},
+	},
+	{
+		key:     "scope",
+		label:   "Scope",
+		desc:    "Install scope override",
+		stype:   settingChoice,
+		choices: []string{"", "user", "machine"},
+		choiceLabels: map[string]string{
+			"":        "global",
+			"user":    "user",
+			"machine": "machine",
+		},
+		choiceHints: map[string]string{
+			"":        "Use the global scope setting.",
+			"user":    "Always install this package for the current user only.",
+			"machine": "Always install this package system-wide.",
+		},
+	},
+	{
+		key:     "architecture",
+		label:   "Architecture",
+		desc:    "CPU architecture override",
+		stype:   settingChoice,
+		choices: []string{"", "x64", "x86", "arm64"},
+		choiceLabels: map[string]string{
+			"":      "global",
+			"x64":   "x64",
+			"x86":   "x86",
+			"arm64": "arm64",
+		},
+		choiceHints: map[string]string{
+			"":      "Use the global architecture setting.",
+			"x64":   "Always prefer the 64-bit installer for this package.",
+			"x86":   "Always prefer the 32-bit installer for this package.",
+			"arm64": "Always prefer the ARM64 installer for this package.",
+		},
+	},
+	{
+		key:     "elevate",
+		label:   "Elevate",
+		desc:    "Admin elevation override",
+		stype:   settingChoice,
+		choices: []string{"", "true", "false"},
+		choiceLabels: map[string]string{
+			"":      "global",
+			"true":  "always",
+			"false": "never",
+		},
+		choiceHints: map[string]string{
+			"":      "Use the global auto-elevate setting.",
+			"true":  "Always run this package elevated (admin).",
+			"false": "Never auto-elevate this package.",
+		},
+	},
 }
 
 func (d settingDef) choiceLabel(val string) string {

@@ -22,7 +22,7 @@ func newSettingsScreen() settingsScreen {
 	disk := LoadSettings()
 	return settingsScreen{
 		diskState: disk,
-		dirty:     appSettings != disk,
+		dirty:     !settingsEqual(appSettings, disk),
 	}
 }
 
@@ -56,7 +56,7 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case "r":
 			appSettings = DefaultSettings()
 			s.saved = false
-			s.dirty = appSettings != s.diskState
+			s.dirty = !settingsEqual(appSettings, s.diskState)
 			s.errMsg = ""
 		}
 
@@ -95,7 +95,7 @@ func (s *settingsScreen) cycleForward() {
 		appSettings.setValue(def.key, def.choices[idx])
 	}
 	s.saved = false
-	s.dirty = appSettings != s.diskState
+	s.dirty = !settingsEqual(appSettings, s.diskState)
 	cache.invalidate()
 }
 
@@ -121,7 +121,7 @@ func (s *settingsScreen) cycleBackward() {
 		appSettings.setValue(def.key, def.choices[idx])
 	}
 	s.saved = false
-	s.dirty = appSettings != s.diskState
+	s.dirty = !settingsEqual(appSettings, s.diskState)
 	cache.invalidate()
 }
 
@@ -190,14 +190,19 @@ func renderSettingValue(def settingDef, val string) string {
 		return lipgloss.NewStyle().Foreground(dim).Render("○ OFF")
 
 	case settingChoice:
+		matched := false
 		var parts []string
 		for _, c := range def.choices {
 			display := def.choiceLabel(c)
 			if c == val {
+				matched = true
 				parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("["+display+"]"))
 			} else {
 				parts = append(parts, helpStyle.Render(" "+display+" "))
 			}
+		}
+		if !matched && val != "" {
+			parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(warning).Render("[v"+val+"]"))
 		}
 		return strings.Join(parts, "")
 	}

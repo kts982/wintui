@@ -65,4 +65,20 @@ var (
 		key.WithKeys("c"),
 		key.WithHelp("c", "latest"),
 	)
+	keyOverrides = key.NewBinding(
+		key.WithKeys("p"),
+		key.WithHelp("p", "overrides"),
+	)
+	keySaveOverrides = key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "save"),
+	)
+	keyClearOverrides = key.NewBinding(
+		key.WithKeys("d"),
+		key.WithHelp("d", "clear all"),
+	)
+	keyIgnore = key.NewBinding(
+		key.WithKeys("i"),
+		key.WithHelp("i", "ignore"),
+	)
 )

@@ -3,6 +3,7 @@ package main
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestBeginApplyActionBuildsMixedBatch(t *testing.T) {
@@ -97,5 +98,44 @@ func TestSortBatchItemsMovesSelfUpgradeToEnd(t *testing.T) {
 	}
 	if !isSelfUpgradeBatchItem(got[1]) {
 		t.Fatal("expected trailing batch item to be detected as self-upgrade")
+	}
+}
+
+func TestWorkspaceDataFromDiskPrimesCacheForOverrideRebuild(t *testing.T) {
+	originalCache := cache
+	originalSettings := appSettings
+	cache = &packageCache{ttl: 2 * time.Minute, diskTTL: 24 * time.Hour}
+	appSettings = DefaultSettings()
+	t.Cleanup(func() {
+		cache = originalCache
+		appSettings = originalSettings
+	})
+
+	ws := newWorkspaceScreen()
+	msg := workspaceDataMsg{
+		installed: []Package{
+			{ID: "Hidden.Pkg", Name: "Hidden", Version: "1.0", Source: "winget"},
+		},
+		upgradeable: []Package{
+			{ID: "Hidden.Pkg", Name: "Hidden", Version: "1.0", Available: "2.0.0", Source: "winget"},
+		},
+		fromDisk: true,
+		savedAt:  time.Now().Add(-10 * time.Minute),
+	}
+
+	next, _ := ws.update(msg)
+	got := next.(workspaceScreen)
+	appSettings.Packages = map[string]PackageOverride{
+		packageRuleKey("Hidden.Pkg", "winget"): {Ignore: true},
+	}
+
+	got.rebuildItemsFromCache()
+	if got.hiddenUpgrades != 1 {
+		t.Fatalf("hiddenUpgrades = %d, want 1", got.hiddenUpgrades)
+	}
+	for _, item := range got.items {
+		if item.upgradeable && item.pkg.ID == "Hidden.Pkg" && item.pkg.Source == "winget" {
+			t.Fatal("expected ignored disk-cached upgrade to disappear after rebuild")
+		}
 	}
 }

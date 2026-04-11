@@ -91,6 +91,13 @@ type detailPanel struct {
 	versionErr         string
 	windowWidth        int
 	windowHeight       int
+
+	editingOverrides bool
+	overrideCursor   int
+	overrideEdit     PackageOverride
+	overrideSaved    bool
+	overrideDeleted  bool
+	overrideErrMsg   string
 }
 
 func newDetailPanel() detailPanel {
@@ -136,6 +143,9 @@ func (p detailPanel) showWithVersion(pkg Package, selectedVersion string, allowV
 	p.versionsLoading = false
 	p.selectingVersion = false
 	p.versionErr = ""
+	p.editingOverrides = false
+	p.overrideSaved = false
+	p.overrideDeleted = false
 
 	cmds := []tea.Cmd{
 		p.spinner.Tick,
@@ -305,6 +315,10 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 			}
 		}
 
+		if p.editingOverrides {
+			return p.updateOverrideEditor(msg)
+		}
+
 		switch msg.String() {
 		case "esc", "left", "h":
 			p.state = detailHidden
@@ -359,6 +373,20 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 					return detailVersionSelectedMsg{pkgID: p.pkgID, source: p.source, version: ""}
 				}, true
 			}
+		case "p":
+			if p.state == detailReady && p.pkgID != "" {
+				p.editingOverrides = true
+				p.overrideCursor = 0
+				p.overrideEdit = appSettings.getOverride(p.pkgID, p.source)
+				p.overrideSaved = false
+				p.overrideDeleted = false
+				p.overrideErrMsg = ""
+				return p, nil, true
+			}
+		case "i":
+			if p.state == detailReady && p.pkgID != "" {
+				return p.toggleIgnore()
+			}
 		}
 		return p, nil, true
 
@@ -381,6 +409,9 @@ func (p detailPanel) helpKeys() []key.Binding {
 		if p.versionsLoading {
 			return []key.Binding{keyEscOrLeft}
 		}
+		if p.editingOverrides {
+			return []key.Binding{keyCycle, keySaveOverrides, keyClearOverrides, keyEscCancel}
+		}
 		if p.selectingVersion {
 			return []key.Binding{keyScroll, keyEnter, keyUseLatest, keyEscOrLeft}
 		}
@@ -389,6 +420,7 @@ func (p detailPanel) helpKeys() []key.Binding {
 			if p.selectedVersion != "" {
 				bindings = append(bindings, keyUseLatest)
 			}
+			bindings = append(bindings, keyIgnore, keyOverrides)
 			if p.canOpenHomepage() {
 				bindings = append(bindings, keyOpen)
 			}
@@ -398,7 +430,7 @@ func (p detailPanel) helpKeys() []key.Binding {
 			bindings = append(bindings, keyEscOrLeft)
 			return bindings
 		}
-		bindings := []key.Binding{keyScroll}
+		bindings := []key.Binding{keyScroll, keyIgnore, keyOverrides}
 		if p.canOpenHomepage() {
 			bindings = append(bindings, keyOpen)
 		}
@@ -508,6 +540,36 @@ func (p detailPanel) detailLines(totalWidth int) []string {
 	}
 	appendDetailField(&lines, "Source", source)
 
+	if appSettings.hasOverride(p.pkgID, p.source) {
+		o := appSettings.getOverride(p.pkgID, p.source)
+		lines = append(lines, "")
+		lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Package Rules"))
+		if o.Ignore {
+			appendDetailField(&lines, "Ignore", lipgloss.NewStyle().Foreground(warning).Render("all versions"))
+		} else if o.IgnoreVersion != "" {
+			appendDetailField(&lines, "Ignore", lipgloss.NewStyle().Foreground(warning).Render("v"+o.IgnoreVersion))
+		}
+		if o.Scope != "" {
+			appendDetailField(&lines, "Scope", o.Scope)
+		}
+		if o.Architecture != "" {
+			appendDetailField(&lines, "Architecture", o.Architecture)
+		}
+		if o.Elevate != nil {
+			label := "never"
+			if *o.Elevate {
+				label = "always"
+			}
+			appendDetailField(&lines, "Elevate", label)
+		}
+	}
+
+	if preview := p.commandPreview(); preview != "" {
+		lines = append(lines, "")
+		lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Command Preview"))
+		lines = append(lines, "  "+helpStyle.Render(preview))
+	}
+
 	sectionTitle := "Package Details"
 	if p.allowVersionSelect {
 		sectionTitle = "Target Details"
@@ -516,6 +578,26 @@ func (p detailPanel) detailLines(totalWidth int) []string {
 
 	panelWidth := max(24, totalWidth-4)
 	return wrapDetailLines(lines, detailContentWidth(panelWidth))
+}
+
+// commandPreview returns a copy-pasteable shell command representing the
+// action this detail context would run (upgrade if the package is installed,
+// install otherwise). Returns "" when no action applies to this view.
+func (p detailPanel) commandPreview() string {
+	if p.pkgID == "" {
+		return ""
+	}
+	if !p.allowVersionSelect && p.installedVersion == "" {
+		return ""
+	}
+	version := strings.TrimSpace(p.selectedVersion)
+	var args []string
+	if p.installedVersion != "" {
+		args = upgradeCommandArgs(p.pkgID, p.source, version)
+	} else {
+		args = installCommandArgs(p.pkgID, p.source, version)
+	}
+	return formatWingetCommand(args)
 }
 
 func (p detailPanel) releaseNotesHeading() string {
@@ -608,6 +690,9 @@ func (p detailPanel) view(width, height int) string {
 				helpStyle.Render("  esc back")
 			return indentBlock(panelStyle.Render(inner), 2)
 		}
+		if p.editingOverrides {
+			return p.renderOverrideEditor(panelStyle)
+		}
 		if p.selectingVersion {
 			return p.renderVersionPicker(panelStyle, height)
 		}
@@ -639,11 +724,11 @@ func (p detailPanel) view(width, height int) string {
 		}
 
 		b.WriteString("\n")
-		help := "  ↑↓/PgUp/PgDn scroll • esc close"
+		help := "  ↑↓/PgUp/PgDn scroll • i ignore • p overrides • esc close"
 		if p.allowVersionSelect {
-			help = "  ↑↓/PgUp/PgDn scroll • v choose version • esc close"
+			help = "  ↑↓/PgUp/PgDn scroll • v choose version • i ignore • p overrides • esc close"
 			if p.selectedVersion != "" {
-				help = "  ↑↓/PgUp/PgDn scroll • v change version • c latest • esc close"
+				help = "  ↑↓/PgUp/PgDn scroll • v change version • c latest • i ignore • p overrides • esc close"
 			}
 			if p.canOpenHomepage() {
 				help += " • o open homepage"
@@ -653,17 +738,22 @@ func (p detailPanel) view(width, height int) string {
 			}
 		} else {
 			if p.canOpenHomepage() {
-				help = "  ↑↓/PgUp/PgDn scroll • o open homepage • esc close"
+				help = "  ↑↓/PgUp/PgDn scroll • o open homepage • i ignore • p overrides • esc close"
 			}
 			if p.canOpenReleaseNotes() {
 				if p.canOpenHomepage() {
-					help = "  ↑↓/PgUp/PgDn scroll • o open homepage • n release notes • esc close"
+					help = "  ↑↓/PgUp/PgDn scroll • o open homepage • n release notes • i ignore • p overrides • esc close"
 				} else {
-					help = "  ↑↓/PgUp/PgDn scroll • n release notes • esc close"
+					help = "  ↑↓/PgUp/PgDn scroll • n release notes • i ignore • p overrides • esc close"
 				}
 			}
 		}
 		b.WriteString(helpStyle.Render(help))
+		if p.overrideSaved {
+			b.WriteString("\n" + successStyle.Render("  Overrides saved."))
+		} else if p.overrideDeleted {
+			b.WriteString("\n" + successStyle.Render("  Overrides cleared."))
+		}
 		if p.versionErr != "" {
 			b.WriteString("\n" + warnStyle.Render("  "+p.versionErr))
 		}
@@ -717,6 +807,153 @@ func (p detailPanel) renderVersionPicker(panelStyle lipgloss.Style, height int) 
 
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  ↑↓/PgUp/PgDn choose • enter select • c latest • esc back"))
+	return indentBlock(panelStyle.Render(b.String()), 2)
+}
+
+// ── Ignore toggle ─────────────────────────────────────────────────
+
+func (p detailPanel) toggleIgnore() (detailPanel, tea.Cmd, bool) {
+	o := appSettings.getOverride(p.pkgID, p.source)
+	switch {
+	case o.Ignore:
+		o.Ignore = false
+		o.IgnoreVersion = ""
+	case o.IgnoreVersion != "":
+		o.IgnoreVersion = ""
+	case p.installedVersion != "" && p.latestVersion != "":
+		o.IgnoreVersion = p.latestVersion
+	default:
+		o.Ignore = true
+	}
+	if err := persistPackageOverride(p.pkgID, p.source, o); err != nil {
+		p.overrideErrMsg = "Save failed: " + err.Error()
+		return p, nil, true
+	}
+	p.overrideSaved = true
+	p.overrideDeleted = false
+	p.overrideErrMsg = ""
+	return p, func() tea.Msg { return overridesSavedMsg{pkgID: p.pkgID} }, true
+}
+
+// ── Override editor ───────────────────────────────────────────────
+
+type overridesSavedMsg struct {
+	pkgID string
+}
+
+func (p detailPanel) updateOverrideEditor(msg tea.KeyPressMsg) (detailPanel, tea.Cmd, bool) {
+	switch msg.String() {
+	case "up", "k":
+		if p.overrideCursor > 0 {
+			p.overrideCursor--
+		}
+	case "down", "j":
+		if p.overrideCursor < len(overrideDefs)-1 {
+			p.overrideCursor++
+		}
+	case "enter", "right", "l", "space":
+		p.cycleOverrideForward()
+	case "left", "h":
+		p.cycleOverrideBackward()
+	case "s":
+		if err := persistPackageOverride(p.pkgID, p.source, p.overrideEdit); err != nil {
+			p.overrideErrMsg = "Save failed: " + err.Error()
+			return p, nil, true
+		}
+		p.overrideSaved = true
+		p.overrideDeleted = false
+		p.overrideErrMsg = ""
+		p.editingOverrides = false
+		return p, func() tea.Msg { return overridesSavedMsg{pkgID: p.pkgID} }, true
+	case "d":
+		p.overrideEdit = PackageOverride{}
+		if err := persistPackageOverride(p.pkgID, p.source, p.overrideEdit); err != nil {
+			p.overrideErrMsg = "Save failed: " + err.Error()
+			return p, nil, true
+		}
+		p.overrideDeleted = true
+		p.overrideSaved = false
+		p.overrideErrMsg = ""
+		p.editingOverrides = false
+		return p, func() tea.Msg { return overridesSavedMsg{pkgID: p.pkgID} }, true
+	case "esc":
+		p.editingOverrides = false
+	}
+	return p, nil, true
+}
+
+func (p *detailPanel) cycleOverrideForward() {
+	def := overrideDefs[p.overrideCursor]
+	cur := p.overrideEdit.getValue(def.key)
+	idx := 0
+	for i, c := range def.choices {
+		if c == cur {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + 1) % len(def.choices)
+	p.overrideEdit.setValue(def.key, def.choices[idx])
+}
+
+func (p *detailPanel) cycleOverrideBackward() {
+	def := overrideDefs[p.overrideCursor]
+	cur := p.overrideEdit.getValue(def.key)
+	idx := 0
+	for i, c := range def.choices {
+		if c == cur {
+			idx = i
+			break
+		}
+	}
+	idx--
+	if idx < 0 {
+		idx = len(def.choices) - 1
+	}
+	p.overrideEdit.setValue(def.key, def.choices[idx])
+}
+
+func (p detailPanel) renderOverrideEditor(panelStyle lipgloss.Style) string {
+	var b strings.Builder
+	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.title())
+	if p.pkgID != "" && p.pkgID != p.title() {
+		title += "  " + helpStyle.Render(p.pkgID)
+	}
+	b.WriteString("  " + title + "\n\n")
+	b.WriteString("  " + infoStyle.Render("Package Rules") + "\n")
+	b.WriteString("  " + helpStyle.Render("Set per-package ignore rules and option overrides.") + "\n\n")
+
+	for i, def := range overrideDefs {
+		cursor := cursorBlankStr
+		labelStyle := itemStyle
+		if i == p.overrideCursor {
+			cursor = cursorStr
+			labelStyle = itemActiveStyle
+		}
+		val := p.overrideEdit.getValue(def.key)
+		valDisplay := renderSettingValue(def, val)
+		label := labelStyle.Render(fmt.Sprintf("%-16s", def.label))
+		b.WriteString(fmt.Sprintf("  %s%s %s\n", cursor, label, valDisplay))
+	}
+
+	// Show hint for focused override.
+	def := overrideDefs[p.overrideCursor]
+	val := p.overrideEdit.getValue(def.key)
+	if hint := def.currentHint(val); hint != "" {
+		b.WriteString("\n  " + helpStyle.Render(hint))
+	}
+
+	if p.overrideErrMsg != "" {
+		b.WriteString("\n" + errorStyle.Render("  "+p.overrideErrMsg))
+	}
+
+	b.WriteString("\n\n")
+	actions := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("s") + " save  •  " +
+		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("d") + " clear all  •  " +
+		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("←→") + " cycle  •  " +
+		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("esc") + " cancel"
+	b.WriteString("  " + helpStyle.Render(actions))
+
 	return indentBlock(panelStyle.Render(b.String()), 2)
 }
 

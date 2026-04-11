@@ -28,6 +28,8 @@ type execModal struct {
 	idx           int // currently running item index
 	spinner       spinner.Model
 	forceElevated bool // true when retrying via Ctrl+E
+	showCommands  bool // review phase: expand per-item winget command preview
+	scroll        int  // body scroll offset when content exceeds modal height
 }
 
 func newExecModal(action string, items []batchItem) execModal {
@@ -107,7 +109,12 @@ func (m execModal) pendingSelfUpgradeItem() (batchItem, bool) {
 func (m execModal) view(width, height int) string {
 	maxW := min(width-8, 80)
 	innerW := max(maxW-6, 20) // border(2) + padding(4)
-	maxH := height - 4        // leave room for chrome above and help below
+	// Height budget breakdown:
+	//   height = visual margin(2) + box chrome(4) + content rows
+	//   where box chrome = border(top+bottom=2) + padding(top+bottom=2)
+	//   and the 2-row visual margin keeps lipgloss.Place from clipping the
+	//   bottom border against whatever the parent draws below us.
+	maxContent := max(height-6, 5) // content rows we can fit (header+body+footer)
 
 	var title string
 	var body []string
@@ -122,28 +129,47 @@ func (m execModal) view(width, height int) string {
 		title, body, actions = m.viewComplete()
 	}
 
-	// Build the modal content lines.
-	var lines []string
-	lines = append(lines, sectionTitleStyle.Render(title))
-	lines = append(lines, helpStyle.Render(strings.Repeat("─", innerW)))
+	// Fixed header: title + separator.
+	header := []string{
+		sectionTitleStyle.Render(title),
+		helpStyle.Render(strings.Repeat("─", innerW)),
+	}
 
-	lines = append(lines, body...)
-
+	// Fixed footer: blank line + actions (always visible).
+	var footer []string
 	if actions != "" {
-		lines = append(lines, "")
-		lines = append(lines, actions)
+		footer = []string{"", actions}
 	}
 
-	// Cap content height — ensure action button always visible.
-	// Reserve 3 lines: blank + actions + bottom padding.
-	maxBodyLines := maxH - 3
-	if len(lines) > maxBodyLines {
-		lines = lines[:maxBodyLines]
+	// Pre-wrap body lines to the inner width so our sliding window operates
+	// on final rendered rows, not pre-wrap logical lines. Otherwise a single
+	// wide command string can silently turn into 2–3 rows and push the
+	// footer off-screen.
+	wrappedBody := wrapModalLines(body, innerW)
+
+	// Remaining space goes to the scrollable body.
+	availableBody := maxContent - len(header) - len(footer)
+	if availableBody < 1 {
+		availableBody = 1
 	}
+
+	bodyWindow, scrollInfo := windowBody(wrappedBody, m.scroll, availableBody)
+	if scrollInfo != "" && len(footer) >= 1 {
+		// Append a compact scroll hint to the actions line so the user
+		// knows there's more content and how to reach it.
+		footer[len(footer)-1] = scrollInfo + "  •  " + footer[len(footer)-1]
+	}
+
+	lines := append([]string{}, header...)
+	lines = append(lines, bodyWindow...)
+	lines = append(lines, footer...)
 
 	content := strings.Join(lines, "\n")
 
-	// Render in a bordered box.
+	// Render in a bordered box. We deliberately don't set MaxHeight —
+	// lipgloss clips the bottom border when MaxHeight matches the natural
+	// rendered size, so the budget above (availableBody + 2-row visual
+	// margin) is what keeps the box within `height`.
 	style := lipgloss.NewStyle().
 		Width(maxW).
 		Border(lipgloss.RoundedBorder()).
@@ -154,6 +180,83 @@ func (m execModal) view(width, height int) string {
 
 	// Center in the content area.
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, rendered)
+}
+
+// wrapModalLines wraps each logical body line to width and flattens the
+// result so the sliding window in view() operates on final visual rows.
+// Blank entries stay blank (one row). Trailing/leading whitespace on
+// already-short lines is preserved so indented command previews still
+// look indented.
+func wrapModalLines(lines []string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	wrapper := lipgloss.NewStyle().Width(width).MaxWidth(width)
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			out = append(out, "")
+			continue
+		}
+		out = append(out, strings.Split(wrapper.Render(line), "\n")...)
+	}
+	return out
+}
+
+// windowBody returns a slice of body lines starting at scroll, fitting within
+// window rows, plus a short scroll hint ("↑↓ N/total" style) when the body
+// overflows. scroll is clamped to valid range. Returns ("", "") when the body
+// fits entirely.
+func windowBody(body []string, scroll, window int) ([]string, string) {
+	total := len(body)
+	if total <= window {
+		return body, ""
+	}
+	maxScroll := total - window
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+	end := scroll + window
+	hint := helpStyle.Render(fmt.Sprintf("↑↓ scroll %d-%d/%d", scroll+1, end, total))
+	return body[scroll:end], hint
+}
+
+// maxScroll returns the largest valid scroll offset for the current body.
+// Used by the key handler to clamp ↓/PgDn movements. Must mirror the
+// layout math in view() so scroll keys stop where the last line lands.
+func (m execModal) maxScroll(width, height int) int {
+	maxW := min(width-8, 80)
+	innerW := max(maxW-6, 20)
+	maxContent := max(height-6, 5)
+
+	var body []string
+	var actions string
+	switch m.phase {
+	case execPhaseReview:
+		_, body, actions = m.viewReview()
+	case execPhaseRunning:
+		_, body, actions = m.viewRunning()
+	case execPhaseComplete:
+		_, body, actions = m.viewComplete()
+	}
+
+	headerLines := 2
+	footerLines := 0
+	if actions != "" {
+		footerLines = 2
+	}
+	availableBody := maxContent - headerLines - footerLines
+	if availableBody < 1 {
+		availableBody = 1
+	}
+	wrapped := wrapModalLines(body, innerW)
+	if len(wrapped) <= availableBody {
+		return 0
+	}
+	return len(wrapped) - availableBody
 }
 
 func (m execModal) viewReview() (string, []string, string) {
@@ -168,6 +271,9 @@ func (m execModal) viewReview() (string, []string, string) {
 			line += "  " + renderActionTag(bi.action)
 		}
 		body = append(body, line)
+		if m.showCommands && bi.command != "" {
+			body = append(body, "      "+helpStyle.Render(bi.command))
+		}
 	}
 	if m.action == "uninstall" {
 		body = append(body, "")
@@ -185,7 +291,12 @@ func (m execModal) viewReview() (string, []string, string) {
 	if verb == "apply" {
 		verb = "apply"
 	}
+	toggleLabel := "show commands"
+	if m.showCommands {
+		toggleLabel = "hide commands"
+	}
 	actions := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("enter") + " " + verb +
+		"  •  " + lipgloss.NewStyle().Bold(true).Foreground(accent).Render("?") + " " + toggleLabel +
 		"  •  " + lipgloss.NewStyle().Bold(true).Foreground(accent).Render("esc") + " cancel"
 	return title, body, actions
 }
@@ -331,8 +442,13 @@ func extractKeyLogLines(output string) []string {
 func (m execModal) helpKeys() []key.Binding {
 	switch m.phase {
 	case execPhaseReview:
+		toggleHelp := "show commands"
+		if m.showCommands {
+			toggleHelp = "hide commands"
+		}
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", m.action)),
+			key.NewBinding(key.WithKeys("?"), key.WithHelp("?", toggleHelp)),
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 		}
 	case execPhaseRunning:

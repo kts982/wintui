@@ -71,6 +71,39 @@ func (c *packageCache) setUpgradeable(pkgs []Package) {
 	c.saveToDiskLocked()
 }
 
+func (c *packageCache) getInstalledRaw() []Package {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.installed == nil {
+		return nil
+	}
+	cp := make([]Package, len(c.installed))
+	copy(cp, c.installed)
+	return cp
+}
+
+func (c *packageCache) getUpgradeableRaw() []Package {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.upgradeable == nil {
+		return nil
+	}
+	cp := make([]Package, len(c.upgradeable))
+	copy(cp, c.upgradeable)
+	return cp
+}
+
+func (c *packageCache) prime(installed, upgradeable []Package, savedAt time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.installed = make([]Package, len(installed))
+	copy(c.installed, installed)
+	c.upgradeable = make([]Package, len(upgradeable))
+	copy(c.upgradeable, upgradeable)
+	c.installedAt = savedAt
+	c.upgradeAt = savedAt
+}
+
 // invalidate clears the in-memory cache (call after manual refresh).
 func (c *packageCache) invalidate() {
 	c.mu.Lock()

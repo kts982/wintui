@@ -61,6 +61,8 @@ type workspaceScreen struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 
+	hiddenUpgrades int // upgrades hidden by ignore rules
+
 	// Background refresh.
 	refreshing    bool      // background refresh in flight
 	cacheAge      time.Time // when displayed data was last cached (zero = fresh)
@@ -277,10 +279,16 @@ func (s workspaceScreen) startBackgroundRefresh() tea.Cmd {
 }
 
 // buildItems merges installed and upgradeable into a grouped list.
-func buildItems(installed, upgradeable []Package) []workspaceItem {
-	// Build upgrade lookup.
+// Returns the items and the number of upgrades hidden by ignore rules.
+func buildItems(installed, upgradeable []Package) ([]workspaceItem, int) {
+	// Build upgrade lookup, filtering out ignored packages.
+	hiddenCount := 0
 	upgradeMap := make(map[string]Package, len(upgradeable))
 	for _, pkg := range upgradeable {
+		if appSettings.isIgnored(pkg.ID, pkg.Source, pkg.Available) {
+			hiddenCount++
+			continue
+		}
 		upgradeMap[packageSourceKey(pkg.ID, pkg.Source)] = pkg
 	}
 
@@ -311,7 +319,7 @@ func buildItems(installed, upgradeable []Package) []workspaceItem {
 	// Include upgradeable packages not in installed list (edge case).
 	for _, pkg := range upgradeable {
 		k := packageSourceKey(pkg.ID, pkg.Source)
-		if !seen[k] {
+		if !seen[k] && !appSettings.isIgnored(pkg.ID, pkg.Source, pkg.Available) {
 			updates = append(updates, workspaceItem{
 				pkg:         pkg,
 				upgradeable: true,
@@ -322,7 +330,27 @@ func buildItems(installed, upgradeable []Package) []workspaceItem {
 	}
 
 	// Updates first, then installed.
-	return append(updates, rest...)
+	return append(updates, rest...), hiddenCount
+}
+
+func (s *workspaceScreen) rebuildItemsFromCache() {
+	installed := cache.getInstalledRaw()
+	upgradeable := cache.getUpgradeableRaw()
+	if installed == nil && upgradeable == nil {
+		return
+	}
+	var cursorKey string
+	if s.cursor >= 0 && s.cursor < len(s.items) {
+		cursorKey = s.items[s.cursor].key()
+	}
+	s.items, s.hiddenUpgrades = buildItems(installed, upgradeable)
+	s.cursor = 0
+	for i, item := range s.items {
+		if item.key() == cursorKey {
+			s.cursor = i
+			break
+		}
+	}
 }
 
 // countUpgradeable returns how many items are upgradeable.
@@ -350,6 +378,40 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				switch msg.String() {
 				case "enter":
 					return s.startBatch()
+				case "?":
+					s.modal.showCommands = !s.modal.showCommands
+					s.modal.scroll = 0
+					return s, nil
+				case "up", "k":
+					if s.modal.scroll > 0 {
+						s.modal.scroll--
+					}
+					return s, nil
+				case "down", "j":
+					m := s.modal.maxScroll(s.width, contentAreaHeightForWindow(s.width, s.height, true))
+					if s.modal.scroll < m {
+						s.modal.scroll++
+					}
+					return s, nil
+				case "pgup":
+					s.modal.scroll -= 8
+					if s.modal.scroll < 0 {
+						s.modal.scroll = 0
+					}
+					return s, nil
+				case "pgdown":
+					m := s.modal.maxScroll(s.width, contentAreaHeightForWindow(s.width, s.height, true))
+					s.modal.scroll += 8
+					if s.modal.scroll > m {
+						s.modal.scroll = m
+					}
+					return s, nil
+				case "home":
+					s.modal.scroll = 0
+					return s, nil
+				case "end":
+					s.modal.scroll = s.modal.maxScroll(s.width, contentAreaHeightForWindow(s.width, s.height, true))
+					return s, nil
 				case "esc":
 					s.modal = nil
 					s.state = workspaceReady
@@ -462,7 +524,14 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.state = workspaceEmpty
 			return s, nil
 		}
-		s.items = buildItems(msg.installed, msg.upgradeable)
+		if msg.fromDisk {
+			cache.prime(msg.installed, msg.upgradeable, msg.savedAt)
+		}
+		nextSettings := appSettings
+		if nextSettings.expireVersionIgnores(msg.upgradeable) {
+			_ = persistSettings(nextSettings)
+		}
+		s.items, s.hiddenUpgrades = buildItems(msg.installed, msg.upgradeable)
 		if len(s.items) == 0 {
 			s.state = workspaceEmpty
 		} else {
@@ -485,8 +554,12 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		// Don't overwrite state if a modal/execution is active — just update the data.
 		// The state transition will happen when the modal is dismissed.
+		nextSettings := appSettings
+		if nextSettings.expireVersionIgnores(msg.upgradeable) {
+			_ = persistSettings(nextSettings)
+		}
 		if s.state == workspaceConfirm || s.state == workspaceExecuting {
-			s.items = buildItems(msg.installed, msg.upgradeable)
+			s.items, s.hiddenUpgrades = buildItems(msg.installed, msg.upgradeable)
 			s.cacheAge = time.Time{}
 			return s, nil
 		}
@@ -495,7 +568,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if s.cursor >= 0 && s.cursor < len(s.items) {
 			cursorKey = s.items[s.cursor].key()
 		}
-		s.items = buildItems(msg.installed, msg.upgradeable)
+		s.items, s.hiddenUpgrades = buildItems(msg.installed, msg.upgradeable)
 		s.cacheAge = time.Time{} // data is now fresh
 		if len(s.items) == 0 {
 			s.state = workspaceEmpty
@@ -579,6 +652,10 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		} else {
 			delete(s.selectedVersions, packageSourceKey(msg.pkgID, msg.source))
 		}
+		return s, nil
+
+	case overridesSavedMsg:
+		s.rebuildItemsFromCache()
 		return s, nil
 
 	case startWorkspaceBatchMsg:
@@ -1047,11 +1124,32 @@ func (s workspaceScreen) openBatchModal(items []batchItem) (screen, tea.Cmd) {
 	if len(items) == 0 {
 		return s, nil
 	}
+	for i := range items {
+		items[i].command = s.batchItemCommandPreview(items[i])
+	}
 	items = sortBatchItems(items)
 	m := newExecModal(batchModalAction(items), items)
 	s.modal = &m
 	s.state = workspaceConfirm
 	return s, nil
+}
+
+// batchItemCommandPreview renders the winget command that will run for a
+// batch item, using the currently selected version (if any).
+func (s workspaceScreen) batchItemCommandPreview(bi batchItem) string {
+	version := s.selectedVersions[bi.item.key()]
+	var args []string
+	switch bi.action {
+	case retryOpUpgrade:
+		args = upgradeCommandArgs(bi.item.pkg.ID, bi.item.pkg.Source, version)
+	case retryOpInstall:
+		args = installCommandArgs(bi.item.pkg.ID, bi.item.pkg.Source, version)
+	case retryOpUninstall:
+		args = uninstallCommandArgs(bi.item.pkg, appSettings.PurgeOnUninstall)
+	default:
+		return ""
+	}
+	return formatWingetCommand(args)
 }
 
 func (s workspaceScreen) beginAction(action string) (screen, tea.Cmd) {
@@ -1390,6 +1488,9 @@ func (s workspaceScreen) renderSections(l layout) string {
 		if selCount > 0 {
 			title = fmt.Sprintf("Updates Available (%d / %d selected)", len(upgradeable), selCount)
 		}
+		if s.hiddenUpgrades > 0 {
+			title += fmt.Sprintf(" · %d hidden", s.hiddenUpgrades)
+		}
 		sections = append(sections, sectionDef{
 			title:    title,
 			items:    upgradeable,
@@ -1398,6 +1499,14 @@ func (s workspaceScreen) renderSections(l layout) string {
 			minH:     minScrollableSectionHeight,
 		})
 		offset += len(upgradeable)
+	}
+	if len(upgradeable) == 0 && s.hiddenUpgrades > 0 {
+		sections = append(sections, sectionDef{
+			title:    fmt.Sprintf("Updates Available (0 · %d hidden)", s.hiddenUpgrades),
+			desiredH: 2,
+			minH:     2,
+			offset:   offset,
+		})
 	}
 	if len(installed) > 0 {
 		selCount := s.countSelected(installed)

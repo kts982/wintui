@@ -125,17 +125,36 @@ func lookupSinglePackageCtx(ctx context.Context, id, source string) ([]Package, 
 
 // ── High-level action operations (mutating, need package agreements) ─
 
+// formatWingetCommand renders an argv slice as a displayable shell command.
+// Arguments containing whitespace are quoted so the preview is copy-pasteable.
+func formatWingetCommand(args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, "winget")
+	for _, a := range args {
+		if a == "" {
+			parts = append(parts, `""`)
+			continue
+		}
+		if strings.ContainsAny(a, " \t\"") {
+			parts = append(parts, `"`+strings.ReplaceAll(a, `"`, `\"`)+`"`)
+		} else {
+			parts = append(parts, a)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
 func installCommandArgs(id, source, version string) []string {
 	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
 	args = appendVersionArg(args, version)
-	args = append(args, appSettings.BuildInstallArgs()...)
+	args = append(args, appSettings.effectiveSettings(id, source).BuildInstallArgs()...)
 	return appendPreferredSourceArg(args, source)
 }
 
 func upgradeCommandArgs(id, source, version string) []string {
 	args := []string{"upgrade", "--id", id, "--exact", "--accept-package-agreements"}
 	args = appendVersionArg(args, version)
-	args = append(args, appSettings.BuildInstallArgs()...)
+	args = append(args, appSettings.effectiveSettings(id, source).BuildInstallArgs()...)
 	return appendPreferredSourceArg(args, source)
 }
 
@@ -823,9 +842,25 @@ func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string
 	return proxyOut, proxyErr
 }
 
+func runActionStreamForPackage(ctx context.Context, pkgID, source string, args ...string) (<-chan string, <-chan error) {
+	elev := appSettings.packageElevateOverride(pkgID, source)
+	if elev != nil {
+		if *elev && !isElevated() {
+			out, errCh, initErr := globalElevator.runCommandElevated(args...)
+			if initErr == nil {
+				return out, errCh
+			}
+		}
+		if !*elev {
+			return runWingetStreamCtx(ctx, false, args...)
+		}
+	}
+	return runActionSmartStreamCtx(ctx, args...)
+}
+
 func installPackageStreamCtx(ctx context.Context, id, source, version string) ([]string, <-chan string, <-chan error) {
 	args := installCommandArgs(id, source, version)
-	out, err := runActionSmartStreamCtx(ctx, args...)
+	out, err := runActionStreamForPackage(ctx, id, source, args...)
 	return args, out, err
 }
 
@@ -837,7 +872,7 @@ func installPackageElevatedStreamCtx(id, source, version string) ([]string, <-ch
 
 func upgradePackageStreamCtx(ctx context.Context, id, source, version string) ([]string, <-chan string, <-chan error) {
 	args := upgradeCommandArgs(id, source, version)
-	out, err := runActionSmartStreamCtx(ctx, args...)
+	out, err := runActionStreamForPackage(ctx, id, source, args...)
 	return args, out, err
 }
 
