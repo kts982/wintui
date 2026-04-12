@@ -10,9 +10,9 @@ UpgradeBehavior: install
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/kts982/wintui/releases/download/v2.2.1/wintui_2.2.1_windows_amd64.exe
-    InstallerSha256: FE2DF88BF556858A1AE874A258F22F4F44A3F804F454E180E5463D0944C17CEC
+    InstallerSha256: 5D22D0056FA6D193AC87CDCD8A1FEFEE6436539E4596E603B236CE7EC5E8C448
   - Architecture: arm64
     InstallerUrl: https://github.com/kts982/wintui/releases/download/v2.2.1/wintui_2.2.1_windows_arm64.exe
-    InstallerSha256: 083A9CCE9ECAD3066B4C3841F7D1F4E1B483B03D5965D85010EC6983151CD89F
+    InstallerSha256: C088E592B1C365564E0218C42D107E7514FB6311538297F6F7B483FD430AAFF1
 ManifestType: installer
 ManifestVersion: 1.12.0
