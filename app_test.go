@@ -175,3 +175,17 @@ func TestStartRetryMsgTriggersActionImmediately(t *testing.T) {
 		t.Fatalf("Expected Init to return a batch command, got nil")
 	}
 }
+
+func TestWrapScreenCmdPassesThroughQuitMsg(t *testing.T) {
+	a := newApp(nil)
+
+	cmd := a.wrapScreenCmd(screenWorkspace, tea.Quit)
+	if cmd == nil {
+		t.Fatal("expected wrapped quit command")
+	}
+
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Fatalf("wrapped quit command produced %T, want tea.QuitMsg", msg)
+	}
+}

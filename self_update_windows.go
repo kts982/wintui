@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,6 +19,7 @@ import (
 const (
 	selfPackageID          = "kts982.WinTUI"
 	selfUpdateHelperPrefix = "wintui-self-update-"
+	selfUpdateLogName      = "wintui-self-update.log"
 )
 
 var (
@@ -36,16 +38,30 @@ var selfUpgradeCmd = &cobra.Command{
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		appSettings = LoadSettings()
+		appendSelfUpdateLogf("helper start parent=%d source=%q version=%q relaunch=%q", selfUpdateParentPID, selfUpdateSource, selfUpdateVersion, selfUpdateRelaunch)
 
 		if selfUpdateParentPID > 0 {
-			_ = waitForProcessExit(selfUpdateParentPID, 2*time.Minute)
+			if err := waitForProcessExit(selfUpdateParentPID, 2*time.Minute); err != nil {
+				appendSelfUpdateLogf("wait for parent failed: %v", err)
+			}
 		}
 
-		_ = runSelfUpgrade(selfUpdateSource, selfUpdateVersion)
+		if err := runSelfUpgrade(selfUpdateSource, selfUpdateVersion); err != nil {
+			appendSelfUpdateLogf("winget self-upgrade failed: %v", err)
+		} else {
+			appendSelfUpdateLogf("winget self-upgrade completed")
+			cache.deleteDiskCache()
+			appendSelfUpdateLogf("cache cleared before relaunch")
+		}
 
 		if selfUpdateRelaunch != "" {
-			_ = waitForPath(selfUpdateRelaunch, 30*time.Second)
-			_ = relaunchUpdatedBinary(selfUpdateRelaunch)
+			if err := waitForPath(selfUpdateRelaunch, 30*time.Second); err != nil {
+				appendSelfUpdateLogf("wait for relaunch path failed: %v", err)
+			} else if err := relaunchUpdatedBinary(selfUpdateRelaunch); err != nil {
+				appendSelfUpdateLogf("relaunch failed: %v", err)
+			} else {
+				appendSelfUpdateLogf("relaunch started: %s", selfUpdateRelaunch)
+			}
 		}
 		return nil
 	},
@@ -95,7 +111,7 @@ func startSelfUpgradeHandoff(source, version string) error {
 	}
 
 	cmd := exec.Command(helperPath, args...)
-	return cmd.Start()
+	return startDetachedHelper(cmd)
 }
 
 func copySelfUpdateHelper(exePath string) (string, error) {
@@ -134,8 +150,63 @@ func cleanupStaleSelfUpdateHelpers() {
 	}
 }
 
+func selfUpdateLogPath() string {
+	return filepath.Join(os.TempDir(), selfUpdateLogName)
+}
+
+func appendSelfUpdateLogf(format string, args ...any) {
+	f, err := os.OpenFile(selfUpdateLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, args...))
+}
+
+func configureDetachedHelper(cmd *exec.Cmd) (*os.File, error) {
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdin = devNull
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP,
+		HideWindow:    true,
+	}
+	return devNull, nil
+}
+
+func startDetachedHelper(cmd *exec.Cmd) error {
+	devNull, err := configureDetachedHelper(cmd)
+	if err != nil {
+		return err
+	}
+	defer devNull.Close()
+	return cmd.Start()
+}
+
+func containsArg(args []string, target string) bool {
+	for _, arg := range args {
+		if arg == target {
+			return true
+		}
+	}
+	return false
+}
+
+func selfUpgradeCommandArgs(source, version string) []string {
+	args := upgradeCommandArgs(selfPackageID, source, version)
+	if !containsArg(args, "--force") {
+		args = append(args, "--force")
+	}
+	return args
+}
+
 func runSelfUpgrade(source, version string) error {
-	_, err := runActionSmartSyncCtx(context.Background(), upgradeCommandArgs(selfPackageID, source, version)...)
+	args := selfUpgradeCommandArgs(source, version)
+	_, err := runActionSmartSyncCtx(context.Background(), args...)
 	return err
 }
 
@@ -150,7 +221,14 @@ func runActionSmartSyncCtx(ctx context.Context, args ...string) (string, error) 
 
 func relaunchUpdatedBinary(exePath string) error {
 	cmd := exec.Command(exePath)
+	configureRelaunchCommand(cmd)
 	return cmd.Start()
+}
+
+func configureRelaunchCommand(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windows.CREATE_NEW_CONSOLE,
+	}
 }
 
 func waitForPath(path string, timeout time.Duration) error {

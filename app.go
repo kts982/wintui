@@ -555,6 +555,8 @@ func (a app) wrapScreenCmd(id screenID, cmd tea.Cmd) tea.Cmd {
 			return msg
 		case packageDataChangedMsg:
 			return msg
+		case tea.QuitMsg:
+			return msg
 		default:
 			return screenCmdMsg{target: id, msg: msg}
 		}

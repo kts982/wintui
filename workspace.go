@@ -1264,8 +1264,8 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 
 	if isSelfUpgradeBatchItem(*current) {
 		current.status = batchPendingRestart
-		current.output = "WinTUI will restart from a temporary helper to complete its own upgrade."
-		s.exec.appendLine("WinTUI will restart from a temporary helper to complete its own upgrade.")
+		current.output = "WinTUI will close now. A temporary helper will finish the upgrade and reopen WinTUI in a new window."
+		s.exec.appendLine("WinTUI will close now. A temporary helper will finish the upgrade and reopen WinTUI in a new window.")
 		s.modal.idx++
 		return s.processNextBatchItem()
 	}
