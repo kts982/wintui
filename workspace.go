@@ -491,6 +491,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.err = msg.err
 			s.searchResults = nil
 		} else {
+			s.err = nil // clear any prior search error
 			s.searchQuery = msg.query
 			// Default empty source to "winget" for search results.
 			for i := range msg.results {

@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestToggleSelectionAddsSearchResultToQueue(t *testing.T) {
 	ws := newWorkspaceScreen()
@@ -212,5 +215,30 @@ func TestSelectAllUpgradeableSelectsOnlyUpgradeable(t *testing.T) {
 	}
 	if ws.selected[nodeKey] {
 		t.Fatal("expected Node to NOT be selected (not upgradeable)")
+	}
+}
+
+func TestSuccessfulSearchClearsPriorError(t *testing.T) {
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.searchLoading = true
+	ws.searchQuery = "firefox"
+	ws.err = fmt.Errorf("previous search failed")
+
+	msg := searchResultsMsg{
+		query: "firefox",
+		results: []Package{
+			{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget", Version: "130.0"},
+		},
+	}
+
+	next, _ := ws.update(msg)
+	got := next.(workspaceScreen)
+
+	if got.err != nil {
+		t.Fatalf("err = %v, want nil (successful search should clear prior error)", got.err)
+	}
+	if len(got.searchResults) != 1 {
+		t.Fatalf("len(searchResults) = %d, want 1", len(got.searchResults))
 	}
 }
