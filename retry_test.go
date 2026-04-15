@@ -73,7 +73,7 @@ func TestExecModalReviewShowsCommandsWhenToggled(t *testing.T) {
 			command: "winget upgrade --id Git.Git --exact --scope machine",
 		},
 	}
-	m := newExecModal("upgrade", items)
+	m := newExecModal(retryOpUpgrade, items)
 	m.phase = execPhaseReview
 
 	plain := stripANSI(m.view(120, 30))
@@ -104,7 +104,7 @@ func TestExecModalReviewScrollsWhenOverflowing(t *testing.T) {
 			command: fmt.Sprintf("winget upgrade --id %s.ID", name),
 		}
 	}
-	m := newExecModal("upgrade", items)
+	m := newExecModal(retryOpUpgrade, items)
 	m.phase = execPhaseReview
 	m.showCommands = true
 
@@ -168,7 +168,7 @@ func TestExecModalElevationCandidatesFiltersCorrectly(t *testing.T) {
 		{item: workspaceItem{pkg: Package{ID: "Pkg.Two", Source: "winget"}}, status: batchDone},
 		{item: workspaceItem{pkg: Package{ID: "Pkg.Three", Source: "winget"}}, status: batchFailed, err: assertErr("package requires administrator privileges (0x8a150056)"), output: "0x8a150056"},
 	}
-	m := newExecModal("upgrade", items)
+	m := newExecModal(retryOpUpgrade, items)
 	// Simulate completion.
 	m.items = items
 	m.phase = execPhaseComplete

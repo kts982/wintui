@@ -551,10 +551,10 @@ func (p detailPanel) detailLines(totalWidth int) []string {
 			appendDetailField(&lines, "Ignore", overrideStyle.Render("v"+o.IgnoreVersion))
 		}
 		if o.Scope != "" {
-			appendDetailField(&lines, "Scope", overrideStyle.Render(o.Scope))
+			appendDetailField(&lines, "Scope", overrideStyle.Render(string(o.Scope)))
 		}
 		if o.Architecture != "" {
-			appendDetailField(&lines, "Architecture", overrideStyle.Render(o.Architecture))
+			appendDetailField(&lines, "Architecture", overrideStyle.Render(string(o.Architecture)))
 		}
 		if o.Elevate != nil {
 			label := "never"

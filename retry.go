@@ -11,6 +11,7 @@ const (
 	retryOpInstall   retryOp = "install"
 	retryOpUpgrade   retryOp = "upgrade"
 	retryOpUninstall retryOp = "uninstall"
+	retryOpApply     retryOp = "apply"
 )
 
 type retryItem struct {

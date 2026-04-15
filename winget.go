@@ -796,7 +796,7 @@ func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string
 	// elevated, run everything through the elevated helper upfront.
 	// This avoids UAC popups from installers that elevate themselves
 	// (e.g. MSI packages with ElevationRequirement: elevatesSelf).
-	if appSettings.InstallMode == "silent" && appSettings.AutoElevate && !isElevated() {
+	if appSettings.InstallMode == ModeSilent && appSettings.AutoElevate && !isElevated() {
 		out, errCh, initErr := globalElevator.runCommandElevated(args...)
 		if initErr == nil {
 			return out, errCh

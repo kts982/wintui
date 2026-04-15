@@ -22,7 +22,7 @@ const (
 // Review → Running → Complete, all within one modal.
 type execModal struct {
 	phase         execModalPhase
-	action        string // "upgrade" or "uninstall"
+	action        retryOp // retryOpUpgrade, retryOpUninstall, etc.
 	items         []batchItem
 	itemMap       map[string]*batchItem
 	idx           int // currently running item index
@@ -32,7 +32,7 @@ type execModal struct {
 	scroll        int  // body scroll offset when content exceeds modal height
 }
 
-func newExecModal(action string, items []batchItem) execModal {
+func newExecModal(action retryOp, items []batchItem) execModal {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(accent)
@@ -51,19 +51,20 @@ func newExecModal(action string, items []batchItem) execModal {
 }
 
 func (m execModal) actionTitle() string {
-	if m.action == "apply" {
+	if m.action == retryOpApply {
 		return "Apply"
 	}
-	return strings.ToUpper(m.action[:1]) + m.action[1:]
+	s := string(m.action)
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func (m execModal) actionVerb() string {
 	switch m.action {
-	case "apply":
+	case retryOpApply:
 		return "Applying"
-	case "upgrade":
+	case retryOpUpgrade:
 		return "Upgrading"
-	case "uninstall":
+	case retryOpUninstall:
 		return "Uninstalling"
 	default:
 		return m.actionTitle() + "ing"
@@ -261,13 +262,13 @@ func (m execModal) maxScroll(width, height int) int {
 
 func (m execModal) viewReview() (string, []string, string) {
 	title := fmt.Sprintf("%s %d package(s)", m.actionTitle(), len(m.items))
-	if m.action == "apply" {
+	if m.action == retryOpApply {
 		title = fmt.Sprintf("Apply %d change(s)", len(m.items))
 	}
 	var body []string
 	for _, bi := range m.items {
 		line := "  " + checkbox(true) + " " + bi.item.pkg.Name + "  " + helpStyle.Render(bi.item.pkg.ID)
-		if m.action == "apply" {
+		if m.action == retryOpApply {
 			line += "  " + renderActionTag(bi.action)
 		}
 		body = append(body, line)
@@ -275,10 +276,10 @@ func (m execModal) viewReview() (string, []string, string) {
 			body = append(body, "      "+helpStyle.Render(bi.command))
 		}
 	}
-	if m.action == "uninstall" {
+	if m.action == retryOpUninstall {
 		body = append(body, "")
 		body = append(body, warnStyle.Render("This will remove the selected packages."))
-	} else if m.action == "apply" {
+	} else if m.action == retryOpApply {
 		for _, bi := range m.items {
 			if bi.action == retryOpUninstall {
 				body = append(body, "")
@@ -287,8 +288,8 @@ func (m execModal) viewReview() (string, []string, string) {
 			}
 		}
 	}
-	verb := m.action
-	if verb == "apply" {
+	verb := string(m.action)
+	if m.action == retryOpApply {
 		verb = "apply"
 	}
 	toggleLabel := "show commands"
@@ -309,7 +310,7 @@ func (m execModal) viewRunning() (string, []string, string) {
 	for _, bi := range m.items {
 		icon := bi.statusIcon(m.spinner)
 		line := "  " + icon + " " + bi.item.pkg.Name
-		if m.action == "apply" {
+		if m.action == retryOpApply {
 			line += "  " + renderActionTag(bi.action)
 		}
 		if text := bi.statusText(); text != "" {
@@ -352,7 +353,7 @@ func (m execModal) viewComplete() (string, []string, string) {
 	for _, bi := range m.items {
 		icon := bi.statusIcon(m.spinner)
 		line := "  " + icon + " " + lipgloss.NewStyle().Bold(true).Render(bi.item.pkg.Name)
-		if m.action == "apply" {
+		if m.action == retryOpApply {
 			line += "  " + renderActionTag(bi.action)
 		}
 		if bi.status == batchPendingRestart {
@@ -447,7 +448,7 @@ func (m execModal) helpKeys() []key.Binding {
 			toggleHelp = "hide commands"
 		}
 		return []key.Binding{
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", m.action)),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", string(m.action))),
 			key.NewBinding(key.WithKeys("?"), key.WithHelp("?", toggleHelp)),
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 		}

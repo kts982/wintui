@@ -6,14 +6,42 @@ import (
 	"path/filepath"
 )
 
+// InstallScope constrains the install/upgrade scope.
+type InstallScope string
+
+const (
+	ScopeDefault InstallScope = ""
+	ScopeUser    InstallScope = "user"
+	ScopeMachine InstallScope = "machine"
+)
+
+// InstallMode constrains the installer UI behaviour.
+type InstallMode string
+
+const (
+	ModeDefault     InstallMode = ""
+	ModeSilent      InstallMode = "silent"
+	ModeInteractive InstallMode = "interactive"
+)
+
+// CPUArchitecture constrains the preferred CPU architecture.
+type CPUArchitecture string
+
+const (
+	ArchDefault CPUArchitecture = ""
+	ArchX64     CPUArchitecture = "x64"
+	ArchX86     CPUArchitecture = "x86"
+	ArchARM64   CPUArchitecture = "arm64"
+)
+
 // PackageOverride holds per-package option overrides and ignore rules.
 // Empty/nil fields mean "use the global default".
 type PackageOverride struct {
-	Scope         string `json:"scope,omitempty"`
-	Architecture  string `json:"architecture,omitempty"`
-	Elevate       *bool  `json:"elevate,omitempty"`
-	Ignore        bool   `json:"ignore,omitempty"`
-	IgnoreVersion string `json:"ignore_version,omitempty"`
+	Scope         InstallScope    `json:"scope,omitempty"`
+	Architecture  CPUArchitecture `json:"architecture,omitempty"`
+	Elevate       *bool           `json:"elevate,omitempty"`
+	Ignore        bool            `json:"ignore,omitempty"`
+	IgnoreVersion string          `json:"ignore_version,omitempty"`
 }
 
 func (o PackageOverride) isEmpty() bool {
@@ -24,9 +52,9 @@ func (o PackageOverride) isEmpty() bool {
 func (o PackageOverride) getValue(key string) string {
 	switch key {
 	case "scope":
-		return o.Scope
+		return string(o.Scope)
 	case "architecture":
-		return o.Architecture
+		return string(o.Architecture)
 	case "elevate":
 		if o.Elevate == nil {
 			return ""
@@ -47,9 +75,9 @@ func (o PackageOverride) getValue(key string) string {
 func (o *PackageOverride) setValue(key, val string) {
 	switch key {
 	case "scope":
-		o.Scope = val
+		o.Scope = InstallScope(val)
 	case "architecture":
-		o.Architecture = val
+		o.Architecture = CPUArchitecture(val)
 	case "elevate":
 		if val == "" {
 			o.Elevate = nil
@@ -74,17 +102,17 @@ func (o *PackageOverride) setValue(key, val string) {
 
 // Settings holds user-configurable winget options.
 type Settings struct {
-	// Install/Upgrade scope: "user", "machine", or "" (winget default)
-	Scope string `json:"scope"`
+	// Install/Upgrade scope: ScopeUser, ScopeMachine, or ScopeDefault (winget default)
+	Scope InstallScope `json:"scope"`
 
-	// Install mode: "", "silent", or "interactive"
-	InstallMode string `json:"install_mode"`
+	// Install mode: ModeDefault, ModeSilent, or ModeInteractive
+	InstallMode InstallMode `json:"install_mode"`
 
 	// Force: skip non-security related issues
 	Force bool `json:"force"`
 
-	// Architecture preference: "x64", "x86", "arm64", or "" (auto)
-	Architecture string `json:"architecture"`
+	// Architecture preference: ArchX64, ArchX86, ArchARM64, or ArchDefault (auto)
+	Architecture CPUArchitecture `json:"architecture"`
 
 	// Allow reboot during install/upgrade
 	AllowReboot bool `json:"allow_reboot"`
@@ -296,17 +324,17 @@ func persistPackageOverride(pkgID, source string, o PackageOverride) error {
 // Used for install, upgrade actions.
 func (s Settings) BuildInstallArgs() []string {
 	var args []string
-	if s.Scope != "" {
-		args = append(args, "--scope", s.Scope)
+	if s.Scope != ScopeDefault {
+		args = append(args, "--scope", string(s.Scope))
 	}
 	switch s.InstallMode {
-	case "silent":
+	case ModeSilent:
 		args = append(args, "--silent")
-	case "interactive":
+	case ModeInteractive:
 		args = append(args, "--interactive")
 	}
-	if s.Architecture != "" {
-		args = append(args, "--architecture", s.Architecture)
+	if s.Architecture != ArchDefault {
+		args = append(args, "--architecture", string(s.Architecture))
 	}
 	if s.Force {
 		args = append(args, "--force")
@@ -324,9 +352,9 @@ func (s Settings) BuildInstallArgs() []string {
 func (s Settings) BuildUninstallArgs(includePurge bool) []string {
 	var args []string
 	switch s.InstallMode {
-	case "silent":
+	case ModeSilent:
 		args = append(args, "--silent")
-	case "interactive":
+	case ModeInteractive:
 		args = append(args, "--interactive")
 	}
 	if includePurge && s.PurgeOnUninstall {
@@ -507,11 +535,11 @@ var settingDefs = []settingDef{
 func (s Settings) getValue(key string) string {
 	switch key {
 	case "scope":
-		return s.Scope
+		return string(s.Scope)
 	case "install_mode":
-		return s.InstallMode
+		return string(s.InstallMode)
 	case "architecture":
-		return s.Architecture
+		return string(s.Architecture)
 	case "source":
 		return s.Source
 	case "force":
@@ -534,11 +562,11 @@ func (s Settings) getValue(key string) string {
 func (s *Settings) setValue(key, val string) {
 	switch key {
 	case "scope":
-		s.Scope = val
+		s.Scope = InstallScope(val)
 	case "install_mode":
-		s.InstallMode = val
+		s.InstallMode = InstallMode(val)
 	case "architecture":
-		s.Architecture = val
+		s.Architecture = CPUArchitecture(val)
 	case "source":
 		s.Source = val
 	case "force":

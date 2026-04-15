@@ -33,7 +33,7 @@ func TestBeginApplyActionBuildsMixedBatch(t *testing.T) {
 	if got.modal == nil {
 		t.Fatal("modal = nil, want batch review modal")
 	}
-	if got.modal.action != "apply" {
+	if got.modal.action != retryOpApply {
 		t.Fatalf("modal.action = %q, want apply", got.modal.action)
 	}
 
@@ -51,13 +51,13 @@ func TestBeginActionInstallFallsBackToFocusedSearchResult(t *testing.T) {
 	ws := newWorkspaceScreen()
 	ws.searchResults = []Package{{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget"}}
 
-	next, _ := ws.beginAction("install")
+	next, _ := ws.beginAction(retryOpInstall)
 	got := next.(workspaceScreen)
 
 	if got.modal == nil {
 		t.Fatal("modal = nil, want install review modal")
 	}
-	if got.modal.action != "install" {
+	if got.modal.action != retryOpInstall {
 		t.Fatalf("modal.action = %q, want install", got.modal.action)
 	}
 	if len(got.modal.items) != 1 {

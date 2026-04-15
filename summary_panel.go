@@ -207,10 +207,10 @@ func (p summaryPanel) view() string {
 			lines = append(lines, p.field("Ignore", overrideStyle.Render("v"+o.IgnoreVersion)))
 		}
 		if o.Scope != "" {
-			lines = append(lines, p.field("Scope", overrideStyle.Render(o.Scope)))
+			lines = append(lines, p.field("Scope", overrideStyle.Render(string(o.Scope))))
 		}
 		if o.Architecture != "" {
-			lines = append(lines, p.field("Architecture", overrideStyle.Render(o.Architecture)))
+			lines = append(lines, p.field("Architecture", overrideStyle.Render(string(o.Architecture))))
 		}
 		if o.Elevate != nil {
 			label := "never"
