@@ -109,6 +109,7 @@ Further documentation:
 | `Space` | Stage package / queue search result |
 | `Enter` / `→` / `l` | Open package details |
 | `←` / `Esc` / `h` | Close details / cancel |
+| `Esc` | Dismiss search results / close details |
 | `s` | Search & install (search winget catalog) |
 | `/` | Filter installed packages |
 | `g` | Apply staged changes |
@@ -120,7 +121,7 @@ Further documentation:
 | `c` | Reset to latest version (in detail view) |
 | `o` | Open homepage (in detail view) |
 | `n` | Open release notes URL (in detail view, when available) |
-| `p` | Open per-package rules editor (in detail view) |
+| `p` | Open per-package rules editor (detail view or list) |
 | `i` | Toggle ignore on the focused package (in detail view) |
 | `?` | Expand winget command preview for each item (in batch confirm modal) |
 | `r` | Refresh package data |
