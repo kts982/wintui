@@ -139,3 +139,48 @@ func TestWorkspaceDataFromDiskPrimesCacheForOverrideRebuild(t *testing.T) {
 		}
 	}
 }
+
+func TestDeduplicateUninstallItemsCollapseDuplicateIDs(t *testing.T) {
+	comet1 := workspaceItem{pkg: Package{Name: "Comet", ID: "Perplexity.Comet", Source: "winget", Version: "1.0"}}
+	comet2 := workspaceItem{pkg: Package{Name: "Comet", ID: "Perplexity.Comet", Source: "winget", Version: "2.0"}}
+	firefox := workspaceItem{pkg: Package{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget", Version: "130.0"}}
+
+	items := []batchItem{
+		newBatchItem(retryOpUninstall, comet1),
+		newBatchItem(retryOpUninstall, comet2),
+		newBatchItem(retryOpUninstall, firefox),
+	}
+
+	got := deduplicateUninstallItems(items)
+
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2 (duplicates collapsed)", len(got))
+	}
+	if got[0].item.pkg.ID != "Perplexity.Comet" {
+		t.Fatalf("got[0].pkg.ID = %q, want Perplexity.Comet", got[0].item.pkg.ID)
+	}
+	if !got[0].allVersions {
+		t.Fatal("got[0].allVersions = false, want true (duplicate ID detected)")
+	}
+	if got[1].item.pkg.ID != "Mozilla.Firefox" {
+		t.Fatalf("got[1].pkg.ID = %q, want Mozilla.Firefox", got[1].item.pkg.ID)
+	}
+	if got[1].allVersions {
+		t.Fatal("got[1].allVersions = true, want false (unique ID)")
+	}
+}
+
+func TestDeduplicatePreservesNonUninstallItems(t *testing.T) {
+	pkg := workspaceItem{pkg: Package{Name: "Git", ID: "Git.Git", Source: "winget"}}
+
+	items := []batchItem{
+		newBatchItem(retryOpInstall, pkg),
+		newBatchItem(retryOpUpgrade, pkg),
+	}
+
+	got := deduplicateUninstallItems(items)
+
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2 (non-uninstall items preserved)", len(got))
+	}
+}

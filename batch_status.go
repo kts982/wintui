@@ -18,12 +18,13 @@ const (
 
 // batchItem pairs a workspace item with its execution status.
 type batchItem struct {
-	action  retryOp
-	item    workspaceItem
-	status  batchItemStatus
-	err     error
-	output  string // captured output for this item
-	command string // pre-rendered preview of the winget command (populated at modal open)
+	action      retryOp
+	item        workspaceItem
+	status      batchItemStatus
+	err         error
+	output      string // captured output for this item
+	command     string // pre-rendered preview of the winget command (populated at modal open)
+	allVersions bool   // uninstall all installed versions (duplicate ID)
 }
 
 // statusIcon returns a styled icon for the batch item's current state.

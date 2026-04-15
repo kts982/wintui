@@ -381,7 +381,7 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 			version := s.selectedVersions[item.key()]
 			_, outChan, errChan, initErr = installPackageElevatedStreamCtx(item.pkg.ID, item.pkg.Source, version)
 		default: // uninstall
-			_, outChan, errChan, initErr = uninstallPackageElevatedStreamCtx(item.pkg)
+			_, outChan, errChan, initErr = uninstallPackageElevatedStreamCtx(item.pkg, current.allVersions)
 		}
 		if initErr != nil {
 			current.status = batchFailed
@@ -398,7 +398,7 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 			version := s.selectedVersions[item.key()]
 			_, outChan, errChan = installPackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
 		default: // uninstall
-			_, outChan, errChan = uninstallPackageStreamCtx(s.ctx, item.pkg)
+			_, outChan, errChan = uninstallPackageStreamCtx(s.ctx, item.pkg, current.allVersions)
 		}
 	}
 	s.streamOut = outChan

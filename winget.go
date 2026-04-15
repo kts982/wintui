@@ -180,10 +180,13 @@ func uninstallLookupArgs(pkg Package) []string {
 	}
 }
 
-func uninstallCommandArgs(pkg Package, includePurge bool) []string {
+func uninstallCommandArgs(pkg Package, includePurge, allVersions bool) []string {
 	args := []string{"uninstall"}
 	args = append(args, uninstallLookupArgs(pkg)...)
 	args = append(args, "--exact")
+	if allVersions {
+		args = append(args, "--all-versions")
+	}
 	return append(args, appSettings.BuildUninstallArgs(includePurge)...)
 }
 
@@ -882,8 +885,8 @@ func upgradePackageElevatedStreamCtx(id, source, version string) ([]string, <-ch
 	return args, out, err, initErr
 }
 
-func uninstallPackageStreamCtx(ctx context.Context, pkg Package) ([]string, <-chan string, <-chan error) {
-	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall)
+func uninstallPackageStreamCtx(ctx context.Context, pkg Package, allVersions bool) ([]string, <-chan string, <-chan error) {
+	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall, allVersions)
 	outChan := make(chan string)
 	errChan := make(chan error, 1)
 
@@ -892,7 +895,7 @@ func uninstallPackageStreamCtx(ctx context.Context, pkg Package) ([]string, <-ch
 		defer close(errChan)
 
 		runAttempt := func(includePurge bool) (string, error, bool) {
-			streamOut, streamErr := runActionSmartStreamCtx(ctx, uninstallCommandArgs(pkg, includePurge)...)
+			streamOut, streamErr := runActionSmartStreamCtx(ctx, uninstallCommandArgs(pkg, includePurge, allVersions)...)
 			var lines []string
 			for line := range streamOut {
 				lines = append(lines, line)
@@ -929,8 +932,8 @@ func uninstallPackageStreamCtx(ctx context.Context, pkg Package) ([]string, <-ch
 	return args, outChan, errChan
 }
 
-func uninstallPackageElevatedStreamCtx(pkg Package) ([]string, <-chan string, <-chan error, error) {
-	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall)
+func uninstallPackageElevatedStreamCtx(pkg Package, allVersions bool) ([]string, <-chan string, <-chan error, error) {
+	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall, allVersions)
 	outChan := make(chan string)
 	errChan := make(chan error, 1)
 	go func() {
@@ -938,7 +941,7 @@ func uninstallPackageElevatedStreamCtx(pkg Package) ([]string, <-chan string, <-
 		defer close(errChan)
 
 		runAttempt := func(includePurge bool) (string, error, error) {
-			streamOut, streamErr, initErr := globalElevator.runCommandElevated(uninstallCommandArgs(pkg, includePurge)...)
+			streamOut, streamErr, initErr := globalElevator.runCommandElevated(uninstallCommandArgs(pkg, includePurge, allVersions)...)
 			if initErr != nil {
 				return "", nil, initErr
 			}

@@ -275,7 +275,7 @@ func (s workspaceScreen) batchItemCommandPreview(bi batchItem) string {
 	case retryOpInstall:
 		args = installCommandArgs(bi.item.pkg.ID, bi.item.pkg.Source, version)
 	case retryOpUninstall:
-		args = uninstallCommandArgs(bi.item.pkg, appSettings.PurgeOnUninstall)
+		args = uninstallCommandArgs(bi.item.pkg, appSettings.PurgeOnUninstall, bi.allVersions)
 	default:
 		return ""
 	}
@@ -324,7 +324,30 @@ func (s workspaceScreen) beginAction(action retryOp) (screen, tea.Cmd) {
 		}
 	}
 
+	items = deduplicateUninstallItems(items)
 	return s.openBatchModal(items)
+}
+
+// deduplicateUninstallItems collapses uninstall batch items that share the
+// same package key into a single item with allVersions=true. This handles
+// packages that have multiple versions installed side-by-side.
+func deduplicateUninstallItems(items []batchItem) []batchItem {
+	seen := make(map[string]int, len(items)) // key → index in result
+	var result []batchItem
+	for _, bi := range items {
+		if bi.action != retryOpUninstall {
+			result = append(result, bi)
+			continue
+		}
+		k := bi.item.key()
+		if idx, ok := seen[k]; ok {
+			result[idx].allVersions = true
+		} else {
+			seen[k] = len(result)
+			result = append(result, bi)
+		}
+	}
+	return result
 }
 
 func (s workspaceScreen) beginApplyAction() (screen, tea.Cmd) {
@@ -359,5 +382,6 @@ func (s workspaceScreen) beginApplyAction() (screen, tea.Cmd) {
 		}
 	}
 
+	items = deduplicateUninstallItems(items)
 	return s.openBatchModal(items)
 }

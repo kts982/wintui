@@ -302,7 +302,7 @@ func TestActionCommandArgs(t *testing.T) {
 	t.Run("uninstall never forces source", func(t *testing.T) {
 		appSettings = DefaultSettings()
 		appSettings.Source = "winget"
-		got := uninstallCommandArgs(Package{ID: "Notepad++.Notepad++", Source: "winget"}, false)
+		got := uninstallCommandArgs(Package{ID: "Notepad++.Notepad++", Source: "winget"}, false, false)
 		want := []string{"uninstall", "--id", "Notepad++.Notepad++", "--exact"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
@@ -312,7 +312,7 @@ func TestActionCommandArgs(t *testing.T) {
 	t.Run("uninstall includes purge only when requested", func(t *testing.T) {
 		appSettings = DefaultSettings()
 		appSettings.PurgeOnUninstall = true
-		got := uninstallCommandArgs(Package{ID: "Contoso.Portable", Source: "winget"}, true)
+		got := uninstallCommandArgs(Package{ID: "Contoso.Portable", Source: "winget"}, true, false)
 		want := []string{"uninstall", "--id", "Contoso.Portable", "--exact", "--purge"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
@@ -322,7 +322,7 @@ func TestActionCommandArgs(t *testing.T) {
 	t.Run("uninstall retry without purge drops purge flag", func(t *testing.T) {
 		appSettings = DefaultSettings()
 		appSettings.PurgeOnUninstall = true
-		got := uninstallCommandArgs(Package{ID: "Mozilla.Firefox", Source: "winget"}, false)
+		got := uninstallCommandArgs(Package{ID: "Mozilla.Firefox", Source: "winget"}, false, false)
 		want := []string{"uninstall", "--id", "Mozilla.Firefox", "--exact"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
@@ -332,8 +332,17 @@ func TestActionCommandArgs(t *testing.T) {
 	t.Run("uninstall respects silent mode", func(t *testing.T) {
 		appSettings = DefaultSettings()
 		appSettings.InstallMode = "silent"
-		got := uninstallCommandArgs(Package{ID: "Mozilla.Firefox", Source: "winget"}, false)
+		got := uninstallCommandArgs(Package{ID: "Mozilla.Firefox", Source: "winget"}, false, false)
 		want := []string{"uninstall", "--id", "Mozilla.Firefox", "--exact", "--silent"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("uninstall all-versions flag", func(t *testing.T) {
+		appSettings = DefaultSettings()
+		got := uninstallCommandArgs(Package{ID: "Perplexity.Comet", Source: "winget"}, false, true)
+		want := []string{"uninstall", "--id", "Perplexity.Comet", "--exact", "--all-versions"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("uninstallCommandArgs() = %#v, want %#v", got, want)
 		}
