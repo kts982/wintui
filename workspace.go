@@ -273,6 +273,13 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 
 		switch msg.String() {
+		case "esc":
+			if s.searchResults != nil || s.searchQuery != "" {
+				s.searchResults = nil
+				s.searchQuery = ""
+				s.cursor = 0
+				return s, s.focusSummary()
+			}
 		case "up", "k":
 			if s.cursor > 0 {
 				s.cursor--

@@ -242,3 +242,45 @@ func TestSuccessfulSearchClearsPriorError(t *testing.T) {
 		t.Fatalf("len(searchResults) = %d, want 1", len(got.searchResults))
 	}
 }
+
+func TestEscClearsSearchResults(t *testing.T) {
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = []workspaceItem{
+		{pkg: Package{Name: "Git", ID: "Git.Git", Source: "winget", Version: "2.0"}, installed: "2.0"},
+	}
+	ws.searchQuery = "firefox"
+	ws.searchResults = []Package{
+		{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget", Version: "130.0"},
+	}
+	ws.cursor = 1 // on a search result
+
+	next, _ := ws.update(keyMsg("esc"))
+	got := next.(workspaceScreen)
+
+	if got.searchResults != nil {
+		t.Fatal("searchResults should be nil after esc")
+	}
+	if got.searchQuery != "" {
+		t.Fatalf("searchQuery = %q, want empty", got.searchQuery)
+	}
+	if got.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 (reset after clearing search)", got.cursor)
+	}
+}
+
+func TestEscWithNoSearchIsNoop(t *testing.T) {
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = []workspaceItem{
+		{pkg: Package{Name: "Git", ID: "Git.Git", Source: "winget", Version: "2.0"}, installed: "2.0"},
+	}
+	ws.cursor = 0
+
+	next, _ := ws.update(keyMsg("esc"))
+	got := next.(workspaceScreen)
+
+	if got.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 (unchanged)", got.cursor)
+	}
+}
