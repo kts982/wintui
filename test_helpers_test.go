@@ -1,11 +1,34 @@
 package main
 
 import (
+	"os"
 	"regexp"
+	"testing"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 )
+
+// TestMain backs up the user's real settings and cache files before any tests
+// run, and restores them afterwards. This prevents tests that call
+// persistSettings or cache.saveToDiskLocked from overwriting real user data.
+func TestMain(m *testing.M) {
+	settingsPath := configPath()
+	cachePath := diskCachePath()
+
+	settingsBackup, settingsErr := os.ReadFile(settingsPath)
+	cacheBackup, cacheErr := os.ReadFile(cachePath)
+
+	code := m.Run()
+
+	if settingsErr == nil {
+		os.WriteFile(settingsPath, settingsBackup, 0644)
+	}
+	if cacheErr == nil {
+		os.WriteFile(cachePath, cacheBackup, 0644)
+	}
+	os.Exit(code)
+}
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 

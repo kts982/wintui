@@ -270,6 +270,7 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 		"0x8a150006": "installer failed (the installer process was terminated)",
 		"0x8a150052": "portable package could not replace files (close the running app before upgrading)",
 		"0x8a150056": "package requires administrator privileges to install",
+		"0x8a150066": "one or more versions failed to uninstall (close the app and retry)",
 		"0x80073d28": "installer requires administrator privileges (try running as admin)",
 		"0x80073cf3": "package install failed (conflicting package)",
 		"0x80073d02": "installation blocked by a running process",
