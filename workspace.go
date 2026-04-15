@@ -517,6 +517,8 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s.beginAction("upgrade")
 		case "x", "delete":
 			return s.beginAction("uninstall")
+		case "p":
+			return s.openDetailToOverrides()
 		}
 
 	case workspaceDataMsg:
@@ -1087,6 +1089,28 @@ func (s workspaceScreen) openDetail() (screen, tea.Cmd) {
 	var cmd tea.Cmd
 	allowVersions := item.upgradeable || canFetchDetails(item.pkg.Source)
 	s.detail, cmd = s.detail.showWithVersion(item.pkg, "", allowVersions)
+	return s, cmd
+}
+
+func (s workspaceScreen) openDetailToOverrides() (screen, tea.Cmd) {
+	queue, search, upgradeable, installed := s.displayItems()
+	all := concat(queue, search, upgradeable, installed)
+	if s.cursor >= len(all) {
+		return s, nil
+	}
+	item := all[s.cursor]
+	if !canFetchDetails(item.pkg.Source) {
+		return s, nil
+	}
+	var cmd tea.Cmd
+	allowVersions := item.upgradeable || canFetchDetails(item.pkg.Source)
+	s.detail, cmd = s.detail.showWithVersion(item.pkg, "", allowVersions)
+	s.detail.editingOverrides = true
+	s.detail.overrideCursor = 0
+	s.detail.overrideEdit = appSettings.getOverride(item.pkg.ID, item.pkg.Source)
+	s.detail.overrideSaved = false
+	s.detail.overrideDeleted = false
+	s.detail.overrideErrMsg = ""
 	return s, cmd
 }
 
@@ -1725,6 +1749,12 @@ func (s workspaceScreen) renderItemText(item workspaceItem, _ int, isCursor bool
 	}
 	name := nameStyle.Render(item.pkg.Name)
 
+	// Per-package rule indicator.
+	gear := ""
+	if appSettings.hasOverride(item.pkg.ID, item.pkg.Source) {
+		gear = " " + lipgloss.NewStyle().Foreground(override).Render("⚙")
+	}
+
 	// Check for a custom selected version.
 	customVer := s.selectedVersions[item.key()]
 
@@ -1733,7 +1763,7 @@ func (s workspaceScreen) renderItemText(item workspaceItem, _ int, isCursor bool
 		if customVer != "" && customVer != item.available {
 			ver = item.installed + " → " + customVer
 		}
-		return name + "  " + helpStyle.Render(ver)
+		return name + "  " + helpStyle.Render(ver) + gear
 	}
 
 	// Install queue or search result: show version (custom or available).
@@ -1743,13 +1773,13 @@ func (s workspaceScreen) renderItemText(item workspaceItem, _ int, isCursor bool
 			ver = customVer
 		}
 		if ver != "" {
-			return name + "  " + helpStyle.Render(ver)
+			return name + "  " + helpStyle.Render(ver) + gear
 		}
-		return name
+		return name + gear
 	}
 
 	// Regular installed package.
-	return name + "  " + helpStyle.Render(item.installed)
+	return name + "  " + helpStyle.Render(item.installed) + gear
 }
 
 // viewBatchList renders the batch items with inline status icons.

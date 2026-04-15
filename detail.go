@@ -542,25 +542,26 @@ func (p detailPanel) detailLines(totalWidth int) []string {
 
 	if appSettings.hasOverride(p.pkgID, p.source) {
 		o := appSettings.getOverride(p.pkgID, p.source)
+		overrideStyle := lipgloss.NewStyle().Foreground(override)
 		lines = append(lines, "")
-		lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Package Rules"))
+		lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(override).Render("⚙ Package Rules"))
 		if o.Ignore {
-			appendDetailField(&lines, "Ignore", lipgloss.NewStyle().Foreground(warning).Render("all versions"))
+			appendDetailField(&lines, "Ignore", overrideStyle.Render("all versions"))
 		} else if o.IgnoreVersion != "" {
-			appendDetailField(&lines, "Ignore", lipgloss.NewStyle().Foreground(warning).Render("v"+o.IgnoreVersion))
+			appendDetailField(&lines, "Ignore", overrideStyle.Render("v"+o.IgnoreVersion))
 		}
 		if o.Scope != "" {
-			appendDetailField(&lines, "Scope", o.Scope)
+			appendDetailField(&lines, "Scope", overrideStyle.Render(o.Scope))
 		}
 		if o.Architecture != "" {
-			appendDetailField(&lines, "Architecture", o.Architecture)
+			appendDetailField(&lines, "Architecture", overrideStyle.Render(o.Architecture))
 		}
 		if o.Elevate != nil {
 			label := "never"
 			if *o.Elevate {
 				label = "always"
 			}
-			appendDetailField(&lines, "Elevate", label)
+			appendDetailField(&lines, "Elevate", overrideStyle.Render(label))
 		}
 	}
 

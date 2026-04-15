@@ -195,6 +195,32 @@ func (p summaryPanel) view() string {
 		lines = append(lines, p.field("Source", p.pkg.Source))
 	}
 
+	// Per-package rule indicator.
+	if appSettings.hasOverride(p.pkg.ID, p.pkg.Source) {
+		o := appSettings.getOverride(p.pkg.ID, p.pkg.Source)
+		overrideStyle := lipgloss.NewStyle().Foreground(override)
+		lines = append(lines, "")
+		lines = append(lines, overrideStyle.Bold(true).Render("⚙ Package Rules"))
+		if o.Ignore {
+			lines = append(lines, p.field("Ignore", overrideStyle.Render("all versions")))
+		} else if o.IgnoreVersion != "" {
+			lines = append(lines, p.field("Ignore", overrideStyle.Render("v"+o.IgnoreVersion)))
+		}
+		if o.Scope != "" {
+			lines = append(lines, p.field("Scope", overrideStyle.Render(o.Scope)))
+		}
+		if o.Architecture != "" {
+			lines = append(lines, p.field("Architecture", overrideStyle.Render(o.Architecture)))
+		}
+		if o.Elevate != nil {
+			label := "never"
+			if *o.Elevate {
+				label = "always"
+			}
+			lines = append(lines, p.field("Elevate", overrideStyle.Render(label)))
+		}
+	}
+
 	// Fetched metadata.
 	if p.detail != nil {
 		if p.detail.Publisher != "" {

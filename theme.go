@@ -12,6 +12,7 @@ var (
 	success   = lipgloss.Color("78")  // green
 	danger    = lipgloss.Color("196") // red
 	warning   = lipgloss.Color("220") // yellow
+	override  = lipgloss.Color("222") // warm yellow — per-package rule indicator
 )
 
 // ── Menu / list items ──────────────────────────────────────────────
