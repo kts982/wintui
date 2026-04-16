@@ -311,6 +311,33 @@ func matchKnownWingetErrorCode(text string, replacements map[string]string) (str
 	return "", ""
 }
 
+// isProcessInUseError reports whether a winget error/output indicates the
+// package action was blocked because a related process is currently running.
+// The standard fix is for the user to close the app and retry.
+func isProcessInUseError(err error, output string) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error() + "\n" + output)
+	patterns := []string{
+		"0x80073d02",             // installation blocked by a running process
+		"0x8a150052",             // portable package could not replace files
+		"0x8a150066",             // one or more versions failed to uninstall
+		"process was terminated", // 0x8a150006
+		"is in use",
+		"being used by another process",
+		"close the running app",
+		"close the app",
+		"3221226525", // installer terminated
+	}
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // requiresElevation reports whether a winget error/output indicates the action
 // needs an elevated terminal rather than a different package failure.
 func requiresElevation(err error, output string) bool {

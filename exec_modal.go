@@ -383,6 +383,10 @@ func (m execModal) viewComplete() (string, []string, string) {
 		}
 		body = append(body, line)
 
+		if bi.status == batchFailed && bi.blockedByProc {
+			body = append(body, "    "+warnStyle.Render("Close the running application and press ctrl+e to retry."))
+		}
+
 		// Show key log lines for this package (compact).
 		for _, logLine := range extractKeyLogLines(bi.output) {
 			body = append(body, "    "+helpStyle.Render(logLine))
@@ -395,9 +399,22 @@ func (m execModal) viewComplete() (string, []string, string) {
 			lipgloss.NewStyle().Bold(true).Foreground(accent).Render("esc") + " close"
 	}
 
-	// Offer elevation retry if auto-elevate is off and there are elevation candidates.
+	// Offer retry via ctrl+e when any failed items could benefit — either
+	// elevation candidates or items blocked by a running process (user closes
+	// the app manually then retries).
+	offerRetry := false
+	label := "retry elevated"
 	if !appSettings.AutoElevate && !isElevated() && m.hasElevationCandidates() {
-		actions = lipgloss.NewStyle().Bold(true).Foreground(accent).Render("ctrl+e") + " retry elevated  •  " + actions
+		offerRetry = true
+	}
+	if m.hasBlockedByProcess() {
+		offerRetry = true
+		if !m.hasElevationCandidates() {
+			label = "retry"
+		}
+	}
+	if offerRetry {
+		actions = lipgloss.NewStyle().Bold(true).Foreground(accent).Render("ctrl+e") + " " + label + "  •  " + actions
 	}
 
 	return title, body, actions
@@ -416,15 +433,32 @@ func (m execModal) hasElevationCandidates() bool {
 	return false
 }
 
-// elevationCandidateItems returns the failed items that could benefit from elevation.
+// hasBlockedByProcess returns true if any failed items were blocked because a
+// related process is running.
+func (m execModal) hasBlockedByProcess() bool {
+	for _, bi := range m.items {
+		if bi.status == batchFailed && bi.blockedByProc {
+			return true
+		}
+	}
+	return false
+}
+
+// elevationCandidateItems returns the failed items eligible for retry —
+// either elevation candidates or those blocked by a running process.
 func (m execModal) elevationCandidateItems() []batchItem {
 	var items []batchItem
 	for _, bi := range m.items {
 		if bi.status != batchFailed || bi.err == nil {
 			continue
 		}
-		if likelyBenefitsFromElevation(bi.err, bi.output) {
-			items = append(items, batchItem{action: bi.action, item: bi.item, status: batchQueued})
+		if likelyBenefitsFromElevation(bi.err, bi.output) || bi.blockedByProc {
+			items = append(items, batchItem{
+				action:      bi.action,
+				item:        bi.item,
+				status:      batchQueued,
+				allVersions: bi.allVersions,
+			})
 		}
 	}
 	return items

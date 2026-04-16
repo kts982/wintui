@@ -125,7 +125,7 @@ Further documentation:
 | `i` | Toggle ignore on the focused package (in detail view) |
 | `?` | Expand winget command preview for each item (in batch confirm modal) |
 | `r` | Refresh package data |
-| `Ctrl+E` | Retry failed packages elevated (result modal) |
+| `Ctrl+E` | Retry failed packages (result modal) — elevated retry for permission failures, plain retry for items blocked by a running process |
 | `?` | Toggle full help panel |
 
 ### Global

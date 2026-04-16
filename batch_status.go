@@ -18,14 +18,15 @@ const (
 
 // batchItem pairs a workspace item with its execution status.
 type batchItem struct {
-	action      retryOp
-	item        workspaceItem
-	status      batchItemStatus
-	err         error
-	output      string // captured output for this item
-	command     string // pre-rendered preview of the winget command (populated at modal open)
-	allVersions bool   // uninstall all installed versions (duplicate ID)
-	progress    int    // latest progress percent (0-100) while running
+	action        retryOp
+	item          workspaceItem
+	status        batchItemStatus
+	err           error
+	output        string // captured output for this item
+	command       string // pre-rendered preview of the winget command (populated at modal open)
+	allVersions   bool   // uninstall all installed versions (duplicate ID)
+	progress      int    // latest progress percent (0-100) while running
+	blockedByProc bool   // failed because a related process is running
 }
 
 // statusIcon returns a styled icon for the batch item's current state.

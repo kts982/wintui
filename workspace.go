@@ -488,6 +488,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			if msg.err != nil {
 				s.modal.items[s.modal.idx].status = batchFailed
 				s.modal.items[s.modal.idx].err = msg.err
+				s.modal.items[s.modal.idx].blockedByProc = isProcessInUseError(msg.err, s.modal.items[s.modal.idx].output)
 			} else {
 				s.modal.items[s.modal.idx].status = batchDone
 			}

@@ -82,6 +82,16 @@ Pressing `Ctrl+E`:
 
 This does not rerun packages that already succeeded.
 
+### Retry for process-in-use failures
+
+When an install/upgrade/uninstall fails because a related application is still running (winget errors like `0x80073d02`, `0x8a150052`, `0x8a150066`, or messages containing "is in use"), the result modal shows:
+
+```
+Close the running application and press ctrl+e to retry.
+```
+
+Ctrl+E also retries these items. The label changes to `ctrl+e retry` when only process-blocked items need retrying (no elevation needed); it stays `ctrl+e retry elevated` when there are also permission failures. Close the blocking application before pressing Ctrl+E.
+
 ## Recommended Usage
 
 - **Silent + Auto Elevate** for the smoothest experience (all operations elevated upfront)

@@ -94,6 +94,30 @@ func TestParseWingetShowFixture(t *testing.T) {
 	}
 }
 
+func TestIsProcessInUseError(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		output string
+		want   bool
+	}{
+		{"0x80073d02", assertErr("exit status 0x80073d02"), "", true},
+		{"0x8a150052", assertErr("exit status 0x8a150052"), "", true},
+		{"0x8a150066 multi uninstall", assertErr("exit status 0x8a150066"), "", true},
+		{"in use phrase", assertErr("install failed"), "The file is in use by another process.", true},
+		{"clean error", assertErr("network error"), "", false},
+		{"nil error", nil, "anything", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isProcessInUseError(tc.err, tc.output)
+			if got != tc.want {
+				t.Fatalf("isProcessInUseError(%v, %q) = %v, want %v", tc.err, tc.output, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestExtractProgressPercent(t *testing.T) {
 	cases := []struct {
 		name string
