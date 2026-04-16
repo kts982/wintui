@@ -302,6 +302,22 @@ func (m execModal) viewReview() (string, []string, string) {
 	return title, body, actions
 }
 
+// renderInlineProgress returns a compact "[████░░░░░░] 42%" style bar for
+// use alongside a batch item during execution.
+func renderInlineProgress(percent int) string {
+	const barWidth = 20
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	filled := percent * barWidth / 100
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+	return lipgloss.NewStyle().Foreground(accent).Render(bar) +
+		" " + helpStyle.Render(fmt.Sprintf("%d%%", percent))
+}
+
 func (m execModal) viewRunning() (string, []string, string) {
 	completed, _, total := batchCounters(m.items)
 	title := fmt.Sprintf("%s %d/%d", m.actionVerb(), completed, total)
@@ -313,7 +329,9 @@ func (m execModal) viewRunning() (string, []string, string) {
 		if m.action == retryOpApply {
 			line += "  " + renderActionTag(bi.action)
 		}
-		if text := bi.statusText(); text != "" {
+		if bi.status == batchRunning && bi.progress > 0 {
+			line += "  " + renderInlineProgress(bi.progress)
+		} else if text := bi.statusText(); text != "" {
 			line += "  " + text
 		}
 		body = append(body, line)

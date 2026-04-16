@@ -94,6 +94,50 @@ func TestParseWingetShowFixture(t *testing.T) {
 	}
 }
 
+func TestExtractProgressPercent(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want int
+		ok   bool
+	}{
+		{"bar with percent", "  ████████████████▒▒▒▒▒▒  65%", 65, true},
+		{"bar with percent and bytes", "  ██████  50% (12.5 MB / 25 MB)", 50, true},
+		{"no bar", "This application is licensed 100% by its owner.", 0, false},
+		{"empty", "", 0, false},
+		{"no percent", "██████████▒▒▒▒▒▒", 0, false},
+		{"full bar", "████████████████████  100%", 100, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := extractProgressPercent(tc.line)
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v", ok, tc.ok)
+			}
+			if ok && got != tc.want {
+				t.Fatalf("percent = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProgressSentinelRoundTrip(t *testing.T) {
+	for _, pct := range []int{0, 1, 50, 99, 100} {
+		line := progressLineSentinel(pct)
+		got, ok := parseProgressSentinel(line)
+		if !ok {
+			t.Fatalf("parseProgressSentinel(%q) ok = false, want true", line)
+		}
+		if got != pct {
+			t.Fatalf("parseProgressSentinel(%q) = %d, want %d", line, got, pct)
+		}
+	}
+	// Non-sentinel lines should not parse.
+	if _, ok := parseProgressSentinel("Downloading foo"); ok {
+		t.Fatal("parseProgressSentinel on plain text returned ok = true")
+	}
+}
+
 func TestCleanWingetOutputFixture(t *testing.T) {
 	got := cleanWingetOutput(strings.ReplaceAll(loadWingetFixture(t, "clean_upgrade_output.txt"), "\n", "\r\n"))
 	want := "Installer failed with exit code: 1603\nSee log: C:\\Temp\\winget.log"

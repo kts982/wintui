@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -382,6 +383,90 @@ func streamWingetOutputLines(output string) []string {
 	return lines
 }
 
+// progressSentinelPrefix marks a stream message carrying a percent update
+// rather than a normal text line. Awaiters detect and route these to a
+// progressUpdateMsg. The prefix uses a NUL byte so it cannot collide with
+// real winget output.
+const progressSentinelPrefix = "\x00WT_PROGRESS\x00"
+
+func progressLineSentinel(percent int) string {
+	return fmt.Sprintf("%s%d", progressSentinelPrefix, percent)
+}
+
+// parseProgressSentinel reports whether a stream line is a progress update
+// and extracts the percent.
+func parseProgressSentinel(line string) (int, bool) {
+	if !strings.HasPrefix(line, progressSentinelPrefix) {
+		return 0, false
+	}
+	raw := strings.TrimPrefix(line, progressSentinelPrefix)
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 || n > 100 {
+		return 0, false
+	}
+	return n, true
+}
+
+// extractProgressPercent attempts to pull a percentage from a winget
+// progress bar line like `██████████▒▒▒▒▒  65%` or `  50% (12.5 MB / 25 MB)`.
+// Returns (percent, true) if the line looks like a progress update.
+func extractProgressPercent(line string) (int, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return 0, false
+	}
+	// Only treat as progress if the line actually contains a bar or looks
+	// like a winget progress line (avoids matching "100% legal").
+	hasBar := strings.Contains(trimmed, "██") || strings.Contains(trimmed, "▒▒")
+	idx := strings.Index(trimmed, "%")
+	if idx < 0 {
+		return 0, false
+	}
+	end := idx
+	start := end
+	for start > 0 {
+		c := trimmed[start-1]
+		if c < '0' || c > '9' {
+			break
+		}
+		start--
+	}
+	if start == end {
+		return 0, false
+	}
+	n, err := strconv.Atoi(trimmed[start:end])
+	if err != nil || n < 0 || n > 100 {
+		return 0, false
+	}
+	if !hasBar {
+		return 0, false
+	}
+	return n, true
+}
+
+// splitCRorLF is a bufio.Scanner split function that terminates tokens on
+// either '\r' or '\n'. Winget uses '\r' to update progress bars in place,
+// which the default scanner would buffer until a '\n' arrives.
+func splitCRorLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	for i, b := range data {
+		if b == '\r' || b == '\n' {
+			// Skip combined CRLF by advancing one extra byte.
+			advance := i + 1
+			if b == '\r' && i+1 < len(data) && data[i+1] == '\n' {
+				advance++
+			}
+			return advance, data[:i], nil
+		}
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
 func splitWingetOutputLines(output string) []string {
 	output = strings.ReplaceAll(output, "\r\n", "\n")
 	return strings.FieldsFunc(output, func(r rune) bool { return r == '\r' || r == '\n' })
@@ -719,6 +804,9 @@ func awaitStream(args []string, outChan <-chan string, errChan <-chan error) tea
 				retryArgs: args,
 			}
 		}
+		if pct, isProgress := parseProgressSentinel(line); isProgress {
+			return streamProgressMsg(pct)
+		}
 		return streamMsg(line)
 	}
 }
@@ -741,6 +829,7 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 		}
 		allArgs = append(allArgs, "--accept-source-agreements")
 		cmd := exec.CommandContext(ctx, "winget", allArgs...)
+		applyHiddenChildWindow(cmd)
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -756,10 +845,21 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 
 		var rawOutput strings.Builder
 		scanner := bufio.NewScanner(stdout)
+		scanner.Split(splitCRorLF)
 		for scanner.Scan() {
 			rawLine := scanner.Text()
 			rawOutput.WriteString(rawLine)
 			rawOutput.WriteByte('\n')
+
+			// Emit progress update first (before filtering the line out).
+			if pct, ok := extractProgressPercent(rawLine); ok {
+				select {
+				case outChan <- progressLineSentinel(pct):
+				case <-ctx.Done():
+					errChan <- fmt.Errorf("cancelled")
+					return
+				}
+			}
 
 			lines := streamWingetOutputLines(rawLine)
 			for _, line := range lines {

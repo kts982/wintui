@@ -475,6 +475,12 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, awaitStream(nil, s.streamOut, s.streamErr)
 		}
 
+	case streamProgressMsg:
+		if s.state == workspaceExecuting && s.modal != nil && s.modal.phase == execPhaseRunning && s.modal.idx < len(s.modal.items) {
+			s.modal.items[s.modal.idx].progress = int(msg)
+			return s, awaitStream(nil, s.streamOut, s.streamErr)
+		}
+
 	case streamDoneMsg:
 		// Don't advance if batch was cancelled (phase already set to complete).
 		if s.modal != nil && s.modal.phase == execPhaseRunning && s.modal.idx < len(s.modal.items) {

@@ -47,6 +47,8 @@ type switchScreenMsg screenID
 
 type streamMsg string
 
+type streamProgressMsg int // percent 0-100
+
 type streamDoneMsg struct {
 	err       error
 	retryArgs []string

@@ -30,7 +30,26 @@ var (
 
 	currentExecutablePath = os.Executable
 	evalSymlinksPath      = filepath.EvalSymlinks
+
+	// hideWingetChildWindow, when true, hides the console window spawned by
+	// child processes (winget.exe) — set by the self-upgrade helper which
+	// runs detached and would otherwise cause winget to pop its own window.
+	hideWingetChildWindow bool
 )
+
+// applyHiddenChildWindow configures a command to run without a visible
+// console window. Called by runWingetStreamCtx when hideWingetChildWindow
+// is set.
+func applyHiddenChildWindow(cmd *exec.Cmd) {
+	if !hideWingetChildWindow {
+		return
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
+	cmd.SysProcAttr.HideWindow = true
+}
 
 var selfUpgradeCmd = &cobra.Command{
 	Use:    "self-upgrade",
@@ -38,6 +57,7 @@ var selfUpgradeCmd = &cobra.Command{
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		appSettings = LoadSettings()
+		hideWingetChildWindow = true
 		appendSelfUpdateLogf("helper start parent=%d source=%q version=%q relaunch=%q", selfUpdateParentPID, selfUpdateSource, selfUpdateVersion, selfUpdateRelaunch)
 
 		if selfUpdateParentPID > 0 {
