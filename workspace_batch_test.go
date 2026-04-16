@@ -433,3 +433,51 @@ func TestCtrlEForcesElevationWhenElevationCandidatesPresent(t *testing.T) {
 		t.Fatal("forceElevated = false; elevation-candidate retries should force elevation")
 	}
 }
+
+func TestCtrlERetriesMixedBatchForcesElevationAndIncludesBoth(t *testing.T) {
+	forceNotElevated(t)
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceExecuting
+
+	items := []batchItem{
+		{
+			action: retryOpUpgrade,
+			item:   workspaceItem{pkg: Package{ID: "Admin.Tool", Source: "winget"}},
+			status: batchFailed,
+			err:    assertErr("package requires administrator privileges (0x8a150056)"),
+			output: "0x8a150056",
+		},
+		{
+			action:        retryOpUninstall,
+			item:          workspaceItem{pkg: Package{ID: "Perplexity.Comet", Source: "winget"}},
+			status:        batchFailed,
+			err:           assertErr("exit status 0x8a150066"),
+			output:        "exit status 0x8a150066",
+			blockedByProc: true,
+		},
+	}
+	m := newExecModal(retryOpApply, items)
+	m.phase = execPhaseComplete
+	ws.modal = &m
+
+	next, _ := ws.update(keyMsg("ctrl+e"))
+	got := next.(workspaceScreen)
+
+	if got.modal == nil {
+		t.Fatal("modal = nil after ctrl+e retry")
+	}
+	if !got.modal.forceElevated {
+		t.Fatal("forceElevated = false; mixed retries with elevation candidates should force elevation")
+	}
+	if len(got.modal.items) != 2 {
+		t.Fatalf("retry items = %d, want 2 (both elevation and blocked-by-process items)", len(got.modal.items))
+	}
+	gotIDs := map[string]bool{
+		got.modal.items[0].item.pkg.ID: true,
+		got.modal.items[1].item.pkg.ID: true,
+	}
+	if !gotIDs["Admin.Tool"] || !gotIDs["Perplexity.Comet"] {
+		t.Fatalf("retry items IDs = %v, want both Admin.Tool and Perplexity.Comet", gotIDs)
+	}
+}
