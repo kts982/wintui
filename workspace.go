@@ -248,7 +248,11 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 						retryItems := s.modal.elevationCandidateItems()
 						m := newExecModal(s.modal.action, retryItems)
 						m.phase = execPhaseRunning
-						m.forceElevated = true
+						// Force elevation only when there are genuine elevation
+						// candidates. For blocked-by-process-only batches, the
+						// fix is that the user closed the app — forcing UAC
+						// here would be a surprise.
+						m.forceElevated = s.modal.hasElevationCandidates()
 						s.modal = &m
 						s.state = workspaceExecuting
 						s.exec.reset()

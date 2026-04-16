@@ -362,3 +362,74 @@ func TestBackgroundRefreshPreservesCursorKey(t *testing.T) {
 	}
 
 }
+
+func TestCtrlERetriesBlockedByProcessWithoutForcingElevation(t *testing.T) {
+	forceNotElevated(t)
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceExecuting
+
+	items := []batchItem{
+		{
+			action:        retryOpUninstall,
+			item:          workspaceItem{pkg: Package{Name: "Comet", ID: "Perplexity.Comet", Source: "winget"}},
+			status:        batchFailed,
+			err:           assertErr("exit status 0x8a150066"),
+			output:        "exit status 0x8a150066",
+			blockedByProc: true,
+			allVersions:   true,
+		},
+	}
+	m := newExecModal(retryOpUninstall, items)
+	m.phase = execPhaseComplete
+	ws.modal = &m
+
+	next, _ := ws.update(keyMsg("ctrl+e"))
+	got := next.(workspaceScreen)
+
+	if got.modal == nil {
+		t.Fatal("modal = nil after ctrl+e retry")
+	}
+	if got.modal.phase != execPhaseRunning {
+		t.Fatalf("modal.phase = %d, want execPhaseRunning", got.modal.phase)
+	}
+	if got.modal.forceElevated {
+		t.Fatal("forceElevated = true; blocked-by-process-only retries must not force UAC")
+	}
+	if len(got.modal.items) != 1 || got.modal.items[0].item.pkg.ID != "Perplexity.Comet" {
+		t.Fatalf("retry items = %#v, want only Perplexity.Comet", got.modal.items)
+	}
+	if got.state != workspaceExecuting {
+		t.Fatalf("state = %d, want workspaceExecuting", got.state)
+	}
+}
+
+func TestCtrlEForcesElevationWhenElevationCandidatesPresent(t *testing.T) {
+	forceNotElevated(t)
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceExecuting
+
+	items := []batchItem{
+		{
+			action: retryOpUpgrade,
+			item:   workspaceItem{pkg: Package{ID: "Admin.Tool", Source: "winget"}},
+			status: batchFailed,
+			err:    assertErr("package requires administrator privileges (0x8a150056)"),
+			output: "0x8a150056",
+		},
+	}
+	m := newExecModal(retryOpUpgrade, items)
+	m.phase = execPhaseComplete
+	ws.modal = &m
+
+	next, _ := ws.update(keyMsg("ctrl+e"))
+	got := next.(workspaceScreen)
+
+	if got.modal == nil {
+		t.Fatal("modal = nil after ctrl+e retry")
+	}
+	if !got.modal.forceElevated {
+		t.Fatal("forceElevated = false; elevation-candidate retries should force elevation")
+	}
+}
