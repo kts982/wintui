@@ -510,8 +510,19 @@ func (m execModal) helpKeys() []key.Binding {
 		}
 	case execPhaseComplete:
 		bindings := []key.Binding{}
+		offerRetry := false
+		label := "retry elevated"
 		if !appSettings.AutoElevate && !isElevated() && m.hasElevationCandidates() {
-			bindings = append(bindings, key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", "retry elevated")))
+			offerRetry = true
+		}
+		if m.hasBlockedByProcess() {
+			offerRetry = true
+			if !m.hasElevationCandidates() {
+				label = "retry"
+			}
+		}
+		if offerRetry {
+			bindings = append(bindings, key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("ctrl+e", label)))
 		}
 		enterDesc := "close"
 		if m.hasPendingSelfUpgrade() {

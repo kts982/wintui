@@ -187,3 +187,55 @@ func TestExecModalElevationCandidatesFiltersCorrectly(t *testing.T) {
 		t.Fatalf("second candidate = %s, want Pkg.Three", candidates[1].item.pkg.ID)
 	}
 }
+
+func TestExecModalBlockedByProcessRetryCandidates(t *testing.T) {
+	forceNotElevated(t)
+	items := []batchItem{
+		{
+			item:          workspaceItem{pkg: Package{Name: "Comet", ID: "Perplexity.Comet", Source: "winget"}},
+			action:        retryOpUninstall,
+			status:        batchFailed,
+			err:           assertErr("exit status 0x8a150066"),
+			output:        "exit status 0x8a150066",
+			blockedByProc: true,
+			allVersions:   true,
+		},
+		{item: workspaceItem{pkg: Package{ID: "Pkg.Done", Source: "winget"}}, status: batchDone},
+	}
+	m := newExecModal(retryOpUninstall, items)
+	m.items = items
+	m.phase = execPhaseComplete
+
+	if m.hasElevationCandidates() {
+		t.Fatal("did not expect elevation candidates for a blocked-by-process-only batch")
+	}
+	if !m.hasBlockedByProcess() {
+		t.Fatal("expected hasBlockedByProcess = true")
+	}
+	candidates := m.elevationCandidateItems()
+	if len(candidates) != 1 {
+		t.Fatalf("retry candidates len = %d, want 1", len(candidates))
+	}
+	if candidates[0].item.pkg.ID != "Perplexity.Comet" {
+		t.Fatalf("candidate ID = %q, want Perplexity.Comet", candidates[0].item.pkg.ID)
+	}
+	if !candidates[0].allVersions {
+		t.Fatal("expected allVersions to carry over into retry candidate")
+	}
+
+	// helpKeys in complete phase should advertise ctrl+e with the plain
+	// "retry" label (no elevation candidates in this batch).
+	helps := bindingHelps(m.helpKeys())
+	var found bool
+	for _, h := range helps {
+		if h.Key == "ctrl+e" {
+			found = true
+			if h.Desc != "retry" {
+				t.Fatalf("ctrl+e desc = %q, want %q", h.Desc, "retry")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected ctrl+e binding to be advertised when items are blocked by a running process")
+	}
+}

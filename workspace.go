@@ -244,7 +244,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 						return result, cmd
 					}
 				case "ctrl+e":
-					if s.modal.hasElevationCandidates() {
+					if s.modal.hasElevationCandidates() || s.modal.hasBlockedByProcess() {
 						retryItems := s.modal.elevationCandidateItems()
 						m := newExecModal(s.modal.action, retryItems)
 						m.phase = execPhaseRunning

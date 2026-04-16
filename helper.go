@@ -41,6 +41,11 @@ var helperCmd = &cobra.Command{
 			return fmt.Errorf("helper must be run elevated")
 		}
 
+		// The helper is a hidden service — its winget children must not pop
+		// their own console windows. This is always safe here because all
+		// winget output is streamed back to the TUI over the named pipe.
+		hideWingetChildWindow = true
+
 		timeout := 10 * time.Second
 		conn, err := winio.DialPipe(`\\.\pipe\`+pipeName, &timeout)
 		if err != nil {
