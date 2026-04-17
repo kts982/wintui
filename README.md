@@ -50,7 +50,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Search & Install** — press `s` to search the winget catalog, `Space` to queue packages, `i` to install the focused result or the full install queue
 - **Upgrade / Uninstall** — stage packages across sections, then apply them together, or use `u` / `x` on the focused package or current selection
 - **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), release notes (`n` when available), a live command preview showing exactly what winget will run (including per-package overrides), and scrollable metadata
-- **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners, view compact results with `Ctrl+E` elevated retry
+- **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners and the most recent winget output line, view compact results with `Ctrl+E` retry (elevated when needed, plain retry for process-in-use failures)
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
 - **Self-upgrade handoff** — upgrading `kts982.WinTUI` now restarts through a temporary helper so the running `.exe` can be replaced cleanly
 - **Headless CLI** — use `--check`, `--list`, and `--json` for scripts, Task Scheduler, or CI without launching the TUI
