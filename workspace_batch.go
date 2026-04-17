@@ -367,6 +367,8 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 
 	current.status = batchRunning
 	current.progress = 0
+	current.startedAt = time.Now()
+	current.latestLine = ""
 
 	var outChan <-chan string
 	var errChan <-chan error

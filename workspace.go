@@ -476,6 +476,9 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		// Ignore stream messages if batch was cancelled.
 		if s.state == workspaceExecuting && s.modal != nil && s.modal.phase == execPhaseRunning {
 			s.exec.appendLine(string(msg))
+			if s.modal.idx < len(s.modal.items) {
+				s.modal.items[s.modal.idx].latestLine = string(msg)
+			}
 			return s, awaitStream(nil, s.streamOut, s.streamErr)
 		}
 

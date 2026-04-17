@@ -329,8 +329,8 @@ func (m execModal) viewRunning() (string, []string, string) {
 		if m.action == retryOpApply {
 			line += "  " + renderActionTag(bi.action)
 		}
-		if bi.status == batchRunning && bi.progress > 0 {
-			line += "  " + renderInlineProgress(bi.progress)
+		if bi.status == batchRunning {
+			line += "  " + bi.liveStatus()
 		} else if text := bi.statusText(); text != "" {
 			line += "  " + text
 		}

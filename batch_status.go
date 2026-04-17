@@ -1,6 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"strings"
+	"time"
+
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/lipgloss/v2"
 )
@@ -22,11 +26,13 @@ type batchItem struct {
 	item          workspaceItem
 	status        batchItemStatus
 	err           error
-	output        string // captured output for this item
-	command       string // pre-rendered preview of the winget command (populated at modal open)
-	allVersions   bool   // uninstall all installed versions (duplicate ID)
-	progress      int    // latest progress percent (0-100) while running
-	blockedByProc bool   // failed because a related process is running
+	output        string    // captured output for this item
+	command       string    // pre-rendered preview of the winget command (populated at modal open)
+	allVersions   bool      // uninstall all installed versions (duplicate ID)
+	progress      int       // latest progress percent (0-100) while running
+	blockedByProc bool      // failed because a related process is running
+	startedAt     time.Time // when this item entered the running state
+	latestLine    string    // most recent streamed output line (for live status)
 }
 
 // statusIcon returns a styled icon for the batch item's current state.
@@ -64,6 +70,37 @@ func (b batchItem) statusText() string {
 		return warnStyle.Render("restart to finish")
 	}
 	return ""
+}
+
+// liveStatus returns a compact live status string for a running batch item.
+// Prefers an explicit percent, falls back to the latest output line, then to
+// elapsed time since the item started. Callers should only invoke this for
+// items in the batchRunning state.
+func (b batchItem) liveStatus() string {
+	if b.progress > 0 {
+		return renderInlineProgress(b.progress)
+	}
+	elapsed := ""
+	if !b.startedAt.IsZero() {
+		elapsed = " " + helpStyle.Render(formatElapsed(time.Since(b.startedAt)))
+	}
+	if line := strings.TrimSpace(b.latestLine); line != "" {
+		return helpStyle.Render(truncate(line, 60)) + elapsed
+	}
+	return lipgloss.NewStyle().Foreground(accent).Render("running...") + elapsed
+}
+
+func formatElapsed(d time.Duration) string {
+	if d < time.Second {
+		return ""
+	}
+	s := int(d.Seconds())
+	if s < 60 {
+		return fmt.Sprintf("(%ds)", s)
+	}
+	m := s / 60
+	s = s % 60
+	return fmt.Sprintf("(%dm%02ds)", m, s)
 }
 
 // batchCounters returns (completed, failed, total) from a slice of batch items.
