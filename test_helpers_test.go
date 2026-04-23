@@ -54,6 +54,8 @@ func keyMsg(keyName string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}
 	case "ctrl+e":
 		return tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl}
+	case "ctrl+a":
+		return tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
 	default:
 		r := []rune(keyName)[0]
 		return tea.KeyPressMsg{Code: r, Text: string(r)}

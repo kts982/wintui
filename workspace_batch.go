@@ -313,6 +313,9 @@ func (s workspaceScreen) schedulePendingSelfUpgrade() (screen, tea.Cmd) {
 	if s.modal == nil {
 		return s, nil
 	}
+	if s.modal.pendingSelfUpgradeRequiresAdmin() {
+		return s, nil
+	}
 	item, ok := s.modal.pendingSelfUpgradeItem()
 	if !ok {
 		return s, nil
@@ -323,6 +326,56 @@ func (s workspaceScreen) schedulePendingSelfUpgrade() (screen, tea.Cmd) {
 	return s, func() tea.Msg {
 		return selfUpgradeScheduledMsg{
 			err: startSelfUpgradeHandoff(source, version),
+		}
+	}
+}
+
+func (s workspaceScreen) pendingSelfUpgradeRetryRequest() (*retryRequest, error) {
+	if s.modal == nil {
+		return nil, fmt.Errorf("self-upgrade retry unavailable")
+	}
+
+	var (
+		op    retryOp
+		items []retryItem
+	)
+	for _, item := range s.modal.items {
+		if item.status != batchPendingRestart {
+			continue
+		}
+		if op == "" {
+			op = item.action
+		} else if item.action != op {
+			return nil, fmt.Errorf("pending self-upgrade batch contains mixed actions")
+		}
+		items = append(items, retryItem{
+			ID:      item.item.pkg.ID,
+			Name:    item.item.pkg.Name,
+			Source:  item.item.pkg.Source,
+			Version: s.selectedVersions[item.item.key()],
+		})
+	}
+
+	req := newRetryRequestFromItems(op, items)
+	if req == nil {
+		return nil, fmt.Errorf("pending self-upgrade retry unavailable")
+	}
+	return req, nil
+}
+
+func (s workspaceScreen) schedulePendingSelfUpgradeAdminRelaunch() (screen, tea.Cmd) {
+	req, err := s.pendingSelfUpgradeRetryRequest()
+	if err != nil {
+		return s, func() tea.Msg { return selfUpgradeAdminRelaunchMsg{err: err} }
+	}
+	return s, func() tea.Msg {
+		manualCommand, manualErr := pendingSelfUpgradeManualAdminCommand(*req)
+		if manualErr != nil {
+			return selfUpgradeAdminRelaunchMsg{err: manualErr}
+		}
+		return selfUpgradeAdminRelaunchMsg{
+			err:           startPendingSelfUpgradeAdminRelaunch(*req),
+			manualCommand: manualCommand,
 		}
 	}
 }
@@ -359,8 +412,13 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 
 	if isSelfUpgradeBatchItem(*current) {
 		current.status = batchPendingRestart
-		current.output = "WinTUI will close now. A temporary helper will finish the upgrade and reopen WinTUI in a new window."
-		s.exec.appendLine("WinTUI will close now. A temporary helper will finish the upgrade and reopen WinTUI in a new window.")
+		if isElevated() {
+			current.output = "WinTUI will close now. A local handoff script will finish the upgrade. Start wintui again after it completes."
+			s.exec.appendLine("WinTUI will close now. A local handoff script will finish the upgrade. Start wintui again after it completes.")
+		} else {
+			current.output = "Self-upgrade requires restarting WinTUI as administrator. Use Ctrl+A in the result modal to relaunch as admin and retry."
+			s.exec.appendLine("Self-upgrade requires an elevated WinTUI session. Use Ctrl+A in the result modal to relaunch as admin and retry.")
+		}
 		s.modal.idx++
 		return s.processNextBatchItem()
 	}

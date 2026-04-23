@@ -52,7 +52,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), release notes (`n` when available), a live command preview showing exactly what winget will run (including per-package overrides), and scrollable metadata
 - **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners and the most recent winget output line, view compact results with `Ctrl+E` retry (elevated when needed, plain retry for process-in-use failures)
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
-- **Self-upgrade handoff** — upgrading `kts982.WinTUI` now restarts through a temporary helper so the running `.exe` can be replaced cleanly
+- **Self-upgrade handoff** — upgrading `kts982.WinTUI` now finishes through a local handoff script, and only from an already elevated WinTUI session; non-admin sessions offer `Ctrl+A` to relaunch as admin and retry, with a manual admin command fallback when UAC relaunch is blocked
 - **Headless CLI** — use `--check`, `--list`, and `--json` for scripts, Task Scheduler, or CI without launching the TUI
 
 **System Utilities**
@@ -79,7 +79,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 .\wintui.exe
 ```
 
-> **Tip:** Some operations require administrator privileges. The subtitle bar shows `● admin` / `● user` status. Enable **Silent** mode + **Auto Elevate** in Settings for hands-off elevated operations, or press `Ctrl+E` on the result modal when a package fails. When WinTUI upgrades itself, the result modal will offer a restart handoff to finish the replacement and relaunch the app.
+> **Tip:** Some operations require administrator privileges. The subtitle bar shows `● admin` / `● user` status. Enable **Silent** mode + **Auto Elevate** in Settings for hands-off elevated operations, or press `Ctrl+E` on the result modal when a package fails. WinTUI only finishes its own upgrade from an already elevated session; otherwise the result modal offers `Ctrl+A` to relaunch WinTUI as admin and retry. After the handoff finishes, start `wintui` again manually.
 
 ### Headless CLI
 

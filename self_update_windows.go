@@ -1,39 +1,37 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/spf13/cobra"
 	"golang.org/x/sys/windows"
 )
 
 const (
-	selfPackageID          = "kts982.WinTUI"
 	selfUpdateHelperPrefix = "wintui-self-update-"
+	selfUpdateScriptPrefix = "handoff-"
 	selfUpdateLogName      = "wintui-self-update.log"
+	selfUpdateManifestName = "rehearsal-manifest.txt"
 )
 
 var (
-	selfUpdateParentPID int
-	selfUpdateSource    string
-	selfUpdateVersion   string
-	selfUpdateRelaunch  string
+	// selfPackageID is a var rather than a const so canary rehearsal builds can
+	// override it with ldflags without changing production code paths.
+	selfPackageID = "kts982.WinTUI"
 
 	currentExecutablePath = os.Executable
 	evalSymlinksPath      = filepath.EvalSymlinks
+	userCacheDirPath      = os.UserCacheDir
+	startSelfUpdateHost   = startSelfUpdateScriptHost
 
 	// hideWingetChildWindow, when true, hides the console window spawned by
-	// child processes (winget.exe) — set by the self-upgrade helper which
-	// runs detached and would otherwise cause winget to pop its own window.
+	// child processes (winget.exe). This is used by the elevated helper which
+	// streams output back to the TUI instead of owning a visible console.
 	hideWingetChildWindow bool
 )
 
@@ -51,50 +49,6 @@ func applyHiddenChildWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr.HideWindow = true
 }
 
-var selfUpgradeCmd = &cobra.Command{
-	Use:    "self-upgrade",
-	Short:  "Internal self-update helper",
-	Hidden: true,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		appSettings = LoadSettings()
-		hideWingetChildWindow = true
-		appendSelfUpdateLogf("helper start parent=%d source=%q version=%q relaunch=%q", selfUpdateParentPID, selfUpdateSource, selfUpdateVersion, selfUpdateRelaunch)
-
-		if selfUpdateParentPID > 0 {
-			if err := waitForProcessExit(selfUpdateParentPID, 2*time.Minute); err != nil {
-				appendSelfUpdateLogf("wait for parent failed: %v", err)
-			}
-		}
-
-		if err := runSelfUpgrade(selfUpdateSource, selfUpdateVersion); err != nil {
-			appendSelfUpdateLogf("winget self-upgrade failed: %v", err)
-		} else {
-			appendSelfUpdateLogf("winget self-upgrade completed")
-			cache.deleteDiskCache()
-			appendSelfUpdateLogf("cache cleared before relaunch")
-		}
-
-		if selfUpdateRelaunch != "" {
-			if err := waitForPath(selfUpdateRelaunch, 30*time.Second); err != nil {
-				appendSelfUpdateLogf("wait for relaunch path failed: %v", err)
-			} else if err := relaunchUpdatedBinary(selfUpdateRelaunch); err != nil {
-				appendSelfUpdateLogf("relaunch failed: %v", err)
-			} else {
-				appendSelfUpdateLogf("relaunch started: %s", selfUpdateRelaunch)
-			}
-		}
-		return nil
-	},
-}
-
-func init() {
-	selfUpgradeCmd.Flags().IntVar(&selfUpdateParentPID, "parent-pid", 0, "Parent WinTUI process to wait for")
-	selfUpgradeCmd.Flags().StringVar(&selfUpdateSource, "source", "", "Package source for self-upgrade")
-	selfUpgradeCmd.Flags().StringVar(&selfUpdateVersion, "package-version", "", "Package version for self-upgrade")
-	selfUpgradeCmd.Flags().StringVar(&selfUpdateRelaunch, "relaunch-exe", "", "Executable path to relaunch after self-upgrade")
-	rootCmd.AddCommand(selfUpgradeCmd)
-}
-
 func isSelfPackageID(id string) bool {
 	return strings.EqualFold(strings.TrimSpace(id), selfPackageID)
 }
@@ -107,54 +61,181 @@ func startSelfUpgradeHandoff(source, version string) error {
 	if !isRunningInstalledWinTUI() {
 		return fmt.Errorf("self-upgrade requires the installed WinTUI binary")
 	}
+	if !isElevated() {
+		return fmt.Errorf("self-upgrade handoff requires WinTUI to already be running as administrator")
+	}
 
+	scriptPath, err := writeSelfUpdateScript(os.Getpid(), source, version)
+	if err != nil {
+		return err
+	}
+
+	appendSelfUpdateLogf("launching handoff script: %s", scriptPath)
+	cmd := exec.Command("powershell.exe", powerShellHostArgs(scriptPath)...)
+	if err := startSelfUpdateHost(cmd); err != nil {
+		return err
+	}
+	clearSelfUpgradeManifestOverride()
+	return nil
+}
+
+func powerShellHostArgs(scriptPath string) []string {
+	return []string{
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy", "Bypass",
+		"-WindowStyle", "Minimized",
+		"-File", scriptPath,
+	}
+}
+
+func startPendingSelfUpgradeAdminRelaunch(req retryRequest) error {
 	exePath, err := currentExecutablePath()
 	if err != nil {
 		return err
 	}
 
-	helperPath, err := copySelfUpdateHelper(exePath)
+	args, err := retryRequestArgs(req)
 	if err != nil {
 		return err
 	}
 
-	args := []string{
-		"self-upgrade",
-		"--parent-pid", strconv.Itoa(os.Getpid()),
-		"--relaunch-exe", exePath,
-	}
-	if strings.TrimSpace(source) != "" {
-		args = append(args, "--source", source)
-	}
-	if strings.TrimSpace(version) != "" {
-		args = append(args, "--package-version", version)
-	}
-
-	cmd := exec.Command(helperPath, args...)
-	return startDetachedHelper(cmd)
+	appendSelfUpdateLogf("relaunching as admin for pending self-upgrade retry")
+	return relaunchAsAdminFunc(exePath, args, swShowNormal)
 }
 
-func copySelfUpdateHelper(exePath string) (string, error) {
-	src, err := os.Open(exePath)
+func pendingSelfUpgradeManualAdminCommand(req retryRequest) (string, error) {
+	args, err := retryRequestArgs(req)
 	if err != nil {
 		return "", err
 	}
-	defer src.Close()
 
-	dst, err := os.CreateTemp(os.TempDir(), selfUpdateHelperPrefix+"*.exe")
-	if err != nil {
+	parts := []string{"wintui"}
+	for _, arg := range args {
+		parts = append(parts, quotePowerShellCommandArg(arg))
+	}
+	return strings.Join(parts, " "), nil
+}
+
+func quotePowerShellCommandArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func retryRequestArgs(req retryRequest) ([]string, error) {
+	if !req.valid() {
+		return nil, fmt.Errorf("invalid retry request")
+	}
+
+	args := []string{"--retry-op", string(req.Op)}
+	if req.isBatch() {
+		encoded, err := encodeRetryItems(req.Items)
+		if err != nil {
+			return nil, err
+		}
+		return append(args, "--retry-batch", encoded), nil
+	}
+
+	args = append(args, "--id", req.ID)
+	if strings.TrimSpace(req.Name) != "" {
+		args = append(args, "--name", req.Name)
+	}
+	if strings.TrimSpace(req.Source) != "" {
+		args = append(args, "--source", req.Source)
+	}
+	if strings.TrimSpace(req.Version) != "" {
+		args = append(args, "--package-version", req.Version)
+	}
+	return args, nil
+}
+
+func writeSelfUpdateScript(parentPID int, source, version string) (string, error) {
+	scriptPath := selfUpdateScriptPath(parentPID)
+	script := renderSelfUpdateScript(parentPID, selfUpgradeCommandArgs(source, version))
+	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
 		return "", err
 	}
-	defer dst.Close()
+	return scriptPath, nil
+}
 
-	if _, err := io.Copy(dst, src); err != nil {
-		os.Remove(dst.Name())
-		return "", err
+func renderSelfUpdateScript(parentPID int, wingetArgs []string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "$ParentPid = %d\n", parentPID)
+	fmt.Fprintf(&b, "$LogPath = %s\n", quotePowerShellLiteral(selfUpdateLogPath()))
+	fmt.Fprintf(&b, "$CachePath = %s\n", quotePowerShellLiteral(diskCachePath()))
+	b.WriteString("$WingetArgs = @(\n")
+	for i, arg := range wingetArgs {
+		suffix := ","
+		if i == len(wingetArgs)-1 {
+			suffix = ""
+		}
+		fmt.Fprintf(&b, "  %s%s\n", quotePowerShellLiteral(arg), suffix)
 	}
-	return dst.Name(), nil
+	b.WriteString(")\n")
+	b.WriteString(`
+$ErrorActionPreference = 'Stop'
+
+function Write-Log([string]$Message) {
+  $timestamp = Get-Date -Format o
+  Add-Content -Path $LogPath -Value "$timestamp $Message"
+}
+
+Write-Log ("handoff start parent={0}" -f $ParentPid)
+
+if ($ParentPid -gt 0) {
+  try {
+    Wait-Process -Id $ParentPid -Timeout 120 -ErrorAction Stop
+  } catch {
+    Write-Log ("wait for parent failed: {0}" -f $_.Exception.Message)
+  }
+}
+
+try {
+  Write-Log ("winget start: {0}" -f ($WingetArgs -join ' '))
+  & winget.exe @WingetArgs
+  $wingetExit = $LASTEXITCODE
+  if ($wingetExit -ne 0) {
+    throw "winget exited with code $wingetExit"
+  }
+  Write-Log "winget self-upgrade completed"
+  if (Test-Path -LiteralPath $CachePath) {
+    Remove-Item -LiteralPath $CachePath -Force -ErrorAction SilentlyContinue
+    Write-Log "cache cleared after upgrade"
+  }
+  Write-Log "manual relaunch required: start wintui again"
+} catch {
+  Write-Log ("winget self-upgrade failed: {0}" -f $_.Exception.Message)
+}
+
+Start-Sleep -Seconds 2
+Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+`)
+	return b.String()
+}
+
+func quotePowerShellLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func startSelfUpdateScriptHost(cmd *exec.Cmd) error {
+	configureSelfUpdateScriptHost(cmd)
+	return cmd.Start()
+}
+
+func configureSelfUpdateScriptHost(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windows.CREATE_NEW_CONSOLE,
+	}
 }
 
 func cleanupStaleSelfUpdateHelpers() {
+	cleanupStaleSelfUpdateExeHelpers()
+	cleanupStaleSelfUpdateScripts()
+	cleanupStaleSelfUpdateManifestOverride()
+}
+
+func cleanupStaleSelfUpdateExeHelpers() {
 	pattern := filepath.Join(os.TempDir(), selfUpdateHelperPrefix+"*.exe")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -170,8 +251,60 @@ func cleanupStaleSelfUpdateHelpers() {
 	}
 }
 
+func cleanupStaleSelfUpdateScripts() {
+	baseDir, err := userCacheDirPath()
+	if err != nil || strings.TrimSpace(baseDir) == "" {
+		return
+	}
+	dir := filepath.Join(baseDir, "wintui", "self-update")
+	if _, err := os.Stat(dir); err != nil {
+		return
+	}
+	pattern := filepath.Join(dir, selfUpdateScriptPrefix+"*.ps1")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return
+	}
+	for _, path := range matches {
+		_ = os.Remove(path)
+	}
+}
+
+func cleanupStaleSelfUpdateManifestOverride() {
+	path := selfUpdateManifestOverridePath()
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return
+	}
+	if time.Since(info.ModTime()) > 24*time.Hour || loadSelfUpgradeManifestOverride() == "" {
+		_ = os.Remove(path)
+	}
+}
+
+func selfUpdateStateDir() string {
+	baseDir, err := userCacheDirPath()
+	if err != nil || strings.TrimSpace(baseDir) == "" {
+		baseDir = os.TempDir()
+	}
+	dir := filepath.Join(baseDir, "wintui", "self-update")
+	_ = os.MkdirAll(dir, 0755)
+	return dir
+}
+
+func selfUpdateScriptPath(parentPID int) string {
+	name := "handoff.ps1"
+	if parentPID > 0 {
+		name = fmt.Sprintf("%s%d.ps1", selfUpdateScriptPrefix, parentPID)
+	}
+	return filepath.Join(selfUpdateStateDir(), name)
+}
+
 func selfUpdateLogPath() string {
-	return filepath.Join(os.TempDir(), selfUpdateLogName)
+	return filepath.Join(selfUpdateStateDir(), selfUpdateLogName)
+}
+
+func selfUpdateManifestOverridePath() string {
+	return filepath.Join(selfUpdateStateDir(), selfUpdateManifestName)
 }
 
 func appendSelfUpdateLogf(format string, args ...any) {
@@ -183,28 +316,54 @@ func appendSelfUpdateLogf(format string, args ...any) {
 	_, _ = fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, args...))
 }
 
-func configureDetachedHelper(cmd *exec.Cmd) (*os.File, error) {
-	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-	if err != nil {
-		return nil, err
+func selfUpgradeCommandArgs(source, version string) []string {
+	if manifestPath := loadSelfUpgradeManifestOverride(); manifestPath != "" {
+		return selfUpgradeManifestArgs(manifestPath)
 	}
-	cmd.Stdin = devNull
-	cmd.Stdout = devNull
-	cmd.Stderr = devNull
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP,
-		HideWindow:    true,
+
+	args := upgradeCommandArgs(selfPackageID, source, version)
+	if !containsArg(args, "--force") {
+		args = append(args, "--force")
 	}
-	return devNull, nil
+	return args
 }
 
-func startDetachedHelper(cmd *exec.Cmd) error {
-	devNull, err := configureDetachedHelper(cmd)
-	if err != nil {
-		return err
+func selfUpgradeManifestArgs(manifestPath string) []string {
+	args := []string{
+		"upgrade",
+		"--manifest", manifestPath,
+		"--accept-package-agreements",
+		"--disable-interactivity",
 	}
-	defer devNull.Close()
-	return cmd.Start()
+	if !containsArg(args, "--force") {
+		args = append(args, "--force")
+	}
+	return args
+}
+
+func loadSelfUpgradeManifestOverride() string {
+	data, err := os.ReadFile(selfUpdateManifestOverridePath())
+	if err != nil {
+		return ""
+	}
+
+	manifestPath := strings.TrimSpace(string(data))
+	if manifestPath == "" {
+		return ""
+	}
+	if !filepath.IsAbs(manifestPath) {
+		if absPath, err := filepath.Abs(manifestPath); err == nil {
+			manifestPath = absPath
+		}
+	}
+	if _, err := os.Stat(manifestPath); err != nil {
+		return ""
+	}
+	return manifestPath
+}
+
+func clearSelfUpgradeManifestOverride() {
+	_ = os.Remove(selfUpdateManifestOverridePath())
 }
 
 func containsArg(args []string, target string) bool {
@@ -214,76 +373,6 @@ func containsArg(args []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func selfUpgradeCommandArgs(source, version string) []string {
-	args := upgradeCommandArgs(selfPackageID, source, version)
-	if !containsArg(args, "--force") {
-		args = append(args, "--force")
-	}
-	return args
-}
-
-func runSelfUpgrade(source, version string) error {
-	args := selfUpgradeCommandArgs(source, version)
-	_, err := runActionSmartSyncCtx(context.Background(), args...)
-	return err
-}
-
-func runActionSmartSyncCtx(ctx context.Context, args ...string) (string, error) {
-	outChan, errChan := runActionSmartStreamCtx(ctx, args...)
-	var lines []string
-	for line := range outChan {
-		lines = append(lines, line)
-	}
-	return strings.Join(lines, "\n"), <-errChan
-}
-
-func relaunchUpdatedBinary(exePath string) error {
-	cmd := exec.Command(exePath)
-	configureRelaunchCommand(cmd)
-	return cmd.Start()
-}
-
-func configureRelaunchCommand(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windows.CREATE_NEW_CONSOLE,
-	}
-}
-
-func waitForPath(path string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		if _, err := os.Stat(path); err == nil {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out waiting for %s", path)
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-}
-
-func waitForProcessExit(pid int, timeout time.Duration) error {
-	handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
-	if err != nil {
-		return nil
-	}
-	defer windows.CloseHandle(handle)
-
-	waitMS := uint32(timeout / time.Millisecond)
-	if waitMS == 0 {
-		waitMS = 1
-	}
-
-	status, err := windows.WaitForSingleObject(handle, waitMS)
-	if err != nil {
-		return err
-	}
-	if status == uint32(windows.WAIT_TIMEOUT) {
-		return fmt.Errorf("timed out waiting for process %d to exit", pid)
-	}
-	return nil
 }
 
 func isRunningInstalledWinTUI() bool {

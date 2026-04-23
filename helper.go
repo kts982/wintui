@@ -144,5 +144,5 @@ func startElevatedHelper(ctx context.Context, pipeID string) (net.Listener, erro
 }
 
 func relaunchElevatedWithArgs(exe string, args []string) error {
-	return relaunchAsAdmin(exe, args, swHide)
+	return relaunchAsAdminFunc(exe, args, swHide)
 }

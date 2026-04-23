@@ -92,6 +92,16 @@ Close the running application and press ctrl+e to retry.
 
 Ctrl+E also retries these items. The label changes to `ctrl+e retry` when only process-blocked items need retrying (no elevation needed); it stays `ctrl+e retry elevated` when there are also permission failures. Close the blocking application before pressing Ctrl+E.
 
+## Self-Upgrade Safety
+
+WinTUI's own WinGet upgrade path is intentionally stricter than normal package upgrades:
+
+- WinTUI only completes its self-upgrade handoff when the current WinTUI session is already elevated
+- Non-admin sessions stop at the result modal and show `Ctrl+A` to relaunch WinTUI as administrator and retry
+- If the `Ctrl+A` relaunch is blocked or cancelled by Windows, the result modal shows a command the user can run from an administrator PowerShell
+- The handoff now uses a local PowerShell script in WinTUI's cache directory instead of dropping a temporary helper EXE into `%TEMP%`
+- After the handoff finishes, WinTUI does not reopen itself automatically; start `wintui` again manually
+
 ## Recommended Usage
 
 - **Silent + Auto Elevate** for the smoothest experience (all operations elevated upfront)

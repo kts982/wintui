@@ -19,6 +19,9 @@ func (s workspaceScreen) view(width, height int) string {
 		return "  " + sectionTitleStyle.Render("Package Details") + "\n\n" +
 			s.detail.view(width, height-2)
 	}
+	if s.modal != nil {
+		return s.modal.view(width, height)
+	}
 
 	switch s.state {
 	case workspaceLoading:
@@ -28,9 +31,6 @@ func (s workspaceScreen) view(width, height int) string {
 	case workspaceReady:
 		return s.viewReady(width, height)
 	case workspaceConfirm, workspaceExecuting:
-		if s.modal != nil {
-			return s.modal.view(width, height)
-		}
 		return s.viewReady(width, height)
 	}
 	return ""

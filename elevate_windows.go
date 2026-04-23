@@ -10,8 +10,11 @@ import (
 )
 
 const (
-	swHide = 0
+	swHide       = 0
+	swShowNormal = 1
 )
+
+var relaunchAsAdminFunc = relaunchAsAdmin
 
 func relaunchAsAdmin(exe string, args []string, showCmd int) error {
 	verb, err := windows.UTF16PtrFromString("runas")

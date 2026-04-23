@@ -481,3 +481,202 @@ func TestCtrlERetriesMixedBatchForcesElevationAndIncludesBoth(t *testing.T) {
 		t.Fatalf("retry items IDs = %v, want both Admin.Tool and Perplexity.Comet", gotIDs)
 	}
 }
+
+func TestCtrlASchedulesAdminRelaunchForPendingSelfUpgrade(t *testing.T) {
+	forceNotElevated(t)
+
+	origExe := currentExecutablePath
+	origRelaunch := relaunchAsAdminFunc
+	currentExecutablePath = func() (string, error) {
+		return `C:\Users\ktsio\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
+	}
+	var (
+		gotExe  string
+		gotArgs []string
+		gotShow int
+	)
+	relaunchAsAdminFunc = func(exe string, args []string, showCmd int) error {
+		gotExe = exe
+		gotArgs = append([]string(nil), args...)
+		gotShow = showCmd
+		return nil
+	}
+	t.Cleanup(func() {
+		currentExecutablePath = origExe
+		relaunchAsAdminFunc = origRelaunch
+	})
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceExecuting
+	item := workspaceItem{pkg: Package{Name: "WinTUI", ID: selfPackageID, Source: "winget"}}
+	ws.selectedVersions[item.key()] = "2.4.0"
+
+	items := []batchItem{{
+		action: retryOpUpgrade,
+		item:   item,
+		status: batchPendingRestart,
+	}}
+	m := newExecModal(retryOpUpgrade, items)
+	m.phase = execPhaseComplete
+	ws.modal = &m
+
+	next, cmd := ws.update(keyMsg("ctrl+a"))
+	if cmd == nil {
+		t.Fatal("cmd = nil, want admin relaunch message command")
+	}
+	got := next.(workspaceScreen)
+	if got.modal == nil || !got.modal.pendingSelfUpgradeRequiresAdmin() {
+		t.Fatal("expected pending self-upgrade modal to remain active before relaunch confirmation")
+	}
+
+	msg := cmd()
+	relaunchMsg, ok := msg.(selfUpgradeAdminRelaunchMsg)
+	if !ok {
+		t.Fatalf("cmd() msg = %T, want selfUpgradeAdminRelaunchMsg", msg)
+	}
+	if relaunchMsg.err != nil {
+		t.Fatalf("selfUpgradeAdminRelaunchMsg.err = %v", relaunchMsg.err)
+	}
+	if gotExe == "" || !strings.Contains(strings.ToLower(gotExe), `winget\links\wintui.exe`) {
+		t.Fatalf("relaunch exe = %q, want installed WinTUI path", gotExe)
+	}
+	if gotShow != swShowNormal {
+		t.Fatalf("showCmd = %d, want %d", gotShow, swShowNormal)
+	}
+	wantPairs := [][]string{
+		{"--retry-op", "upgrade"},
+		{"--id", selfPackageID},
+		{"--source", "winget"},
+		{"--package-version", "2.4.0"},
+	}
+	for _, pair := range wantPairs {
+		found := false
+		for i := 0; i+1 < len(gotArgs); i++ {
+			if gotArgs[i] == pair[0] && gotArgs[i+1] == pair[1] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("relaunch args = %#v, missing %q %q", gotArgs, pair[0], pair[1])
+		}
+	}
+}
+
+func TestCtrlAFailureShowsManualAdminCommand(t *testing.T) {
+	forceNotElevated(t)
+
+	origExe := currentExecutablePath
+	origRelaunch := relaunchAsAdminFunc
+	currentExecutablePath = func() (string, error) {
+		return `C:\Users\ktsio\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
+	}
+	relaunchAsAdminFunc = func(exe string, args []string, showCmd int) error {
+		return assertErr("The operation was canceled by the user.")
+	}
+	t.Cleanup(func() {
+		currentExecutablePath = origExe
+		relaunchAsAdminFunc = origRelaunch
+	})
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceExecuting
+	item := workspaceItem{pkg: Package{Name: "WinTUI", ID: selfPackageID, Source: "winget"}}
+	ws.selectedVersions[item.key()] = "2.4.0"
+
+	items := []batchItem{{
+		action: retryOpUpgrade,
+		item:   item,
+		status: batchPendingRestart,
+	}}
+	m := newExecModal(retryOpUpgrade, items)
+	m.phase = execPhaseComplete
+	ws.modal = &m
+
+	next, cmd := ws.update(keyMsg("ctrl+a"))
+	if cmd == nil {
+		t.Fatal("cmd = nil, want admin relaunch message command")
+	}
+	msg := cmd()
+	got := next.(workspaceScreen)
+	next, _ = got.update(msg)
+	got = next.(workspaceScreen)
+
+	if got.modal == nil || len(got.modal.items) != 1 {
+		t.Fatalf("modal = %#v, want one pending item", got.modal)
+	}
+	output := got.modal.items[0].output
+	for _, want := range []string{
+		"Admin relaunch failed: The operation was canceled by the user.",
+		"Open PowerShell as administrator and run:",
+		"wintui '--retry-op' 'upgrade'",
+		"'--retry-op' 'upgrade'",
+		"'--package-version' '2.4.0'",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("modal output = %q, missing %q", output, want)
+		}
+	}
+}
+
+func TestExtractKeyLogLinesPreservesManualAdminFallback(t *testing.T) {
+	output := strings.Join([]string{
+		"Admin relaunch failed: The operation was canceled by the user.",
+		"Open PowerShell as administrator and run:",
+		"wintui '--retry-op' 'upgrade'",
+	}, "\n")
+
+	lines := extractKeyLogLines(output)
+	want := []string{
+		"Admin relaunch failed: The operation was canceled by the user.",
+		"Open PowerShell as administrator and run:",
+		"wintui '--retry-op' 'upgrade'",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("extractKeyLogLines() = %#v, want %#v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Fatalf("extractKeyLogLines()[%d] = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestWorkspaceDataMsgPreservesActiveModalState(t *testing.T) {
+	original := appSettings
+	appSettings = DefaultSettings()
+	t.Cleanup(func() { appSettings = original })
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceExecuting
+	item := workspaceItem{pkg: Package{Name: "WinTUI", ID: selfPackageID, Source: "winget"}}
+	items := []batchItem{{
+		action: retryOpUpgrade,
+		item:   item,
+		status: batchPendingRestart,
+	}}
+	m := newExecModal(retryOpUpgrade, items)
+	m.phase = execPhaseComplete
+	ws.modal = &m
+
+	next, cmd := ws.update(workspaceDataMsg{
+		installed: []Package{
+			{Name: "WinTUI", ID: selfPackageID, Source: "winget", Version: "0.0.1"},
+		},
+		upgradeable: []Package{},
+	})
+	if cmd != nil {
+		t.Fatal("workspaceDataMsg should not replace the active modal flow with a new command")
+	}
+
+	got := next.(workspaceScreen)
+	if got.state != workspaceExecuting {
+		t.Fatalf("state = %d, want workspaceExecuting (%d)", got.state, workspaceExecuting)
+	}
+	if got.modal == nil || got.modal.phase != execPhaseComplete {
+		t.Fatalf("modal = %#v, want active execPhaseComplete modal", got.modal)
+	}
+	if len(got.items) != 1 || got.items[0].pkg.ID != selfPackageID {
+		t.Fatalf("items = %#v, want refreshed workspace data without losing modal", got.items)
+	}
+}

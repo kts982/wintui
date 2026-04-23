@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
@@ -149,6 +150,11 @@ type selfUpgradeScheduledMsg struct {
 	err error
 }
 
+type selfUpgradeAdminRelaunchMsg struct {
+	err           error
+	manualCommand string
+}
+
 // countUpgradeable returns how many items are upgradeable.
 
 func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
@@ -234,6 +240,10 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				switch msg.String() {
 				case "enter":
 					if s.modal.hasPendingSelfUpgrade() {
+						if s.modal.pendingSelfUpgradeRequiresAdmin() {
+							result, cmd := s.dismissModalAndRefresh()
+							return result, cmd
+						}
 						return s.schedulePendingSelfUpgrade()
 					}
 					result, cmd := s.dismissModalAndRefresh()
@@ -260,6 +270,10 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 							s.modal.spinner.Tick,
 							func() tea.Msg { return startWorkspaceBatchMsg{} },
 						)
+					}
+				case "ctrl+a":
+					if s.modal.pendingSelfUpgradeRequiresAdmin() {
+						return s.schedulePendingSelfUpgradeAdminRelaunch()
 					}
 				}
 				return s, nil
@@ -341,6 +355,14 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			_ = persistSettings(nextSettings)
 		}
 		s.items, s.hiddenUpgrades = buildItems(msg.installed, msg.upgradeable)
+		if s.modal != nil {
+			if msg.fromDisk {
+				s.cacheAge = msg.savedAt
+				s.refreshing = true
+				return s, s.startBackgroundRefresh()
+			}
+			return s, nil
+		}
 		if len(s.items) == 0 {
 			s.state = workspaceEmpty
 		} else {
@@ -416,6 +438,26 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					if s.modal.items[i].status == batchPendingRestart {
 						s.modal.items[i].status = batchFailed
 						s.modal.items[i].err = fmt.Errorf("self-upgrade handoff failed: %v", msg.err)
+						break
+					}
+				}
+			}
+			return s, nil
+		}
+		return s, tea.Quit
+
+	case selfUpgradeAdminRelaunchMsg:
+		if msg.err != nil {
+			if s.modal != nil {
+				for i := range s.modal.items {
+					if s.modal.items[i].status == batchPendingRestart {
+						if s.modal.items[i].output != "" {
+							s.modal.items[i].output += "\n"
+						}
+						s.modal.items[i].output += "Admin relaunch failed: " + msg.err.Error()
+						if strings.TrimSpace(msg.manualCommand) != "" {
+							s.modal.items[i].output += "\nOpen PowerShell as administrator and run:\n" + msg.manualCommand
+						}
 						break
 					}
 				}
