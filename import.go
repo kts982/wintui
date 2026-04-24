@@ -657,7 +657,7 @@ func (m importModel) view(width, height int) string {
 				b.WriteString(fmt.Sprintf("  %s\n\n",
 					warnStyle.Render(fmt.Sprintf("Import finished: %d succeeded, %d failed", successCount, failCount))))
 			}
-			output := formatBatchResults(m.batchIDs, m.batchErrs, m.batchOutputs)
+			output := formatBatchResults(m.batchIDs, m.batchErrs)
 			lines := strings.Split(output, "\n")
 			maxLines := height - 8
 			if maxLines < 5 {

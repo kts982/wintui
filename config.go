@@ -297,13 +297,18 @@ func LoadSettings() Settings {
 	return s
 }
 
-// SaveSettings writes settings to disk.
+// SaveSettings writes settings to disk atomically via temp file + rename.
 func SaveSettings(s Settings) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath(), data, 0644)
+	path := configPath()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func persistSettings(next Settings) error {
@@ -461,7 +466,7 @@ var settingDefs = []settingDef{
 		key:     "source",
 		label:   "Default Source",
 		desc:    "Preferred source for search and install",
-		detail:  "This affects searches, installs, and upgrade queries.\nUninstall works from the installed package database and does not depend on this setting.",
+		detail:  "This affects searches and installs.\nUpgrades query all sources; uninstall works from the installed package database and does not depend on this setting.",
 		stype:   settingChoice,
 		choices: []string{"winget", "msstore", ""},
 		choiceLabels: map[string]string{

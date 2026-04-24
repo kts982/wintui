@@ -24,7 +24,7 @@ func scrollWindow(cursor, total, maxVisible int) (start, end int) {
 	return start, end
 }
 
-func formatBatchResults(ids []string, errs []error, outputs []string) string {
+func formatBatchResults(ids []string, errs []error) string {
 	var b strings.Builder
 	for i, id := range ids {
 		if i >= len(errs) {

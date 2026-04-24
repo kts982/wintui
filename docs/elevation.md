@@ -1,6 +1,6 @@
 # Elevation and Retry Behavior
 
-WinTUI supports three elevation paths:
+WinTUI supports four elevation paths:
 
 1. Run the whole app from an already elevated terminal
 2. **Silent + Auto Elevate** — all operations run elevated upfront via the helper

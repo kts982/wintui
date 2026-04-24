@@ -815,7 +815,6 @@ func extractPackage(line string, cols []colPos) Package {
 				pkg.Source = val
 			}
 		}
-		_ = i
 	}
 	return pkg
 }

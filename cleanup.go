@@ -326,8 +326,7 @@ func (s cleanupScreen) view(width, height int) string {
 
 	case cleanupConfirm:
 		targets := s.cleanupTargets()
-		bg := s.viewReady(width, height)
-		return s.viewConfirm(bg, width, height, len(targets))
+		return s.viewConfirm(width, height, len(targets))
 
 	case cleanupExecuting:
 		return fmt.Sprintf("  %s Cleaning up...\n\n  %s\n", s.spinner.View(), s.progress.view())
@@ -380,7 +379,7 @@ func (s cleanupScreen) viewReady(width, height int) string {
 	return panel + "\n"
 }
 
-func (s cleanupScreen) viewConfirm(bg string, width, height, count int) string {
+func (s cleanupScreen) viewConfirm(width, height, count int) string {
 	title := "Confirm Cleanup"
 	body := fmt.Sprintf("Delete %d item(s)?\nEstimated space to free: %s", count, formatBytes(s.selectedBytes()))
 
