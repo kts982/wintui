@@ -89,10 +89,10 @@ func getUpgradeableCtx(ctx context.Context) ([]Package, error) {
 }
 
 func getInstalledCtx(ctx context.Context) ([]Package, error) {
+	// --include-unknown is only valid for `winget upgrade`; passing it to
+	// `winget list` makes winget exit non-zero with a usage error, which
+	// surfaces as an empty installed list in the TUI.
 	args := []string{"list", "--count", "1000"}
-	if appSettings.IncludeUnknown {
-		args = append(args, "--include-unknown")
-	}
 	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
 		return nil, err

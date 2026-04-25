@@ -371,12 +371,11 @@ func (s Settings) BuildUninstallArgs(includePurge bool) []string {
 	return args
 }
 
-// BuildListArgs returns extra winget flags for listing/upgrade queries.
+// BuildListArgs returns extra winget flags for search queries.
+// --include-unknown is intentionally excluded: it is only valid on
+// `winget upgrade`; `winget search` rejects it.
 func (s Settings) BuildListArgs() []string {
 	var args []string
-	if s.IncludeUnknown {
-		args = append(args, "--include-unknown")
-	}
 	if s.Source != "" {
 		args = append(args, "--source", s.Source)
 	}
