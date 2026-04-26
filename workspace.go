@@ -310,6 +310,36 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.cursor++
 				return s, s.focusSummary()
 			}
+		case "pgup":
+			if s.cursor > 0 {
+				s.cursor -= listPageStep
+				if s.cursor < 0 {
+					s.cursor = 0
+				}
+				return s, s.focusSummary()
+			}
+		case "pgdown":
+			q, sr, up, ins := s.displayItems()
+			total := len(q) + len(sr) + len(up) + len(ins)
+			if s.cursor < total-1 {
+				s.cursor += listPageStep
+				if s.cursor > total-1 {
+					s.cursor = total - 1
+				}
+				return s, s.focusSummary()
+			}
+		case "home":
+			start, end := s.cursorSectionBounds()
+			if end > start && s.cursor != start {
+				s.cursor = start
+				return s, s.focusSummary()
+			}
+		case "end":
+			start, end := s.cursorSectionBounds()
+			if end > start && s.cursor != end-1 {
+				s.cursor = end - 1
+				return s, s.focusSummary()
+			}
 		case "space":
 			return s.toggleSelection()
 

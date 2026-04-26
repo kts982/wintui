@@ -70,6 +70,127 @@ func TestCursorUpClampsAtZero(t *testing.T) {
 	}
 }
 
+func twentyInstalledItems() []workspaceItem {
+	items := make([]workspaceItem, 20)
+	for i := range items {
+		id := fmt.Sprintf("Test.Pkg%02d", i)
+		items[i] = workspaceItem{
+			pkg:       Package{Name: id, ID: id, Source: "winget", Version: "1.0"},
+			installed: "1.0",
+		}
+	}
+	return items
+}
+
+func TestPgDownJumpsByPageStep(t *testing.T) {
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = twentyInstalledItems()
+	ws.cursor = 0
+
+	next, _ := ws.update(keyMsg("pgdown"))
+	got := next.(workspaceScreen)
+
+	if got.cursor != listPageStep {
+		t.Fatalf("cursor = %d, want %d", got.cursor, listPageStep)
+	}
+}
+
+func TestPgDownClampsAtEnd(t *testing.T) {
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = twentyInstalledItems()
+	ws.cursor = 15
+
+	next, _ := ws.update(keyMsg("pgdown"))
+	got := next.(workspaceScreen)
+
+	if got.cursor != 19 {
+		t.Fatalf("cursor = %d, want 19 (last index)", got.cursor)
+	}
+}
+
+func TestPgUpJumpsByPageStep(t *testing.T) {
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = twentyInstalledItems()
+	ws.cursor = 15
+
+	next, _ := ws.update(keyMsg("pgup"))
+	got := next.(workspaceScreen)
+
+	if got.cursor != 15-listPageStep {
+		t.Fatalf("cursor = %d, want %d", got.cursor, 15-listPageStep)
+	}
+}
+
+func TestPgUpClampsAtZero(t *testing.T) {
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = twentyInstalledItems()
+	ws.cursor = 5
+
+	next, _ := ws.update(keyMsg("pgup"))
+	got := next.(workspaceScreen)
+
+	if got.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0", got.cursor)
+	}
+}
+
+// Home jumps to the start of the cursor's current section, not the start
+// of the whole displayed list, so users in the Installed section don't get
+// kicked back into Updates.
+func TestHomeJumpsToTopOfCurrentSection(t *testing.T) {
+	original := appSettings
+	appSettings = DefaultSettings()
+	t.Cleanup(func() { appSettings = original })
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	// Two upgradeable + four installed → displayed = [up0, up1, in0, in1, in2, in3].
+	ws.items = []workspaceItem{
+		{pkg: Package{Name: "U0", ID: "U.0", Source: "winget", Version: "1", Available: "2"}, upgradeable: true, installed: "1", available: "2"},
+		{pkg: Package{Name: "U1", ID: "U.1", Source: "winget", Version: "1", Available: "2"}, upgradeable: true, installed: "1", available: "2"},
+		{pkg: Package{Name: "I0", ID: "I.0", Source: "winget", Version: "1"}, installed: "1"},
+		{pkg: Package{Name: "I1", ID: "I.1", Source: "winget", Version: "1"}, installed: "1"},
+		{pkg: Package{Name: "I2", ID: "I.2", Source: "winget", Version: "1"}, installed: "1"},
+		{pkg: Package{Name: "I3", ID: "I.3", Source: "winget", Version: "1"}, installed: "1"},
+	}
+	ws.cursor = 4 // on I2 (third installed)
+
+	next, _ := ws.update(keyMsg("home"))
+	got := next.(workspaceScreen)
+
+	if got.cursor != 2 {
+		t.Fatalf("cursor = %d, want 2 (top of Installed section, not 0)", got.cursor)
+	}
+}
+
+func TestEndJumpsToBottomOfCurrentSection(t *testing.T) {
+	original := appSettings
+	appSettings = DefaultSettings()
+	t.Cleanup(func() { appSettings = original })
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = []workspaceItem{
+		{pkg: Package{Name: "U0", ID: "U.0", Source: "winget", Version: "1", Available: "2"}, upgradeable: true, installed: "1", available: "2"},
+		{pkg: Package{Name: "U1", ID: "U.1", Source: "winget", Version: "1", Available: "2"}, upgradeable: true, installed: "1", available: "2"},
+		{pkg: Package{Name: "I0", ID: "I.0", Source: "winget", Version: "1"}, installed: "1"},
+		{pkg: Package{Name: "I1", ID: "I.1", Source: "winget", Version: "1"}, installed: "1"},
+		{pkg: Package{Name: "I2", ID: "I.2", Source: "winget", Version: "1"}, installed: "1"},
+	}
+	ws.cursor = 0 // on first upgradeable
+
+	next, _ := ws.update(keyMsg("end"))
+	got := next.(workspaceScreen)
+
+	if got.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 (bottom of Updates section, not 4)", got.cursor)
+	}
+}
+
 func TestWorkspaceDataMsgTransitionsToReady(t *testing.T) {
 	originalSettings := appSettings
 	originalCache := cache

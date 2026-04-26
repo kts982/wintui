@@ -498,6 +498,8 @@ func (s workspaceScreen) fullHelpKeys() [][]key.Binding {
 	navigation := []key.Binding{
 		key.NewBinding(key.WithKeys("↑/k"), key.WithHelp("↑/k", "move up")),
 		key.NewBinding(key.WithKeys("↓/j"), key.WithHelp("↓/j", "move down")),
+		key.NewBinding(key.WithKeys("pgup/pgdn"), key.WithHelp("pgup/pgdn", "page up/down")),
+		key.NewBinding(key.WithKeys("home/end"), key.WithHelp("home/end", "top/bottom of section")),
 		key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "stage focused")),
 		key.NewBinding(key.WithKeys("enter/→"), key.WithHelp("enter/→", "open details")),
 		key.NewBinding(key.WithKeys("←/esc"), key.WithHelp("←/esc", "close details")),

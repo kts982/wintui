@@ -70,6 +70,28 @@ func (s workspaceScreen) toggleSelection() (screen, tea.Cmd) {
 	return s, nil
 }
 
+// listPageStep controls how many rows PgUp / PgDn jump in the package list.
+const listPageStep = 10
+
+// cursorSectionBounds returns the [start, end) index range of the displayed
+// section currently containing the cursor. If the displayed list is empty,
+// returns (0, 0).
+func (s workspaceScreen) cursorSectionBounds() (start, end int) {
+	q, sr, up, ins := s.displayItems()
+	nQ, nS, nU, nI := len(q), len(sr), len(up), len(ins)
+	switch {
+	case s.cursor < nQ:
+		return 0, nQ
+	case s.cursor < nQ+nS:
+		return nQ, nQ + nS
+	case s.cursor < nQ+nS+nU:
+		return nQ + nS, nQ + nS + nU
+	case s.cursor < nQ+nS+nU+nI:
+		return nQ + nS + nU, nQ + nS + nU + nI
+	}
+	return 0, 0
+}
+
 func (s *workspaceScreen) selectAllUpgradeable() {
 	for _, item := range s.items {
 		if item.upgradeable {
