@@ -37,7 +37,7 @@ func TestParseWingetTableFixtures(t *testing.T) {
 		got := parseWingetTable(loadWingetFixture(t, "installed_mixed_sources.txt"))
 		want := []Package{
 			{Name: "Notepad++", ID: "Notepad++.Notepad++", Version: "8.6.4", Source: "winget"},
-			{Name: "Notepad++", ID: "MSIX\\NotepadPlusPlus_1.0.0.0_neutral__gabc1234.", Version: "1.0.0.0"},
+			{Name: "Notepad++", ID: "MSIX\\NotepadPlusPlus_1.0.0.0_neutral__gabc1234", Version: "1.0.0.0", idTruncated: true},
 			{Name: "Microsoft To Do", ID: "9NBLGGH5R558", Version: "Unknown", Source: "msstore"},
 			{Name: "Contoso Legacy Tool", ID: "{11111111-2222-3333-4444-555555555555}", Version: "2.4.1"},
 		}
@@ -50,7 +50,7 @@ func TestParseWingetTableFixtures(t *testing.T) {
 		got := parseWingetTable(loadWingetFixture(t, "installed_no_source.txt"))
 		want := []Package{
 			{Name: "Legacy Control Panel", ID: "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}", Version: "10.0"},
-			{Name: "Notepad++", ID: "MSIX\\NotepadPlusPlus_1.0.0.0_neutral__gabc1234.", Version: "1.0.0.0"},
+			{Name: "Notepad++", ID: "MSIX\\NotepadPlusPlus_1.0.0.0_neutral__gabc1234", Version: "1.0.0.0", idTruncated: true},
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("parseWingetTable(installed no source) = %#v, want %#v", got, want)
@@ -66,6 +66,86 @@ func TestParseWingetTableFixtures(t *testing.T) {
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("parseWingetTable(upgrade) = %#v, want %#v", got, want)
+		}
+	})
+
+	// Regression: the row's Id ends in U+2026 because winget truncated it at
+	// the console width. Without flagging it, the parsed ID lands as
+	// "Microsoft.VisualStudio.2022.BuildTo." and a follow-up
+	// `winget upgrade --id ... --exact` fails with 0x8a150014. The parser
+	// must strip the ellipsis and set idTruncated so the resolver substitutes
+	// the full ID before any --exact call goes out.
+	t.Run("upgrade list with ellipsis-truncated id", func(t *testing.T) {
+		got := parseWingetTable(loadWingetFixture(t, "upgrade_truncated_id.txt"))
+		want := []Package{
+			{Name: "Visual Studio Build Tools 2022", ID: "Microsoft.VisualStudio.2022.BuildTo", Version: "17.14.30", Available: "17.14.31", Source: "winget", idTruncated: true},
+			{Name: "Microsoft Edge", ID: "Microsoft.Edge", Version: "140.0.1", Available: "141.0.0", Source: "winget"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parseWingetTable(truncated) = %#v, want %#v", got, want)
+		}
+	})
+}
+
+func TestPickResolvedID(t *testing.T) {
+	truncated := Package{Name: "Visual Studio Build Tools 2022", ID: "Microsoft.VisualStudio.2022.BuildTo", Source: "winget", idTruncated: true}
+
+	t.Run("single matching candidate substitutes full ID", func(t *testing.T) {
+		got, ok := pickResolvedID(truncated, []Package{
+			{Name: "Visual Studio Build Tools 2022", ID: "Microsoft.VisualStudio.2022.BuildTools", Source: "winget"},
+		})
+		if !ok {
+			t.Fatal("ok = false, want true")
+		}
+		if got.ID != "Microsoft.VisualStudio.2022.BuildTools" || got.idTruncated {
+			t.Fatalf("got = %#v, want full ID with idTruncated cleared", got)
+		}
+	})
+
+	t.Run("no candidates leaves package unchanged", func(t *testing.T) {
+		got, ok := pickResolvedID(truncated, nil)
+		if ok || got.ID != truncated.ID || !got.idTruncated {
+			t.Fatalf("got = %#v ok=%v, want unchanged + ok=false", got, ok)
+		}
+	})
+
+	t.Run("non-prefix candidates are ignored", func(t *testing.T) {
+		got, ok := pickResolvedID(truncated, []Package{
+			{Name: "Other", ID: "Microsoft.NotMatching", Source: "winget"},
+		})
+		if ok {
+			t.Fatalf("got = %#v, want ok=false (no prefix match)", got)
+		}
+	})
+
+	t.Run("still-truncated candidates are ignored", func(t *testing.T) {
+		got, ok := pickResolvedID(truncated, []Package{
+			{Name: "Visual Studio Build Tools 2022", ID: "Microsoft.VisualStudio.2022.BuildTo", Source: "winget", idTruncated: true},
+		})
+		if ok {
+			t.Fatalf("got = %#v, want ok=false (recursive truncation)", got)
+		}
+	})
+
+	t.Run("multiple matches disambiguated by intact Name", func(t *testing.T) {
+		got, ok := pickResolvedID(truncated, []Package{
+			{Name: "Visual Studio Build Tools 2022 Workload", ID: "Microsoft.VisualStudio.2022.BuildTools.Workload", Source: "winget"},
+			{Name: "Visual Studio Build Tools 2022", ID: "Microsoft.VisualStudio.2022.BuildTools", Source: "winget"},
+		})
+		if !ok || got.ID != "Microsoft.VisualStudio.2022.BuildTools" {
+			t.Fatalf("got = %#v ok=%v, want exact-name match", got, ok)
+		}
+	})
+
+	t.Run("multiple matches with truncated Name give up", func(t *testing.T) {
+		amb := truncated
+		amb.nameTruncated = true
+		got, ok := pickResolvedID(amb, []Package{
+			{Name: "A", ID: "Microsoft.VisualStudio.2022.BuildToolsA", Source: "winget"},
+			{Name: "B", ID: "Microsoft.VisualStudio.2022.BuildToolsB", Source: "winget"},
+		})
+		if ok {
+			t.Fatalf("got = %#v, want ok=false (refuse to guess)", got)
 		}
 	})
 }

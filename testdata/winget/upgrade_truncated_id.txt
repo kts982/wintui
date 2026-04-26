@@ -1,0 +1,6 @@
+Name                           Id                                    Version      Available    Source
+----------------------------------------------------------------------------------------------------
+Visual Studio Build Tools 2022 Microsoft.VisualStudio.2022.BuildTo…    17.14.30     17.14.31     winget
+Microsoft Edge                 Microsoft.Edge                         140.0.1       141.0.0      winget
+2 upgrades available.
+

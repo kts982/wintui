@@ -20,6 +20,15 @@ type Package struct {
 	Version   string `json:"version"`
 	Available string `json:"available,omitempty"`
 	Source    string `json:"source,omitempty"`
+
+	// idTruncated/nameTruncated record that the corresponding column in
+	// winget's table output ended in a Unicode horizontal ellipsis (U+2026)
+	// because the value didn't fit the console width. Consumers must not
+	// pass a truncated ID to `winget --id ... --exact` — it will fail with
+	// 0x8a150014. The resolver in resolveTruncatedPackages substitutes the
+	// full ID before these flags are exposed.
+	idTruncated   bool
+	nameTruncated bool
 }
 
 // FilterValue satisfies the bubbles list.Item interface (used for filtering).
@@ -85,7 +94,7 @@ func getUpgradeableCtx(ctx context.Context) ([]Package, error) {
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return parseWingetTable(out), nil
+	return resolveTruncatedPackages(ctx, parseWingetTable(out), "list"), nil
 }
 
 func getInstalledCtx(ctx context.Context) ([]Package, error) {
@@ -97,7 +106,7 @@ func getInstalledCtx(ctx context.Context) ([]Package, error) {
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return parseWingetTable(out), nil
+	return resolveTruncatedPackages(ctx, parseWingetTable(out), "list"), nil
 }
 
 func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
@@ -107,7 +116,7 @@ func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return parseWingetTable(out), nil
+	return resolveTruncatedPackages(ctx, parseWingetTable(out), "search"), nil
 }
 
 // lookupSinglePackageCtx fetches the installed state of a single package by ID.
@@ -777,15 +786,19 @@ func parseWingetTable(output string) []Package {
 	return pkgs
 }
 
-func extractPackage(line string, cols []colPos) Package {
-	// Normalize multi-byte ellipsis (…, 3 bytes) to single-byte so
-	// byte-indexed column positions from the header stay aligned.
-	line = strings.ReplaceAll(line, "\u2026", ".")
+// truncSentinel replaces the multi-byte ellipsis (…, 3 bytes) with a single
+// byte during column slicing so byte-indexed positions from the header stay
+// aligned. A trailing sentinel on a field signals that winget truncated the
+// value to fit the console width.
+const truncSentinel = "\x01"
 
-	field := func(c int) string {
+func extractPackage(line string, cols []colPos) Package {
+	line = strings.ReplaceAll(line, "\u2026", truncSentinel)
+
+	field := func(c int) (string, bool) {
 		start := cols[c].start
 		if start >= len(line) {
-			return ""
+			return "", false
 		}
 		end := len(line)
 		if c+1 < len(cols) {
@@ -794,17 +807,23 @@ func extractPackage(line string, cols []colPos) Package {
 		if end > len(line) {
 			end = len(line)
 		}
-		return strings.TrimSpace(line[start:end])
+		val := strings.TrimSpace(line[start:end])
+		if trimmed, ok := strings.CutSuffix(val, truncSentinel); ok {
+			return trimmed, true
+		}
+		return val, false
 	}
 
 	pkg := Package{}
 	for i, c := range cols {
-		val := field(i)
+		val, truncated := field(i)
 		switch c.name {
 		case "Name":
 			pkg.Name = val
+			pkg.nameTruncated = truncated
 		case "Id":
 			pkg.ID = val
+			pkg.idTruncated = truncated
 		case "Version":
 			pkg.Version = val
 		case "Available":
@@ -817,6 +836,75 @@ func extractPackage(line string, cols []colPos) Package {
 		}
 	}
 	return pkg
+}
+
+// resolveTruncatedPackages substitutes the full ID for any package whose Id
+// column was truncated by winget at the console width. winget renders the
+// trailing characters as "…" (U+2026); without recovery, downstream calls of
+// the form `winget --id <truncated> --exact` fail with 0x8a150014.
+//
+// Recovery strategy: re-query winget with the truncated value as a non-exact
+// --id prefix. The result set is small enough that columns auto-size to fit,
+// returning the full ID. When the prefix matches more than one row, the Name
+// (if intact) disambiguates. resolverCmd is "list" for installed/upgrade
+// listings and "search" for search results — the same query verb the caller
+// originally used, since the resolver looks up rows in the same source set.
+func resolveTruncatedPackages(ctx context.Context, pkgs []Package, resolverCmd string) []Package {
+	for i := range pkgs {
+		if !pkgs[i].idTruncated || pkgs[i].ID == "" {
+			continue
+		}
+		if resolved, ok := resolvePackageID(ctx, pkgs[i], resolverCmd); ok {
+			pkgs[i] = resolved
+		}
+	}
+	return pkgs
+}
+
+func resolvePackageID(ctx context.Context, pkg Package, resolverCmd string) (Package, bool) {
+	args := []string{resolverCmd, "--id", pkg.ID}
+	if pkg.Source != "" {
+		args = append(args, "--source", pkg.Source)
+	}
+	out, err := runWingetCtx(ctx, args...)
+	if err != nil && len(out) == 0 {
+		return pkg, false
+	}
+	return pickResolvedID(pkg, parseWingetTable(out))
+}
+
+// pickResolvedID selects the candidate whose full ID should replace the
+// truncated value on pkg. Returns (pkg, false) when there's no usable match
+// rather than guessing — a wrong --id would still fail under --exact, just
+// with a misleading symptom.
+func pickResolvedID(pkg Package, candidates []Package) (Package, bool) {
+	var matches []Package
+	for _, c := range candidates {
+		if c.idTruncated || !strings.HasPrefix(c.ID, pkg.ID) {
+			continue
+		}
+		matches = append(matches, c)
+	}
+	switch len(matches) {
+	case 0:
+		return pkg, false
+	case 1:
+		pkg.ID = matches[0].ID
+		pkg.idTruncated = false
+		return pkg, true
+	default:
+		if pkg.Name == "" || pkg.nameTruncated {
+			return pkg, false
+		}
+		for _, m := range matches {
+			if m.Name == pkg.Name {
+				pkg.ID = m.ID
+				pkg.idTruncated = false
+				return pkg, true
+			}
+		}
+		return pkg, false
+	}
 }
 
 // -- Streaming command execution ------------------------------------
