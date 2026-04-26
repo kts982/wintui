@@ -256,6 +256,37 @@ func TestCLIContract(t *testing.T) {
 		}
 	})
 
+	t.Run("root_help_surfaces_subcommands_and_hides_internals", func(t *testing.T) {
+		// Examples block must mention each user-facing subcommand so the
+		// shape is discoverable from `wintui -h` without drilling into
+		// each subcommand's own help.
+		out, code := runWintui("", "-h")
+		if code != 0 {
+			t.Errorf("Expected exit code 0 for -h, got %d", code)
+		}
+		for _, want := range []string{
+			"Examples:",
+			"wintui check",
+			"wintui list",
+			"wintui show",
+			"wintui upgrade --all",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("Expected %q in -h output, got: %q", want, out)
+			}
+		}
+		// Internal retry-handoff plumbing must not pollute user-facing help.
+		for _, hidden := range []string{
+			"--retry-op",
+			"--retry-batch",
+			"--package-version",
+		} {
+			if strings.Contains(out, hidden) {
+				t.Errorf("Did not expect %q in user -h output (internal flag): %q", hidden, out)
+			}
+		}
+	})
+
 	t.Run("upgrade_requires_all_flag", func(t *testing.T) {
 		// Without --all there is no action; cobra should surface the hint
 		// without ever calling winget.

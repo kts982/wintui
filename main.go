@@ -32,6 +32,12 @@ var rootCmd = &cobra.Command{
 	Use:   "wintui",
 	Short: "WinTUI - A terminal UI for winget",
 	Long:  `A modern, interactive terminal user interface for the Windows Package Manager (winget).`,
+	Example: `  wintui                           launch the interactive TUI
+  wintui check                     list available upgrades (exit 1 if any)
+  wintui list                      list installed packages
+  wintui show Mozilla.Firefox      print effective install/upgrade args for a package
+  wintui upgrade --all             upgrade every visible upgradeable package
+  wintui check --json              machine-readable output (--json works on check, list, show)`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		appSettings = LoadSettings()
 		cleanupStaleSelfUpdateHelpers()
@@ -79,6 +85,12 @@ func init() {
 	rootCmd.Flags().StringVar(&retrySource, "source", "", "Package source to retry")
 	rootCmd.Flags().StringVar(&retryVersion, "package-version", "", "Package version to retry")
 	rootCmd.Flags().StringVar(&retryBatch, "retry-batch", "", "Base64 encoded batch retry data")
+	// Internal retry-handoff plumbing for the elevated-helper round-trip; not
+	// for direct user use. Hide them from --help so the v2.4.0 subcommand
+	// surface is the discoverable shape.
+	for _, name := range []string{"retry-op", "id", "name", "source", "package-version", "retry-batch"} {
+		_ = rootCmd.Flags().MarkHidden(name)
+	}
 
 	rootCmd.Flags().BoolVar(&checkFlag, "check", false, "Check for available upgrades")
 	rootCmd.Flags().BoolVar(&listFlag, "list", false, "List all installed packages")
