@@ -9,6 +9,11 @@ import (
 	"text/tabwriter"
 )
 
+// cliExitCode is the exit code main returns after rootCmd.Execute() succeeds.
+// CLI subcommands (e.g. runCheck) set it instead of calling os.Exit directly so
+// that cobra hooks, deferred work, and tests can run on the normal return path.
+var cliExitCode int
+
 func runList() error {
 	pkgs, err := getInstalledCtx(context.Background())
 	if err != nil {
@@ -57,7 +62,7 @@ func runCheck() error {
 
 	// Exit code 1 if updates exist, 0 if up to date.
 	if len(pkgs) > 0 {
-		os.Exit(1)
+		cliExitCode = 1
 	}
 	return nil
 }

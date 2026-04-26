@@ -93,4 +93,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	if cliExitCode != 0 {
+		os.Exit(cliExitCode)
+	}
 }
