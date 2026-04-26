@@ -36,9 +36,6 @@ var rootCmd = &cobra.Command{
 		appSettings = LoadSettings()
 		cleanupStaleSelfUpdateHelpers()
 
-		if listFlag && checkFlag {
-			return fmt.Errorf("--list and --check cannot be used together")
-		}
 		if listFlag {
 			return runList()
 		}
@@ -85,6 +82,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&checkFlag, "check", false, "Check for available upgrades")
 	rootCmd.Flags().BoolVar(&listFlag, "list", false, "List all installed packages")
 	rootCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
+	rootCmd.MarkFlagsMutuallyExclusive("check", "list")
 
 	// Compatibility with old -v flag
 	rootCmd.Flags().BoolP("version", "v", false, "show version")

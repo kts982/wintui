@@ -110,6 +110,18 @@ func TestCLIContract(t *testing.T) {
 		}
 	})
 
+	t.Run("check_and_list_are_mutually_exclusive", func(t *testing.T) {
+		// Cobra's MarkFlagsMutuallyExclusive should reject this combination
+		// before any winget call happens.
+		out, code := runWintui("", "--check", "--list")
+		if code == 0 {
+			t.Errorf("Expected non-zero exit when --check and --list are combined, got %d", code)
+		}
+		if !strings.Contains(out, "[check list]") {
+			t.Errorf("Expected mutual-exclusion error mentioning [check list], got: %q", out)
+		}
+	})
+
 	t.Run("json_output", func(t *testing.T) {
 		output := "Name       Id         Version Available Source\n" +
 			"----------------------------------------------\n" +
