@@ -7,12 +7,34 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/spf13/cobra"
 )
 
 // cliExitCode is the exit code main returns after rootCmd.Execute() succeeds.
 // CLI subcommands (e.g. runCheck) set it instead of calling os.Exit directly so
 // that cobra hooks, deferred work, and tests can run on the normal return path.
 var cliExitCode int
+
+var checkCmd = &cobra.Command{
+	Use:   "check",
+	Short: "Check for available upgrades",
+	Long: `Print the list of upgradeable packages, honoring per-package ignore rules.
+Exits 1 if any updates are available, 0 otherwise.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runCheck()
+	},
+}
+
+var listCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all installed packages",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runList()
+	},
+}
 
 func runList() error {
 	pkgs, err := getInstalledCtx(context.Background())

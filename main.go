@@ -32,10 +32,11 @@ var rootCmd = &cobra.Command{
 	Use:   "wintui",
 	Short: "WinTUI - A terminal UI for winget",
 	Long:  `A modern, interactive terminal user interface for the Windows Package Manager (winget).`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		appSettings = LoadSettings()
 		cleanupStaleSelfUpdateHelpers()
-
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if listFlag {
 			return runList()
 		}
@@ -83,9 +84,16 @@ func init() {
 	rootCmd.Flags().BoolVar(&listFlag, "list", false, "List all installed packages")
 	rootCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	rootCmd.MarkFlagsMutuallyExclusive("check", "list")
+	// Deprecated in favor of subcommands; kept working for one minor release.
+	_ = rootCmd.Flags().MarkDeprecated("check", "use 'wintui check' instead")
+	_ = rootCmd.Flags().MarkDeprecated("list", "use 'wintui list' instead")
 
 	// Compatibility with old -v flag
 	rootCmd.Flags().BoolP("version", "v", false, "show version")
+
+	checkCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
+	listCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
+	rootCmd.AddCommand(checkCmd, listCmd)
 }
 
 func main() {

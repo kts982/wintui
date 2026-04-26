@@ -134,4 +134,70 @@ func TestCLIContract(t *testing.T) {
 			t.Errorf("Expected JSON output, got: %q", out)
 		}
 	})
+
+	t.Run("check_subcommand_exits_one_when_updates_exist", func(t *testing.T) {
+		output := "Name       Id         Version Available Source\n" +
+			"----------------------------------------------\n" +
+			"Test App1  App1.ID    1.0     2.0       winget\n"
+		out, code := runWintui(output, "check")
+		if code != 1 {
+			t.Errorf("Expected exit code 1, got %d", code)
+		}
+		if !strings.Contains(out, "App1") {
+			t.Errorf("Expected output to contain 'App1', got: %q", out)
+		}
+	})
+
+	t.Run("check_subcommand_exits_zero_when_up_to_date", func(t *testing.T) {
+		output := "Name       Id         Version Available Source\n" +
+			"----------------------------------------------\n"
+		out, code := runWintui(output, "check")
+		if code != 0 {
+			t.Errorf("Expected exit code 0, got %d", code)
+		}
+		if !strings.Contains(out, "All packages are up to date.") {
+			t.Errorf("Expected up-to-date message, got: %q", out)
+		}
+	})
+
+	t.Run("list_subcommand", func(t *testing.T) {
+		output := "Name       Id         Version Available Source\n" +
+			"----------------------------------------------\n" +
+			"Test App1  App1.ID    1.0               winget\n"
+		out, code := runWintui(output, "list")
+		if code != 0 {
+			t.Errorf("Expected exit code 0, got %d", code)
+		}
+		if !strings.Contains(out, "Test App1") || !strings.Contains(out, "1 package(s) installed.") {
+			t.Errorf("Expected list output, got: %q", out)
+		}
+	})
+
+	t.Run("check_subcommand_json", func(t *testing.T) {
+		output := "Name       Id         Version Available Source\n" +
+			"----------------------------------------------\n" +
+			"Test App1  App1.ID    1.0     2.0       winget\n"
+		out, code := runWintui(output, "check", "--json")
+		if code != 1 {
+			t.Errorf("Expected exit code 1, got %d", code)
+		}
+		if !strings.Contains(out, `"id": "App1.ID"`) {
+			t.Errorf("Expected JSON output, got: %q", out)
+		}
+	})
+
+	t.Run("deprecated_check_flag_still_works", func(t *testing.T) {
+		// Backwards compat: --check at the root must keep working for one
+		// minor release, with a deprecation warning on stderr.
+		output := "Name       Id         Version Available Source\n" +
+			"----------------------------------------------\n" +
+			"Test App1  App1.ID    1.0     2.0       winget\n"
+		out, code := runWintui(output, "--check")
+		if code != 1 {
+			t.Errorf("Expected exit code 1, got %d", code)
+		}
+		if !strings.Contains(out, "deprecated") {
+			t.Errorf("Expected deprecation warning, got: %q", out)
+		}
+	})
 }
