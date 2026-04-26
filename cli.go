@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -194,51 +195,63 @@ func runShow(id, source string) error {
 	return nil
 }
 
-// runUpgradeAll runs `winget upgrade` for every visible upgradeable package
-// (i.e. those not hidden by ignore rules), streaming output to stdout and
-// reporting per-package success/failure. Sets cliExitCode = 1 if any failed.
+// streamUpgradeFn is the per-package upgrade dispatcher used by upgradeAll.
+// Tests replace this with a stub so the self-upgrade skip path can be
+// exercised without invoking winget.
+var streamUpgradeFn = streamUpgradeToStdout
+
+// runUpgradeAll is the cobra entry point: loads the upgradeable list from
+// winget and dispatches to upgradeAll for the actual loop. The loop is
+// extracted so it can be unit-tested without a winget call.
 func runUpgradeAll() error {
 	ctx := context.Background()
 	raw, err := getUpgradeableCtx(ctx)
 	if err != nil {
 		return err
 	}
-	visible, hidden := selectUpgrades(raw, appSettings)
+	return upgradeAll(ctx, raw, appSettings, os.Stdout)
+}
+
+// upgradeAll runs `winget upgrade` for every visible upgradeable package
+// (i.e. those not hidden by ignore rules), streaming output to out and
+// reporting per-package success/failure. Sets cliExitCode = 1 if any failed.
+//
+// The running WinTUI binary is skipped: the TUI hands self-upgrades off to
+// a PowerShell script that waits for wintui.exe to exit, then runs winget.
+// Replicating that dance from a one-shot CLI is fragile, so we point the
+// user at the TUI's verified path instead.
+func upgradeAll(ctx context.Context, raw []Package, settings Settings, out io.Writer) error {
+	visible, hidden := selectUpgrades(raw, settings)
 
 	if len(visible) == 0 {
 		if hidden > 0 {
-			fmt.Printf("All non-hidden packages are up to date (%d hidden by ignore rules).\n", hidden)
+			fmt.Fprintf(out, "All non-hidden packages are up to date (%d hidden by ignore rules).\n", hidden)
 		} else {
-			fmt.Println("All packages are up to date.")
+			fmt.Fprintln(out, "All packages are up to date.")
 		}
 		return nil
 	}
 
-	fmt.Printf("Upgrading %d package(s)", len(visible))
+	fmt.Fprintf(out, "Upgrading %d package(s)", len(visible))
 	if hidden > 0 {
-		fmt.Printf(" (%d hidden by ignore rules)", hidden)
+		fmt.Fprintf(out, " (%d hidden by ignore rules)", hidden)
 	}
-	fmt.Println(":")
+	fmt.Fprintln(out, ":")
 
 	var failures []string
 	var skippedSelf bool
 	for _, pkg := range visible {
-		fmt.Printf("\n→ %s (%s) %s → %s\n", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
+		fmt.Fprintf(out, "\n→ %s (%s) %s → %s\n", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
 		if isSelfPackageID(pkg.ID) && isRunningInstalledWinTUI() {
-			// The TUI hands self-upgrades off to a PowerShell script that
-			// waits for the running wintui.exe to exit, then runs winget.
-			// Replicating that dance from a one-shot CLI is fragile, so for
-			// now skip the running binary explicitly and point the user at
-			// the TUI's verified path.
-			fmt.Println("  • skipped: WinTUI cannot upgrade itself headlessly. Run 'wintui' (TUI) and upgrade from there, or run 'winget upgrade " + pkg.ID + "' manually.")
+			fmt.Fprintln(out, "  • skipped: WinTUI cannot upgrade itself headlessly. Run 'wintui' (TUI) and upgrade from there, or run 'winget upgrade "+pkg.ID+"' manually.")
 			skippedSelf = true
 			continue
 		}
-		if err := streamUpgradeToStdout(ctx, pkg); err != nil {
-			fmt.Printf("  ✗ failed: %v\n", err)
+		if err := streamUpgradeFn(ctx, pkg, out); err != nil {
+			fmt.Fprintf(out, "  ✗ failed: %v\n", err)
 			failures = append(failures, pkg.ID)
 		} else {
-			fmt.Printf("  ✓ upgraded\n")
+			fmt.Fprintln(out, "  ✓ upgraded")
 		}
 	}
 
@@ -246,22 +259,22 @@ func runUpgradeAll() error {
 	if skippedSelf {
 		upgraded--
 	}
-	fmt.Printf("\n%d/%d succeeded.", upgraded, len(visible))
+	fmt.Fprintf(out, "\n%d/%d succeeded.", upgraded, len(visible))
 	if len(failures) > 0 {
-		fmt.Printf(" Failed: %s", strings.Join(failures, ", "))
+		fmt.Fprintf(out, " Failed: %s", strings.Join(failures, ", "))
 		cliExitCode = 1
 	}
 	if skippedSelf {
-		fmt.Print(" (WinTUI self-upgrade skipped)")
+		fmt.Fprint(out, " (WinTUI self-upgrade skipped)")
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 	return nil
 }
 
 // streamUpgradeToStdout drives a single package upgrade through the same
-// streaming pipeline the TUI uses, indenting each output line under stdout.
+// streaming pipeline the TUI uses, indenting each output line under out.
 // Returns the final winget error (or nil on success).
-func streamUpgradeToStdout(ctx context.Context, pkg Package) error {
+func streamUpgradeToStdout(ctx context.Context, pkg Package, out io.Writer) error {
 	_, outChan, errChan := upgradePackageStreamCtx(ctx, pkg.ID, pkg.Source, "")
 	for line := range outChan {
 		// Skip the TUI's progress sentinels; they are not human-readable.
@@ -269,7 +282,7 @@ func streamUpgradeToStdout(ctx context.Context, pkg Package) error {
 			continue
 		}
 		if line != "" {
-			fmt.Println("  " + line)
+			fmt.Fprintln(out, "  "+line)
 		}
 	}
 	return <-errChan
