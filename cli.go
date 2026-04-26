@@ -39,6 +39,28 @@ var listCmd = &cobra.Command{
 // showSource is the --source flag for `wintui show <id>`. Defaults to winget.
 var showSource string
 
+// upgradeAllFlag is set by the `wintui upgrade --all` flag. When more action
+// modes (--auto, --id) land, swap this single bool for a richer set of mutually
+// exclusive flags via cobra.MarkFlagsOneRequired.
+var upgradeAllFlag bool
+
+var upgradeCmd = &cobra.Command{
+	Use:   "upgrade",
+	Short: "Upgrade packages without launching the TUI",
+	Long: `Upgrade packages headlessly. Currently only --all is supported; per-package
+'auto' policy will land alongside the Auto/Ask/Hold work.
+
+Honors the same per-package ignore rules the TUI uses, so a hidden package
+will not be upgraded by --all.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if upgradeAllFlag {
+			return runUpgradeAll()
+		}
+		return fmt.Errorf("specify --all (use 'wintui upgrade --all')")
+	},
+}
+
 var showCmd = &cobra.Command{
 	Use:   "show <id>",
 	Short: "Show effective install/upgrade command and overrides for a package",
@@ -165,6 +187,69 @@ func runShow(id, source string) error {
 		}
 	}
 	return nil
+}
+
+// runUpgradeAll runs `winget upgrade` for every visible upgradeable package
+// (i.e. those not hidden by ignore rules), streaming output to stdout and
+// reporting per-package success/failure. Sets cliExitCode = 1 if any failed.
+func runUpgradeAll() error {
+	ctx := context.Background()
+	raw, err := getUpgradeableCtx(ctx)
+	if err != nil {
+		return err
+	}
+	visible, hidden := selectUpgrades(raw, appSettings)
+
+	if len(visible) == 0 {
+		if hidden > 0 {
+			fmt.Printf("All non-hidden packages are up to date (%d hidden by ignore rules).\n", hidden)
+		} else {
+			fmt.Println("All packages are up to date.")
+		}
+		return nil
+	}
+
+	fmt.Printf("Upgrading %d package(s)", len(visible))
+	if hidden > 0 {
+		fmt.Printf(" (%d hidden by ignore rules)", hidden)
+	}
+	fmt.Println(":")
+
+	var failures []string
+	for _, pkg := range visible {
+		fmt.Printf("\n→ %s (%s) %s → %s\n", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
+		if err := streamUpgradeToStdout(ctx, pkg); err != nil {
+			fmt.Printf("  ✗ failed: %v\n", err)
+			failures = append(failures, pkg.ID)
+		} else {
+			fmt.Printf("  ✓ upgraded\n")
+		}
+	}
+
+	fmt.Printf("\n%d/%d succeeded.", len(visible)-len(failures), len(visible))
+	if len(failures) > 0 {
+		fmt.Printf(" Failed: %s", strings.Join(failures, ", "))
+		cliExitCode = 1
+	}
+	fmt.Println()
+	return nil
+}
+
+// streamUpgradeToStdout drives a single package upgrade through the same
+// streaming pipeline the TUI uses, indenting each output line under stdout.
+// Returns the final winget error (or nil on success).
+func streamUpgradeToStdout(ctx context.Context, pkg Package) error {
+	_, outChan, errChan := upgradePackageStreamCtx(ctx, pkg.ID, pkg.Source, "")
+	for line := range outChan {
+		// Skip the TUI's progress sentinels; they are not human-readable.
+		if _, isProgress := parseProgressSentinel(line); isProgress {
+			continue
+		}
+		if line != "" {
+			fmt.Println("  " + line)
+		}
+	}
+	return <-errChan
 }
 
 func printJSON(data interface{}) error {

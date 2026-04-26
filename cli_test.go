@@ -243,6 +243,31 @@ func TestCLIContract(t *testing.T) {
 		}
 	})
 
+	t.Run("upgrade_requires_all_flag", func(t *testing.T) {
+		// Without --all there is no action; cobra should surface the hint
+		// without ever calling winget.
+		out, code := runWintui("", "upgrade")
+		if code == 0 {
+			t.Errorf("Expected non-zero exit when --all is missing, got %d", code)
+		}
+		if !strings.Contains(out, "--all") {
+			t.Errorf("Expected --all hint in error, got: %q", out)
+		}
+	})
+
+	t.Run("upgrade_all_with_no_updates", func(t *testing.T) {
+		// Empty winget upgrade list → nothing to do, exit 0.
+		output := "Name       Id         Version Available Source\n" +
+			"----------------------------------------------\n"
+		out, code := runWintui(output, "upgrade", "--all")
+		if code != 0 {
+			t.Errorf("Expected exit code 0, got %d", code)
+		}
+		if !strings.Contains(out, "up to date") {
+			t.Errorf("Expected up-to-date message, got: %q", out)
+		}
+	})
+
 	t.Run("deprecated_check_flag_still_works", func(t *testing.T) {
 		// Backwards compat: --check at the root must keep working for one
 		// minor release, with a deprecation warning on stderr.

@@ -95,7 +95,8 @@ func init() {
 	listCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	showCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	showCmd.Flags().StringVar(&showSource, "source", "", "Package source (winget|msstore); defaults to winget")
-	rootCmd.AddCommand(checkCmd, listCmd, showCmd)
+	upgradeCmd.Flags().BoolVar(&upgradeAllFlag, "all", false, "Upgrade all available (non-ignored) packages")
+	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd)
 }
 
 func main() {
