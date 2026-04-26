@@ -252,16 +252,23 @@ func (s *workspaceScreen) applyIncrementalUpdate(msg incrementalUpdateMsg) {
 		}
 	case retryOpUpgrade:
 		for i, item := range s.items {
-			if item.key() == key {
-				if len(msg.result) > 0 {
-					s.items[i].pkg.Version = msg.result[0].Version
-					s.items[i].installed = msg.result[0].Version
-				}
-				s.items[i].upgradeable = false
-				s.items[i].available = ""
-				s.items[i].pkg.Available = ""
-				break
+			if item.key() != key {
+				continue
 			}
+			updated := item
+			if len(msg.result) > 0 {
+				updated.pkg.Version = msg.result[0].Version
+				updated.installed = msg.result[0].Version
+			}
+			updated.upgradeable = false
+			updated.available = ""
+			updated.pkg.Available = ""
+			// Move the just-upgraded item to the end of s.items so it doesn't
+			// sit at the top of the Installed section just because it was at
+			// the top of Updates a moment ago. The eventual background refresh
+			// re-sorts to winget's natural order.
+			s.items = append(append(s.items[:i:i], s.items[i+1:]...), updated)
+			break
 		}
 	case retryOpUninstall:
 		if len(msg.result) == 0 {
@@ -295,6 +302,10 @@ func (s *workspaceScreen) applyIncrementalUpdate(msg incrementalUpdateMsg) {
 func (s *workspaceScreen) dismissModalAndRefresh() (workspaceScreen, tea.Cmd) {
 	s.modal = nil
 	s.state = workspaceReady
+	// Land on the top of the displayed list — top upgrade if any remain,
+	// otherwise top installed. applyIncrementalUpdate has already moved any
+	// just-upgraded items out of the top section.
+	s.cursor = 0
 	if len(s.items) == 0 {
 		s.state = workspaceEmpty
 	}

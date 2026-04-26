@@ -282,6 +282,102 @@ func TestIncrementalUpdateUpgradeRemovesFromUpgradeable(t *testing.T) {
 	}
 }
 
+// Regression: with a single upgrade (e.g. only Firefox), after the upgrade
+// completes the cursor must not stay on the just-upgraded package. It should
+// land on the top of whatever section is now first — the next upgrade if any
+// remain, otherwise the top installed item.
+func TestIncrementalUpdateUpgradeMovesItemToEndOfList(t *testing.T) {
+	originalCache := cache
+	cache = &packageCache{ttl: 2 * time.Minute, diskTTL: 24 * time.Hour}
+	t.Cleanup(func() { cache = originalCache })
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = []workspaceItem{
+		{
+			pkg:         Package{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget", Version: "2.0", Available: "2.1"},
+			upgradeable: true,
+			installed:   "2.0",
+			available:   "2.1",
+		},
+		{pkg: Package{Name: "Notepad++", ID: "Notepad.Notepad", Source: "winget", Version: "8.5"}, installed: "8.5"},
+		{pkg: Package{Name: "VLC", ID: "VideoLAN.VLC", Source: "winget", Version: "3.0"}, installed: "3.0"},
+	}
+
+	msg := incrementalUpdateMsg{
+		action: retryOpUpgrade,
+		pkg:    Package{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget"},
+		result: []Package{{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget", Version: "2.1"}},
+	}
+	ws.applyIncrementalUpdate(msg)
+
+	if len(ws.items) != 3 {
+		t.Fatalf("len(items) = %d, want 3", len(ws.items))
+	}
+	if ws.items[len(ws.items)-1].pkg.ID != "Mozilla.Firefox" {
+		t.Fatalf("last item = %q, want Mozilla.Firefox to be moved to the end", ws.items[len(ws.items)-1].pkg.ID)
+	}
+	if ws.items[0].pkg.ID != "Notepad.Notepad" {
+		t.Fatalf("first item = %q, want Notepad.Notepad (the just-upgraded Firefox should not still be at the top)", ws.items[0].pkg.ID)
+	}
+	if ws.items[len(ws.items)-1].upgradeable {
+		t.Fatal("upgraded item still upgradeable, want false")
+	}
+}
+
+// Regression: dismissing the post-batch modal must reset the cursor to the
+// top of the list (top upgrade if any, else top installed). Combined with
+// the move-to-end behavior above, this ensures the user lands on a useful
+// row instead of the package they just upgraded.
+func TestDismissModalAndRefreshResetsCursorToTop(t *testing.T) {
+	originalCache := cache
+	originalSettings := appSettings
+	cache = &packageCache{ttl: 2 * time.Minute, diskTTL: 24 * time.Hour}
+	appSettings = DefaultSettings()
+	t.Cleanup(func() {
+		cache = originalCache
+		appSettings = originalSettings
+	})
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceExecuting
+	// Simulate state after applyIncrementalUpdate has moved the just-upgraded
+	// Firefox to the end of s.items.
+	ws.items = []workspaceItem{
+		{pkg: Package{Name: "Notepad++", ID: "Notepad.Notepad", Source: "winget", Version: "8.5"}, installed: "8.5"},
+		{pkg: Package{Name: "VLC", ID: "VideoLAN.VLC", Source: "winget", Version: "3.0"}, installed: "3.0"},
+		{pkg: Package{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget", Version: "2.1"}, installed: "2.1"},
+	}
+	ws.cursor = 2 // was on Firefox before dismiss
+
+	items := []batchItem{
+		{
+			action: retryOpUpgrade,
+			item:   workspaceItem{pkg: Package{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget"}, upgradeable: true},
+			status: batchDone,
+		},
+	}
+	m := newExecModal(retryOpUpgrade, items)
+	m.phase = execPhaseComplete
+	ws.modal = &m
+
+	next, _ := ws.update(keyMsg("enter"))
+	got := next.(workspaceScreen)
+
+	if got.modal != nil {
+		t.Fatal("modal should be nil after dismissal")
+	}
+	if got.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 (top of list)", got.cursor)
+	}
+	q, sr, up, ins := got.displayItems()
+	all := append(append(append([]workspaceItem{}, q...), sr...), up...)
+	all = append(all, ins...)
+	if len(all) == 0 || all[0].pkg.ID == "Mozilla.Firefox" {
+		t.Fatalf("displayed[0] = %q, want anything other than the just-upgraded Mozilla.Firefox", all[0].pkg.ID)
+	}
+}
+
 func TestIncrementalUpdateUninstallRemovesItem(t *testing.T) {
 	originalCache := cache
 	cache = &packageCache{ttl: 2 * time.Minute, diskTTL: 24 * time.Hour}
