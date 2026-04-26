@@ -53,7 +53,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners and the most recent winget output line, view compact results with `Ctrl+E` retry (elevated when needed, plain retry for process-in-use failures)
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
 - **Self-upgrade handoff** — upgrading `kts982.WinTUI` now finishes through a local handoff script, and only from an already elevated WinTUI session; non-admin sessions offer `Ctrl+A` to relaunch as admin and retry, with a manual admin command fallback when UAC relaunch is blocked
-- **Headless CLI** — use `--check`, `--list`, and `--json` for scripts, Task Scheduler, or CI without launching the TUI
+- **Headless CLI** — `wintui check`, `wintui list`, `wintui show <id>`, and `wintui upgrade --all` for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, and `show`
 
 **System Utilities**
 - **Health Check** — shells, dev tools, runtimes, package managers, disk space, Defender, developer mode
@@ -84,16 +84,27 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 ### Headless CLI
 
 ```powershell
-# Human-readable upgrade check
-.\wintui.exe --check
+# Human-readable upgrade check (honors per-package ignore rules)
+wintui check
 
-# Exit code 1 when updates are available
-.\wintui.exe --check || echo "Updates available"
+# Exit code 1 when visible updates are available
+wintui check ; if ($LASTEXITCODE -eq 1) { "Updates available" }
 
 # Machine-readable output
-.\wintui.exe --check --json
-.\wintui.exe --list --json > packages.json
+wintui check --json
+wintui list --json > packages.json
+
+# Inspect what WinTUI would pass to winget for a given package
+wintui show Mozilla.Firefox --json
+
+# Upgrade everything that is not on the ignore list
+wintui upgrade --all
 ```
+
+The old root flags `--check` and `--list` still work for one minor release
+with a deprecation warning. WinTUI itself is **not** upgraded by
+`upgrade --all`; the running binary is skipped with a hint pointing at
+the TUI, where the self-upgrade handoff is verified.
 
 Further documentation:
 - [CLI reference](docs/cli.md)
@@ -106,6 +117,8 @@ Further documentation:
 | Key | Action |
 |---|---|
 | `↑↓` / `j/k` | Navigate |
+| `PgUp` / `PgDn` | Jump 10 rows up / down |
+| `Home` / `End` | Jump to top / bottom of the cursor's section |
 | `Space` | Stage package / queue search result |
 | `Enter` / `→` / `l` | Open package details |
 | `←` / `Esc` / `h` | Close details / cancel |
