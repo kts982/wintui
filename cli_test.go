@@ -186,6 +186,63 @@ func TestCLIContract(t *testing.T) {
 		}
 	})
 
+	t.Run("show_subcommand_human_output", func(t *testing.T) {
+		// show is read-only: doesn't actually call winget. Mock output is
+		// irrelevant.
+		out, code := runWintui("", "show", "Mozilla.Firefox")
+		if code != 0 {
+			t.Errorf("Expected exit code 0, got %d", code)
+		}
+		if !strings.Contains(out, "ID:     Mozilla.Firefox") {
+			t.Errorf("Expected ID line, got: %q", out)
+		}
+		if !strings.Contains(out, "Effective install command:") {
+			t.Errorf("Expected install command section, got: %q", out)
+		}
+		if !strings.Contains(out, "Effective upgrade command:") {
+			t.Errorf("Expected upgrade command section, got: %q", out)
+		}
+	})
+
+	t.Run("show_subcommand_json", func(t *testing.T) {
+		out, code := runWintui("", "show", "Mozilla.Firefox", "--json")
+		if code != 0 {
+			t.Errorf("Expected exit code 0, got %d", code)
+		}
+		if !strings.Contains(out, `"id": "Mozilla.Firefox"`) {
+			t.Errorf("Expected JSON id, got: %q", out)
+		}
+		if !strings.Contains(out, `"install_args"`) {
+			t.Errorf("Expected install_args field, got: %q", out)
+		}
+		if !strings.Contains(out, `"upgrade_args"`) {
+			t.Errorf("Expected upgrade_args field, got: %q", out)
+		}
+	})
+
+	t.Run("show_subcommand_requires_id", func(t *testing.T) {
+		out, code := runWintui("", "show")
+		if code == 0 {
+			t.Errorf("Expected non-zero exit when id is missing, got %d", code)
+		}
+		if !strings.Contains(out, "accepts 1 arg") && !strings.Contains(out, "Error") {
+			t.Errorf("Expected arg-count error, got: %q", out)
+		}
+	})
+
+	t.Run("show_subcommand_msstore_source", func(t *testing.T) {
+		out, code := runWintui("", "show", "9NCBCSZSJRSB", "--source", "msstore", "--json")
+		if code != 0 {
+			t.Errorf("Expected exit code 0, got %d", code)
+		}
+		if !strings.Contains(out, `"source": "msstore"`) {
+			t.Errorf("Expected msstore source in JSON, got: %q", out)
+		}
+		if !strings.Contains(out, `"--source",`) || !strings.Contains(out, `"msstore"`) {
+			t.Errorf("Expected --source msstore in args, got: %q", out)
+		}
+	})
+
 	t.Run("deprecated_check_flag_still_works", func(t *testing.T) {
 		// Backwards compat: --check at the root must keep working for one
 		// minor release, with a deprecation warning on stderr.

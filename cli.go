@@ -36,6 +36,22 @@ var listCmd = &cobra.Command{
 	},
 }
 
+// showSource is the --source flag for `wintui show <id>`. Defaults to winget.
+var showSource string
+
+var showCmd = &cobra.Command{
+	Use:   "show <id>",
+	Short: "Show effective install/upgrade command and overrides for a package",
+	Long: `Print the install and upgrade arguments WinTUI would pass to winget for the
+given package, along with any per-package overrides currently in settings.
+
+This is read-only and does not query winget; it reflects the local config only.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runShow(args[0], showSource)
+	},
+}
+
 func runList() error {
 	pkgs, err := getInstalledCtx(context.Background())
 	if err != nil {
@@ -85,6 +101,68 @@ func runCheck() error {
 	// Exit code 1 if updates exist, 0 if up to date.
 	if len(pkgs) > 0 {
 		cliExitCode = 1
+	}
+	return nil
+}
+
+// showOutput is the structured payload for `wintui show <id> --json`.
+type showOutput struct {
+	ID          string           `json:"id"`
+	Source      string           `json:"source"`
+	InstallArgs []string         `json:"install_args"`
+	UpgradeArgs []string         `json:"upgrade_args"`
+	Override    *PackageOverride `json:"override,omitempty"`
+}
+
+func runShow(id, source string) error {
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("package id is required")
+	}
+	if source == "" {
+		source = "winget"
+	}
+
+	out := showOutput{
+		ID:          id,
+		Source:      source,
+		InstallArgs: installCommandArgs(id, source, ""),
+		UpgradeArgs: upgradeCommandArgs(id, source, ""),
+	}
+	if appSettings.hasOverride(id, source) {
+		o := appSettings.getOverride(id, source)
+		out.Override = &o
+	}
+
+	if jsonFlag {
+		return printJSON(out)
+	}
+
+	fmt.Printf("ID:     %s\n", out.ID)
+	fmt.Printf("Source: %s\n", out.Source)
+	fmt.Println()
+	fmt.Println("Effective install command:")
+	fmt.Printf("  winget %s\n", strings.Join(out.InstallArgs, " "))
+	fmt.Println()
+	fmt.Println("Effective upgrade command:")
+	fmt.Printf("  winget %s\n", strings.Join(out.UpgradeArgs, " "))
+	if out.Override != nil {
+		fmt.Println()
+		fmt.Println("Per-package overrides:")
+		if out.Override.Scope != "" {
+			fmt.Printf("  scope:          %s\n", out.Override.Scope)
+		}
+		if out.Override.Architecture != "" {
+			fmt.Printf("  architecture:   %s\n", out.Override.Architecture)
+		}
+		if out.Override.Elevate != nil {
+			fmt.Printf("  elevate:        %t\n", *out.Override.Elevate)
+		}
+		if out.Override.Ignore {
+			fmt.Println("  ignore:         true")
+		}
+		if out.Override.IgnoreVersion != "" {
+			fmt.Printf("  ignore_version: %s\n", out.Override.IgnoreVersion)
+		}
 	}
 	return nil
 }
