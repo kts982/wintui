@@ -52,7 +52,7 @@ hidden package will not flip the exit code.
 
 | Exit code | Meaning |
 |---|---|
-| `0` | All visible upgrades succeeded (or no upgrades were available) |
+| `0` | All visible upgrades succeeded, no upgrades were available, or only the running WinTUI binary was skipped |
 | `1` | One or more package upgrades failed |
 
 The running WinTUI binary is **not** upgraded by `upgrade --all`; it is
@@ -111,14 +111,16 @@ ID:     Mozilla.Firefox
 Source: winget
 
 Effective install command:
-  winget install --id Mozilla.Firefox --exact --accept-package-agreements --silent --source winget
+  winget install --id Mozilla.Firefox --exact --accept-package-agreements --source winget
 
 Effective upgrade command:
-  winget upgrade --id Mozilla.Firefox --exact --accept-package-agreements --silent --source winget
+  winget upgrade --id Mozilla.Firefox --exact --accept-package-agreements --source winget
 ```
 
 If the package has overrides, a "Per-package overrides" block is
-appended (scope, architecture, elevate, ignore, ignore_version).
+appended (scope, architecture, elevate, ignore, ignore_version). Global and
+per-package action settings can add flags such as `--silent`, `--scope`, or
+`--architecture` to the command preview.
 
 ### `upgrade --all`
 
