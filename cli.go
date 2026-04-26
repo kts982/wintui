@@ -29,10 +29,14 @@ func runList() error {
 }
 
 func runCheck() error {
-	pkgs, err := getUpgradeableCtx(context.Background())
+	raw, err := getUpgradeableCtx(context.Background())
 	if err != nil {
 		return err
 	}
+
+	// Route through the shared planner so --check honors the same ignore
+	// rules the TUI does. Hidden packages must not flip the exit code.
+	pkgs, _ := selectUpgrades(raw, appSettings)
 
 	if jsonFlag {
 		if err := printJSON(pkgs); err != nil {

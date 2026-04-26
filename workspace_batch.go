@@ -136,14 +136,9 @@ func (s workspaceScreen) startBackgroundRefresh() tea.Cmd {
 // buildItems merges installed and upgradeable into a grouped list.
 // Returns the items and the number of upgrades hidden by ignore rules.
 func buildItems(installed, upgradeable []Package) ([]workspaceItem, int) {
-	// Build upgrade lookup, filtering out ignored packages.
-	hiddenCount := 0
-	upgradeMap := make(map[string]Package, len(upgradeable))
-	for _, pkg := range upgradeable {
-		if appSettings.isIgnored(pkg.ID, pkg.Source, pkg.Available) {
-			hiddenCount++
-			continue
-		}
+	visible, hiddenCount := selectUpgrades(upgradeable, appSettings)
+	upgradeMap := make(map[string]Package, len(visible))
+	for _, pkg := range visible {
 		upgradeMap[packageSourceKey(pkg.ID, pkg.Source)] = pkg
 	}
 
@@ -172,9 +167,9 @@ func buildItems(installed, upgradeable []Package) ([]workspaceItem, int) {
 	}
 
 	// Include upgradeable packages not in installed list (edge case).
-	for _, pkg := range upgradeable {
+	for _, pkg := range visible {
 		k := packageSourceKey(pkg.ID, pkg.Source)
-		if !seen[k] && !appSettings.isIgnored(pkg.ID, pkg.Source, pkg.Available) {
+		if !seen[k] {
 			updates = append(updates, workspaceItem{
 				pkg:         pkg,
 				upgradeable: true,
