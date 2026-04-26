@@ -243,6 +243,19 @@ func TestCLIContract(t *testing.T) {
 		}
 	})
 
+	t.Run("show_subcommand_rejects_unknown_source", func(t *testing.T) {
+		// Custom / private sources are deferred (see roadmap). Until they are
+		// supported end-to-end, --source must reject unknown values rather
+		// than silently mis-rendering output.
+		out, code := runWintui("", "show", "Foo.Bar", "--source", "private", "--json")
+		if code == 0 {
+			t.Errorf("Expected non-zero exit for --source private, got %d", code)
+		}
+		if !strings.Contains(out, "invalid --source") {
+			t.Errorf("Expected invalid-source error, got: %q", out)
+		}
+	})
+
 	t.Run("upgrade_requires_all_flag", func(t *testing.T) {
 		// Without --all there is no action; cobra should surface the hint
 		// without ever calling winget.

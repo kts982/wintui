@@ -140,8 +140,13 @@ func runShow(id, source string) error {
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("package id is required")
 	}
-	if source == "" {
+	switch source {
+	case "":
 		source = "winget"
+	case "winget", "msstore":
+		// OK; the underlying winget arg builders only honor these two today.
+	default:
+		return fmt.Errorf("invalid --source %q: must be 'winget' or 'msstore'", source)
 	}
 
 	out := showOutput{
@@ -216,8 +221,19 @@ func runUpgradeAll() error {
 	fmt.Println(":")
 
 	var failures []string
+	var skippedSelf bool
 	for _, pkg := range visible {
 		fmt.Printf("\n→ %s (%s) %s → %s\n", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
+		if isSelfPackageID(pkg.ID) && isRunningInstalledWinTUI() {
+			// The TUI hands self-upgrades off to a PowerShell script that
+			// waits for the running wintui.exe to exit, then runs winget.
+			// Replicating that dance from a one-shot CLI is fragile, so for
+			// now skip the running binary explicitly and point the user at
+			// the TUI's verified path.
+			fmt.Println("  • skipped: WinTUI cannot upgrade itself headlessly. Run 'wintui' (TUI) and upgrade from there, or run 'winget upgrade " + pkg.ID + "' manually.")
+			skippedSelf = true
+			continue
+		}
 		if err := streamUpgradeToStdout(ctx, pkg); err != nil {
 			fmt.Printf("  ✗ failed: %v\n", err)
 			failures = append(failures, pkg.ID)
@@ -226,10 +242,17 @@ func runUpgradeAll() error {
 		}
 	}
 
-	fmt.Printf("\n%d/%d succeeded.", len(visible)-len(failures), len(visible))
+	upgraded := len(visible) - len(failures)
+	if skippedSelf {
+		upgraded--
+	}
+	fmt.Printf("\n%d/%d succeeded.", upgraded, len(visible))
 	if len(failures) > 0 {
 		fmt.Printf(" Failed: %s", strings.Join(failures, ", "))
 		cliExitCode = 1
+	}
+	if skippedSelf {
+		fmt.Print(" (WinTUI self-upgrade skipped)")
 	}
 	fmt.Println()
 	return nil
