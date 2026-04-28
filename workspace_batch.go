@@ -8,6 +8,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+const launchAutoUpdateCountdownSeconds = 5
+
+func autoUpdateCountdownTick() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return autoUpdateCountdownTickMsg{}
+	})
+}
+
 func (s workspaceScreen) init() tea.Cmd {
 	// Phase A: try in-memory cache (tab switches within a session).
 	inst, instOK := cache.getInstalled()
@@ -134,7 +142,7 @@ func (s workspaceScreen) startBackgroundRefresh() tea.Cmd {
 }
 
 // buildItems merges installed and upgradeable into a grouped list.
-// Returns the items and the number of upgrades hidden by ignore rules.
+// Returns the items and the number of upgrades held by policy.
 func buildItems(installed, upgradeable []Package) ([]workspaceItem, int) {
 	visible, hiddenCount := selectUpgrades(upgradeable, appSettings)
 	upgradeMap := make(map[string]Package, len(visible))
@@ -183,6 +191,55 @@ func buildItems(installed, upgradeable []Package) ([]workspaceItem, int) {
 	return append(updates, rest...), hiddenCount
 }
 
+func (s workspaceScreen) maybeStartLaunchAutoUpdate(upgradeable []Package) (workspaceScreen, tea.Cmd) {
+	if s.launchAutoChecked {
+		return s, nil
+	}
+	s.launchAutoChecked = true
+	if s.modal != nil {
+		return s, nil
+	}
+
+	plan := planUpgrades(upgradeable, appSettings)
+	if len(plan.Auto) == 0 {
+		return s, nil
+	}
+
+	// Self-upgrade can't run unattended: even when admin, the handoff needs
+	// an explicit Enter; non-admin needs Ctrl+A. Defer it to the regular
+	// Updates flow and surface a notice so the user knows their Auto setting
+	// for WinTUI was acknowledged but is not running here.
+	items := make([]batchItem, 0, len(plan.Auto))
+	for _, pkg := range plan.Auto {
+		if isSelfPackageID(pkg.ID) && isRunningInstalledWinTUI() {
+			s.selfAutoDeferred = true
+			continue
+		}
+		item := workspaceItem{
+			pkg:         pkg,
+			upgradeable: true,
+			installed:   pkg.Version,
+			available:   pkg.Available,
+		}
+		items = append(items, newBatchItem(retryOpUpgrade, item))
+	}
+	if len(items) == 0 {
+		return s, nil
+	}
+	for i := range items {
+		items[i].command = s.batchItemCommandPreview(items[i])
+	}
+	items = sortBatchItems(items)
+
+	m := newExecModal(retryOpUpgrade, items)
+	m.phase = execPhaseCountdown
+	m.countdown = launchAutoUpdateCountdownSeconds
+	m.selfAutoDeferred = s.selfAutoDeferred
+	s.modal = &m
+	s.state = workspaceConfirm
+	return s, autoUpdateCountdownTick()
+}
+
 func (s *workspaceScreen) rebuildItemsFromCache() {
 	installed := cache.getInstalledRaw()
 	upgradeable := cache.getUpgradeableRaw()
@@ -200,6 +257,44 @@ func (s *workspaceScreen) rebuildItemsFromCache() {
 			s.cursor = i
 			break
 		}
+	}
+}
+
+func (s *workspaceScreen) rebuildItemsAfterPolicyChange() {
+	installed := cache.getInstalledRaw()
+	upgradeable := cache.getUpgradeableRaw()
+	if installed == nil && upgradeable == nil {
+		for _, item := range s.items {
+			pkg := item.pkg
+			if item.installed != "" {
+				pkg.Version = item.installed
+			}
+			pkg.Available = ""
+			installed = append(installed, pkg)
+			if item.upgradeable {
+				up := item.pkg
+				up.Version = item.installed
+				up.Available = item.available
+				upgradeable = append(upgradeable, up)
+			}
+		}
+	}
+	var cursorKey string
+	if s.cursor >= 0 && s.cursor < len(s.items) {
+		cursorKey = s.items[s.cursor].key()
+	}
+	s.items, s.hiddenUpgrades = buildItems(installed, upgradeable)
+	s.cursor = 0
+	for i, item := range s.items {
+		if item.key() == cursorKey {
+			s.cursor = i
+			break
+		}
+	}
+	if len(s.items) == 0 {
+		s.state = workspaceEmpty
+	} else if s.state == workspaceEmpty {
+		s.state = workspaceReady
 	}
 }
 
@@ -224,6 +319,8 @@ func (s *workspaceScreen) resetAndReload() (workspaceScreen, tea.Cmd) {
 	s.err = nil
 	s.refreshing = false
 	s.cacheAge = time.Time{}
+	s.launchAutoChecked = false
+	s.selfAutoDeferred = false
 	s.exec.reset()
 	cache.invalidate()
 	cache.deleteDiskCache()

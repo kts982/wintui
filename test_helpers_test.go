@@ -26,6 +26,8 @@ func TestMain(m *testing.M) {
 	}
 	if cacheErr == nil {
 		os.WriteFile(cachePath, cacheBackup, 0644)
+	} else if os.IsNotExist(cacheErr) {
+		os.Remove(cachePath)
 	}
 	os.Exit(code)
 }

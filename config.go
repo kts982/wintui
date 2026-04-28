@@ -34,23 +34,64 @@ const (
 	ArchARM64   CPUArchitecture = "arm64"
 )
 
+// UpdatePolicy controls how an upgradeable package is handled.
+type UpdatePolicy string
+
+const (
+	PolicyAsk  UpdatePolicy = "" // default: show in Updates and let the user decide
+	PolicyAuto UpdatePolicy = "auto"
+	PolicyHold UpdatePolicy = "hold"
+)
+
+func normalizeUpdatePolicy(policy UpdatePolicy) UpdatePolicy {
+	switch policy {
+	case PolicyAuto:
+		return PolicyAuto
+	case PolicyHold:
+		return PolicyHold
+	default:
+		return PolicyAsk
+	}
+}
+
 // PackageOverride holds per-package option overrides and ignore rules.
 // Empty/nil fields mean "use the global default".
 type PackageOverride struct {
 	Scope         InstallScope    `json:"scope,omitempty"`
 	Architecture  CPUArchitecture `json:"architecture,omitempty"`
 	Elevate       *bool           `json:"elevate,omitempty"`
+	UpdatePolicy  UpdatePolicy    `json:"update_policy,omitempty"`
 	Ignore        bool            `json:"ignore,omitempty"`
 	IgnoreVersion string          `json:"ignore_version,omitempty"`
 }
 
 func (o PackageOverride) isEmpty() bool {
 	return o.Scope == "" && o.Architecture == "" && o.Elevate == nil &&
+		normalizeUpdatePolicy(o.UpdatePolicy) == PolicyAsk &&
 		!o.Ignore && o.IgnoreVersion == ""
+}
+
+func (o PackageOverride) displayedUpdatePolicy() UpdatePolicy {
+	if o.Ignore || o.IgnoreVersion != "" {
+		return PolicyHold
+	}
+	return normalizeUpdatePolicy(o.UpdatePolicy)
+}
+
+func (o PackageOverride) effectiveUpdatePolicy(availableVersion string) UpdatePolicy {
+	if o.Ignore {
+		return PolicyHold
+	}
+	if o.IgnoreVersion != "" && o.IgnoreVersion == availableVersion {
+		return PolicyHold
+	}
+	return normalizeUpdatePolicy(o.UpdatePolicy)
 }
 
 func (o PackageOverride) getValue(key string) string {
 	switch key {
+	case "update_policy":
+		return string(o.displayedUpdatePolicy())
 	case "scope":
 		return string(o.Scope)
 	case "architecture":
@@ -74,6 +115,10 @@ func (o PackageOverride) getValue(key string) string {
 
 func (o *PackageOverride) setValue(key, val string) {
 	switch key {
+	case "update_policy":
+		o.UpdatePolicy = normalizeUpdatePolicy(UpdatePolicy(val))
+		o.Ignore = false
+		o.IgnoreVersion = ""
 	case "scope":
 		o.Scope = InstallScope(val)
 	case "architecture":
@@ -86,6 +131,7 @@ func (o *PackageOverride) setValue(key, val string) {
 			o.Elevate = &b
 		}
 	case "ignore":
+		o.UpdatePolicy = PolicyAsk
 		switch val {
 		case "":
 			o.Ignore = false
@@ -239,16 +285,17 @@ func (s Settings) hasOverride(pkgID, source string) bool {
 	return ok && !o.isEmpty()
 }
 
-// isIgnored returns true if the package should be hidden from the upgrade list.
+// isIgnored returns true if the package should be held out of the upgrade list.
 func (s Settings) isIgnored(pkgID, source, availableVersion string) bool {
+	return s.updatePolicy(pkgID, source, availableVersion) == PolicyHold
+}
+
+func (s Settings) updatePolicy(pkgID, source, availableVersion string) UpdatePolicy {
 	_, o, ok := s.lookupOverride(pkgID, source)
 	if !ok {
-		return false
+		return PolicyAsk
 	}
-	if o.Ignore {
-		return true
-	}
-	return o.IgnoreVersion != "" && o.IgnoreVersion == availableVersion
+	return o.effectiveUpdatePolicy(availableVersion)
 }
 
 // expireVersionIgnores clears version-specific ignores where the available
@@ -612,6 +659,7 @@ func packagesEqual(a, b map[string]PackageOverride) bool {
 			return false
 		}
 		if va.Scope != vb.Scope || va.Architecture != vb.Architecture ||
+			normalizeUpdatePolicy(va.UpdatePolicy) != normalizeUpdatePolicy(vb.UpdatePolicy) ||
 			va.Ignore != vb.Ignore || va.IgnoreVersion != vb.IgnoreVersion {
 			return false
 		}
@@ -633,6 +681,23 @@ func boolStr(b bool) string {
 }
 
 var overrideDefs = []settingDef{
+	{
+		key:     "update_policy",
+		label:   "Update Policy",
+		desc:    "Auto, ask, or hold upgrades",
+		stype:   settingChoice,
+		choices: []string{"", "auto", "hold"},
+		choiceLabels: map[string]string{
+			"":     "ask",
+			"auto": "auto",
+			"hold": "hold",
+		},
+		choiceHints: map[string]string{
+			"":     "Show this package in Updates and let you choose when to upgrade.",
+			"auto": "Upgrade this package automatically on launch or via wintui upgrade --auto.",
+			"hold": "Keep this package out of normal upgrade actions.",
+		},
+	},
 	{
 		key:     "ignore",
 		label:   "Ignore",

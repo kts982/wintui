@@ -58,7 +58,9 @@ type workspaceScreen struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 
-	hiddenUpgrades int // upgrades hidden by ignore rules
+	hiddenUpgrades    int // upgrades held by policy or legacy ignore rules
+	launchAutoChecked bool
+	selfAutoDeferred  bool // WinTUI self-package was filtered out of an Auto batch
 
 	// Background refresh.
 	refreshing    bool      // background refresh in flight
@@ -146,6 +148,8 @@ type incrementalUpdateMsg struct {
 // startBackgroundRefreshMsg triggers a background refresh (used after post-action delay).
 type startBackgroundRefreshMsg struct{}
 
+type autoUpdateCountdownTickMsg struct{}
+
 type selfUpgradeScheduledMsg struct {
 	err error
 }
@@ -176,6 +180,20 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		// Modal states (confirm, executing, complete).
 		if s.modal != nil {
 			switch s.modal.phase {
+			case execPhaseCountdown:
+				switch msg.String() {
+				case "enter":
+					return s.startBatch()
+				case "esc":
+					s.modal = nil
+					if len(s.items) == 0 {
+						s.state = workspaceEmpty
+					} else {
+						s.state = workspaceReady
+					}
+					return s, nil
+				}
+				return s, nil
 			case execPhaseReview:
 				switch msg.String() {
 				case "enter":
@@ -298,6 +316,10 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.cursor = 0
 				return s, s.focusSummary()
 			}
+			if s.selfAutoDeferred {
+				s.selfAutoDeferred = false
+				return s, nil
+			}
 		case "up", "k":
 			if s.cursor > 0 {
 				s.cursor--
@@ -370,6 +392,8 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s.beginAction(retryOpUninstall)
 		case "p":
 			return s.openDetailToOverrides()
+		case "t":
+			return s.cycleFocusedUpdatePolicy()
 		}
 
 	case workspaceDataMsg:
@@ -405,7 +429,10 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.refreshing = true
 			return s, tea.Batch(s.focusSummary(), s.startBackgroundRefresh())
 		}
-		return s, s.focusSummary()
+		focusCmd := s.focusSummary()
+		var autoCmd tea.Cmd
+		s, autoCmd = s.maybeStartLaunchAutoUpdate(msg.upgradeable)
+		return s, tea.Batch(focusCmd, autoCmd)
 
 	case backgroundRefreshMsg:
 		s.refreshing = false
@@ -444,7 +471,10 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				}
 			}
 		}
-		return s, s.focusSummary()
+		focusCmd := s.focusSummary()
+		var autoCmd tea.Cmd
+		s, autoCmd = s.maybeStartLaunchAutoUpdate(msg.upgradeable)
+		return s, tea.Batch(focusCmd, autoCmd)
 
 	case incrementalUpdateMsg:
 		// Skip stale results from a cancelled batch (e.g. after r refresh).
@@ -460,6 +490,16 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, s.startBackgroundRefresh()
 		}
 		return s, nil
+
+	case autoUpdateCountdownTickMsg:
+		if s.modal == nil || s.modal.phase != execPhaseCountdown {
+			return s, nil
+		}
+		s.modal.countdown--
+		if s.modal.countdown <= 0 {
+			return s.startBatch()
+		}
+		return s, autoUpdateCountdownTick()
 
 	case selfUpgradeScheduledMsg:
 		if msg.err != nil {

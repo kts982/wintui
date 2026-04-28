@@ -64,7 +64,7 @@ func TestCLIContract(t *testing.T) {
 		output := "Name       Id         Version Available Source\n" +
 			"----------------------------------------------\n" +
 			"Test App1  App1.ID    1.0               winget\n"
-		out, code := runWintui(output, "--list")
+		out, code := runWintui(output, "list")
 		if code != 0 {
 			t.Errorf("Expected exit code 0, got %d", code)
 		}
@@ -83,7 +83,7 @@ func TestCLIContract(t *testing.T) {
 		output := "Name       Id         Version Available Source\n" +
 			"----------------------------------------------\n" +
 			"Test App1  App1.ID    1.0     2.0       winget\n"
-		out, code := runWintui(output, "--check")
+		out, code := runWintui(output, "check")
 		if code != 1 {
 			t.Errorf("Expected exit code 1 when updates exist, got %d", code)
 		}
@@ -101,7 +101,7 @@ func TestCLIContract(t *testing.T) {
 	t.Run("check_no_updates", func(t *testing.T) {
 		output := "Name       Id         Version Available Source\n" +
 			"----------------------------------------------\n"
-		out, code := runWintui(output, "--check")
+		out, code := runWintui(output, "check")
 		if code != 0 {
 			t.Errorf("Expected exit code 0 when no updates exist, got %d", code)
 		}
@@ -110,15 +110,13 @@ func TestCLIContract(t *testing.T) {
 		}
 	})
 
-	t.Run("check_and_list_are_mutually_exclusive", func(t *testing.T) {
-		// Cobra's MarkFlagsMutuallyExclusive should reject this combination
-		// before any winget call happens.
+	t.Run("root_check_and_list_flags_are_removed", func(t *testing.T) {
 		out, code := runWintui("", "--check", "--list")
 		if code == 0 {
-			t.Errorf("Expected non-zero exit when --check and --list are combined, got %d", code)
+			t.Errorf("Expected non-zero exit for removed root flags, got %d", code)
 		}
-		if !strings.Contains(out, "[check list]") {
-			t.Errorf("Expected mutual-exclusion error mentioning [check list], got: %q", out)
+		if !strings.Contains(out, "unknown flag: --check") {
+			t.Errorf("Expected unknown flag error for --check, got: %q", out)
 		}
 	})
 
@@ -126,7 +124,7 @@ func TestCLIContract(t *testing.T) {
 		output := "Name       Id         Version Available Source\n" +
 			"----------------------------------------------\n" +
 			"Test App1  App1.ID    1.0     2.0       winget\n"
-		out, code := runWintui(output, "--check", "--json")
+		out, code := runWintui(output, "check", "--json")
 		if code != 1 {
 			t.Errorf("Expected exit code 1, got %d", code)
 		}
@@ -270,6 +268,8 @@ func TestCLIContract(t *testing.T) {
 			"wintui list",
 			"wintui show",
 			"wintui upgrade --all",
+			"wintui upgrade --auto",
+			"wintui upgrade --id",
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("Expected %q in -h output, got: %q", want, out)
@@ -312,18 +312,13 @@ func TestCLIContract(t *testing.T) {
 		}
 	})
 
-	t.Run("deprecated_check_flag_still_works", func(t *testing.T) {
-		// Backwards compat: --check at the root must keep working for one
-		// minor release, with a deprecation warning on stderr.
-		output := "Name       Id         Version Available Source\n" +
-			"----------------------------------------------\n" +
-			"Test App1  App1.ID    1.0     2.0       winget\n"
-		out, code := runWintui(output, "--check")
-		if code != 1 {
-			t.Errorf("Expected exit code 1, got %d", code)
+	t.Run("root_check_flag_is_removed", func(t *testing.T) {
+		out, code := runWintui("", "--check")
+		if code == 0 {
+			t.Errorf("Expected non-zero exit for removed --check, got %d", code)
 		}
-		if !strings.Contains(out, "deprecated") {
-			t.Errorf("Expected deprecation warning, got: %q", out)
+		if !strings.Contains(out, "unknown flag: --check") {
+			t.Errorf("Expected unknown flag error, got: %q", out)
 		}
 	})
 }

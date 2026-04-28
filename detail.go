@@ -545,6 +545,9 @@ func (p detailPanel) detailLines(totalWidth int) []string {
 		overrideStyle := lipgloss.NewStyle().Foreground(override)
 		lines = append(lines, "")
 		lines = append(lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(override).Render("⚙ Package Rules"))
+		if policy := o.displayedUpdatePolicy(); policy != PolicyAsk {
+			appendDetailField(&lines, "Update Policy", overrideStyle.Render(string(policy)))
+		}
 		if o.Ignore {
 			appendDetailField(&lines, "Ignore", overrideStyle.Render("all versions"))
 		} else if o.IgnoreVersion != "" {

@@ -13,23 +13,26 @@ import (
 type execModalPhase int
 
 const (
-	execPhaseReview   execModalPhase = iota // user reviews selected packages
-	execPhaseRunning                        // batch is executing
-	execPhaseComplete                       // all done, showing results
+	execPhaseCountdown execModalPhase = iota // auto-update countdown before execution
+	execPhaseReview                          // user reviews selected packages
+	execPhaseRunning                         // batch is executing
+	execPhaseComplete                        // all done, showing results
 )
 
 // execModal manages the multi-phase execution modal overlay.
 // Review → Running → Complete, all within one modal.
 type execModal struct {
-	phase         execModalPhase
-	action        retryOp // retryOpUpgrade, retryOpUninstall, etc.
-	items         []batchItem
-	itemMap       map[string]*batchItem
-	idx           int // currently running item index
-	spinner       spinner.Model
-	forceElevated bool // true when retrying via Ctrl+E
-	showCommands  bool // review phase: expand per-item winget command preview
-	scroll        int  // body scroll offset when content exceeds modal height
+	phase            execModalPhase
+	action           retryOp // retryOpUpgrade, retryOpUninstall, etc.
+	items            []batchItem
+	itemMap          map[string]*batchItem
+	idx              int // currently running item index
+	spinner          spinner.Model
+	forceElevated    bool // true when retrying via Ctrl+E
+	showCommands     bool // review phase: expand per-item winget command preview
+	scroll           int  // body scroll offset when content exceeds modal height
+	countdown        int  // countdown seconds before an automatic batch starts
+	selfAutoDeferred bool // WinTUI self-package was excluded from this auto batch
 }
 
 func newExecModal(action retryOp, items []batchItem) execModal {
@@ -126,6 +129,8 @@ func (m execModal) view(width, height int) string {
 	var actions string
 
 	switch m.phase {
+	case execPhaseCountdown:
+		title, body, actions = m.viewCountdown()
 	case execPhaseReview:
 		title, body, actions = m.viewReview()
 	case execPhaseRunning:
@@ -262,6 +267,27 @@ func (m execModal) maxScroll(width, height int) int {
 		return 0
 	}
 	return len(wrapped) - availableBody
+}
+
+func (m execModal) viewCountdown() (string, []string, string) {
+	title := fmt.Sprintf("Auto Upgrade in %ds", max(m.countdown, 0))
+	if m.countdown <= 0 {
+		title = "Starting Auto Upgrade"
+	}
+	body := []string{
+		fmt.Sprintf("  %d package(s) marked Auto", len(m.items)),
+		"",
+	}
+	for _, bi := range m.items {
+		body = append(body, "  "+checkbox(true)+" "+bi.item.pkg.Name+"  "+helpStyle.Render(bi.item.pkg.ID))
+	}
+	if m.selfAutoDeferred {
+		body = append(body, "")
+		body = append(body, "  "+helpStyle.Render("WinTUI is also marked Auto — apply it manually from the Updates list."))
+	}
+	actions := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("enter") + " start now" +
+		"  •  " + lipgloss.NewStyle().Bold(true).Foreground(accent).Render("esc") + " cancel"
+	return title, body, actions
 }
 
 func (m execModal) viewReview() (string, []string, string) {
@@ -530,6 +556,11 @@ func extractKeyLogLines(output string) []string {
 
 func (m execModal) helpKeys() []key.Binding {
 	switch m.phase {
+	case execPhaseCountdown:
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "start now")),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		}
 	case execPhaseReview:
 		toggleHelp := "show commands"
 		if m.showCommands {

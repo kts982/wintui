@@ -110,19 +110,23 @@ func (s workspaceScreen) renderSections(l layout) string {
 	} else if s.searchLoading {
 		b.WriteString("  " + s.spinner.View() + " Searching...\n")
 	} else if s.err != nil {
-		b.WriteString("  " + errorStyle.Render("Search error: "+s.err.Error()) + "  " + helpStyle.Render("(s to search again)") + "\n")
+		b.WriteString("  " + errorStyle.Render("Error: "+s.err.Error()) + "\n")
 	} else if s.searchQuery != "" && len(s.searchResults) == 0 && len(s.installQueue) == 0 {
 		b.WriteString("  " + helpStyle.Render(fmt.Sprintf("No results for %q. Press s to search again.", s.searchQuery)) + "\n")
 	} else if s.filter.active {
 		b.WriteString("  " + s.filter.input.View() + "\n")
 	} else if s.filter.query != "" {
 		b.WriteString("  " + helpStyle.Render("Filter: "+s.filter.query+"  (/ edit • esc clear)") + "\n")
+	} else if s.selfAutoDeferred {
+		notice := "WinTUI is marked Auto but self-upgrade can't run unattended — apply it from Updates (esc to dismiss)."
+		b.WriteString("  " + lipgloss.NewStyle().Foreground(warning).Render(notice) + "\n")
 	}
 
 	availableH := l.list.H
 	hasTopBar := s.searchActive || s.searchLoading || s.err != nil ||
 		(s.searchQuery != "" && len(s.searchResults) == 0 && len(s.installQueue) == 0) ||
-		s.filter.active || s.filter.query != ""
+		s.filter.active || s.filter.query != "" ||
+		s.selfAutoDeferred
 	if hasTopBar {
 		availableH--
 	}
@@ -161,7 +165,7 @@ func (s workspaceScreen) renderSections(l layout) string {
 			title = fmt.Sprintf("Updates Available (%d / %d selected)", len(upgradeable), selCount)
 		}
 		if s.hiddenUpgrades > 0 {
-			title += fmt.Sprintf(" · %d hidden", s.hiddenUpgrades)
+			title += fmt.Sprintf(" · %d held", s.hiddenUpgrades)
 		}
 		sections = append(sections, sectionDef{
 			title:    title,
@@ -174,7 +178,7 @@ func (s workspaceScreen) renderSections(l layout) string {
 	}
 	if len(upgradeable) == 0 && s.hiddenUpgrades > 0 {
 		sections = append(sections, sectionDef{
-			title:    fmt.Sprintf("Updates Available (0 · %d hidden)", s.hiddenUpgrades),
+			title:    fmt.Sprintf("Updates Available (0 · %d held)", s.hiddenUpgrades),
 			desiredH: 2,
 			minH:     2,
 			offset:   offset,
@@ -397,7 +401,8 @@ func (s workspaceScreen) renderItemText(item workspaceItem, _ int, isCursor bool
 	}
 	name := nameStyle.Render(item.pkg.Name)
 
-	// Per-package rule indicator.
+	policyBadge := renderUpdatePolicyBadge(item.pkg.ID, item.pkg.Source)
+
 	gear := ""
 	if appSettings.hasOverride(item.pkg.ID, item.pkg.Source) {
 		gear = " " + lipgloss.NewStyle().Foreground(override).Render("⚙")
@@ -411,7 +416,7 @@ func (s workspaceScreen) renderItemText(item workspaceItem, _ int, isCursor bool
 		if customVer != "" && customVer != item.available {
 			ver = item.installed + " → " + customVer
 		}
-		return name + "  " + helpStyle.Render(ver) + gear
+		return name + "  " + helpStyle.Render(ver) + policyBadge + gear
 	}
 
 	// Install queue or search result: show version (custom or available).
@@ -421,13 +426,25 @@ func (s workspaceScreen) renderItemText(item workspaceItem, _ int, isCursor bool
 			ver = customVer
 		}
 		if ver != "" {
-			return name + "  " + helpStyle.Render(ver) + gear
+			return name + "  " + helpStyle.Render(ver) + policyBadge + gear
 		}
-		return name + gear
+		return name + policyBadge + gear
 	}
 
 	// Regular installed package.
-	return name + "  " + helpStyle.Render(item.installed) + gear
+	return name + "  " + helpStyle.Render(item.installed) + policyBadge + gear
+}
+
+func renderUpdatePolicyBadge(pkgID, source string) string {
+	o := appSettings.getOverride(pkgID, source)
+	switch o.displayedUpdatePolicy() {
+	case PolicyAuto:
+		return " " + lipgloss.NewStyle().Bold(true).Foreground(success).Render("[AUTO]")
+	case PolicyHold:
+		return " " + lipgloss.NewStyle().Bold(true).Foreground(warning).Render("[HOLD]")
+	default:
+		return ""
+	}
 }
 
 // viewBatchList renders the batch items with inline status icons.
@@ -457,6 +474,9 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 	inSearch := s.cursor >= nQueue && s.cursor < nQueue+nSearch
 	inUpgrades := s.cursor >= nQueue+nSearch && s.cursor < nQueue+nSearch+nUpgradeable
 
+	focusedItem, _, focusedOK := s.focusedItemContext()
+	canPolicy := focusedOK && canFetchDetails(focusedItem.pkg.Source)
+
 	// Context-sensitive compact help.
 	var bindings []key.Binding
 
@@ -478,15 +498,21 @@ func (s workspaceScreen) helpKeys() []key.Binding {
 			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "stage")),
 			key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "apply")),
 			key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade")),
-			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")),
 		}
+		if canPolicy {
+			bindings = append(bindings, key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "policy")))
+		}
+		bindings = append(bindings, key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")))
 	default: // installed
 		bindings = []key.Binding{
 			key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "stage")),
 			key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "apply")),
 			key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
-			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")),
 		}
+		if canPolicy {
+			bindings = append(bindings, key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "policy")))
+		}
+		bindings = append(bindings, key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall")))
 	}
 
 	bindings = append(bindings, key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")))
@@ -510,6 +536,7 @@ func (s workspaceScreen) fullHelpKeys() [][]key.Binding {
 		key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "upgrade selected/focused")),
 		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall selected/focused")),
 		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "stage all updates")),
+		key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "cycle update policy")),
 	}
 	search := []key.Binding{
 		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search for apps")),

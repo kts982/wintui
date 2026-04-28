@@ -392,7 +392,7 @@ func TestDetailOverrideEditorCyclesValues(t *testing.T) {
 	p.source = "winget"
 	p.detail = PackageDetail{Name: "Mozilla Firefox", ID: "Mozilla.Firefox"}
 	p.editingOverrides = true
-	p.overrideCursor = 1 // scope (0 is ignore)
+	p.overrideCursor = 2 // scope (0 is update policy, 1 is ignore)
 
 	next, _, _ := p.update(keyMsg("right"))
 	if next.overrideEdit.Scope != "user" {
@@ -407,6 +407,31 @@ func TestDetailOverrideEditorCyclesValues(t *testing.T) {
 	next, _, _ = next.update(keyMsg("right"))
 	if next.overrideEdit.Scope != "" {
 		t.Fatalf("scope after wrap = %q, want empty (global)", next.overrideEdit.Scope)
+	}
+}
+
+func TestDetailOverrideEditorCyclesUpdatePolicy(t *testing.T) {
+	p := newDetailPanel()
+	p.state = detailReady
+	p.pkgID = "Mozilla.Firefox"
+	p.source = "winget"
+	p.detail = PackageDetail{Name: "Mozilla Firefox", ID: "Mozilla.Firefox"}
+	p.editingOverrides = true
+	p.overrideCursor = 0 // update policy
+
+	next, _, _ := p.update(keyMsg("right"))
+	if next.overrideEdit.UpdatePolicy != PolicyAuto {
+		t.Fatalf("policy after cycle = %q, want auto", next.overrideEdit.UpdatePolicy)
+	}
+
+	next, _, _ = next.update(keyMsg("right"))
+	if next.overrideEdit.UpdatePolicy != PolicyHold {
+		t.Fatalf("policy after second cycle = %q, want hold", next.overrideEdit.UpdatePolicy)
+	}
+
+	next, _, _ = next.update(keyMsg("right"))
+	if next.overrideEdit.UpdatePolicy != PolicyAsk {
+		t.Fatalf("policy after wrap = %q, want ask/default", next.overrideEdit.UpdatePolicy)
 	}
 }
 
@@ -433,13 +458,18 @@ func TestDetailOverrideEditorNavigates(t *testing.T) {
 	}
 
 	next, _, _ = next.update(keyMsg("down"))
-	if next.overrideCursor != 3 {
+	if next.overrideCursor != 4 {
+		t.Fatalf("cursor after fourth down = %d, want 4", next.overrideCursor)
+	}
+
+	next, _, _ = next.update(keyMsg("down"))
+	if next.overrideCursor != 4 {
 		t.Fatalf("cursor should not exceed max, got %d", next.overrideCursor)
 	}
 
 	next, _, _ = next.update(keyMsg("up"))
-	if next.overrideCursor != 2 {
-		t.Fatalf("cursor after up = %d, want 2", next.overrideCursor)
+	if next.overrideCursor != 3 {
+		t.Fatalf("cursor after up = %d, want 3", next.overrideCursor)
 	}
 }
 
@@ -706,6 +736,9 @@ func TestDetailOverrideEditorRendersAllFields(t *testing.T) {
 	if !strings.Contains(plain, "Package Rules") {
 		t.Fatalf("override editor should show title, got %q", plain)
 	}
+	if !strings.Contains(plain, "Update Policy") {
+		t.Fatalf("override editor should show update policy field, got %q", plain)
+	}
 	if !strings.Contains(plain, "Scope") {
 		t.Fatalf("override editor should show Scope field, got %q", plain)
 	}
@@ -860,7 +893,7 @@ func TestDetailOverrideEditorCyclesIgnore(t *testing.T) {
 	p.pkgID = "Test.Pkg"
 	p.detail = PackageDetail{Name: "Test", ID: "Test.Pkg"}
 	p.editingOverrides = true
-	p.overrideCursor = 0 // ignore field
+	p.overrideCursor = 1 // ignore field
 
 	next, _, _ := p.update(keyMsg("right"))
 	if next.overrideEdit.getValue("ignore") != "all" {

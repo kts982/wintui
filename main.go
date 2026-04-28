@@ -23,9 +23,7 @@ var (
 	retryVersion string
 	retryBatch   string
 
-	listFlag  bool
-	checkFlag bool
-	jsonFlag  bool
+	jsonFlag bool
 )
 
 var rootCmd = &cobra.Command{
@@ -37,19 +35,14 @@ var rootCmd = &cobra.Command{
   wintui list                      list installed packages
   wintui show Mozilla.Firefox      print effective install/upgrade args for a package
   wintui upgrade --all             upgrade every visible upgradeable package
+  wintui upgrade --auto            upgrade packages marked Auto
+  wintui upgrade --id Mozilla.Firefox  upgrade a single named package (repeatable)
   wintui check --json              machine-readable output (--json works on check, list, show)`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		appSettings = LoadSettings()
 		cleanupStaleSelfUpdateHelpers()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if listFlag {
-			return runList()
-		}
-		if checkFlag {
-			return runCheck()
-		}
-
 		var req *retryRequest
 		if retryOpVal != "" {
 			req = &retryRequest{Op: retryOp(retryOpVal)}
@@ -92,14 +85,6 @@ func init() {
 		_ = rootCmd.Flags().MarkHidden(name)
 	}
 
-	rootCmd.Flags().BoolVar(&checkFlag, "check", false, "Check for available upgrades")
-	rootCmd.Flags().BoolVar(&listFlag, "list", false, "List all installed packages")
-	rootCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
-	rootCmd.MarkFlagsMutuallyExclusive("check", "list")
-	// Deprecated in favor of subcommands; kept working for one minor release.
-	_ = rootCmd.Flags().MarkDeprecated("check", "use 'wintui check' instead")
-	_ = rootCmd.Flags().MarkDeprecated("list", "use 'wintui list' instead")
-
 	// Compatibility with old -v flag
 	rootCmd.Flags().BoolP("version", "v", false, "show version")
 
@@ -107,7 +92,9 @@ func init() {
 	listCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	showCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	showCmd.Flags().StringVar(&showSource, "source", "", "Package source (winget|msstore); defaults to winget")
-	upgradeCmd.Flags().BoolVar(&upgradeAllFlag, "all", false, "Upgrade all available (non-ignored) packages")
+	upgradeCmd.Flags().BoolVar(&upgradeAllFlag, "all", false, "Upgrade all available non-held packages")
+	upgradeCmd.Flags().BoolVar(&upgradeAutoFlag, "auto", false, "Upgrade packages marked Auto")
+	upgradeCmd.Flags().StringArrayVar(&upgradeIDsFlag, "id", nil, "Upgrade a specific package by ID (repeatable)")
 	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd)
 }
 

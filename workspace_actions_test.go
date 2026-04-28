@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -182,5 +183,165 @@ func TestDeduplicatePreservesNonUninstallItems(t *testing.T) {
 
 	if len(got) != 2 {
 		t.Fatalf("len = %d, want 2 (non-uninstall items preserved)", len(got))
+	}
+}
+
+func TestCycleFocusedUpdatePolicyOnInstalledPackage(t *testing.T) {
+	original := appSettings
+	originalCache := cache
+	appSettings = DefaultSettings()
+	cache = &packageCache{ttl: 2 * time.Minute, diskTTL: 24 * time.Hour}
+	t.Cleanup(func() {
+		appSettings = original
+		cache = originalCache
+	})
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = []workspaceItem{{
+		pkg:       Package{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget", Version: "130.0"},
+		installed: "130.0",
+	}}
+
+	next, _ := ws.update(keyMsg("t"))
+	got := next.(workspaceScreen)
+	o := appSettings.getOverride("Mozilla.Firefox", "winget")
+	if o.UpdatePolicy != PolicyAuto {
+		t.Fatalf("policy after first t = %q, want auto", o.UpdatePolicy)
+	}
+	if len(got.items) != 1 || got.items[0].upgradeable {
+		t.Fatalf("items after auto = %#v, want installed item retained", got.items)
+	}
+
+	next, _ = got.update(keyMsg("t"))
+	got = next.(workspaceScreen)
+	o = appSettings.getOverride("Mozilla.Firefox", "winget")
+	if o.UpdatePolicy != PolicyHold {
+		t.Fatalf("policy after second t = %q, want hold", o.UpdatePolicy)
+	}
+
+	_, _ = got.update(keyMsg("t"))
+	o = appSettings.getOverride("Mozilla.Firefox", "winget")
+	if !o.isEmpty() {
+		t.Fatalf("policy after third t = %#v, want cleared ask/default", o)
+	}
+	if appSettings.hasOverride("Mozilla.Firefox", "winget") {
+		t.Fatal("expected empty ask policy to remove package override")
+	}
+}
+
+func TestCycleFocusedUpdatePolicyHoldRemovesUpdateImmediately(t *testing.T) {
+	original := appSettings
+	originalCache := cache
+	appSettings = DefaultSettings()
+	cache = &packageCache{ttl: 2 * time.Minute, diskTTL: 24 * time.Hour}
+	t.Cleanup(func() {
+		appSettings = original
+		cache = originalCache
+	})
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = []workspaceItem{{
+		pkg:         Package{Name: "Git", ID: "Git.Git", Source: "winget", Version: "2.0", Available: "2.1"},
+		upgradeable: true,
+		installed:   "2.0",
+		available:   "2.1",
+	}}
+
+	next, _ := ws.update(keyMsg("t")) // ask -> auto
+	got := next.(workspaceScreen)
+	next, _ = got.update(keyMsg("t")) // auto -> hold
+	got = next.(workspaceScreen)
+
+	if got.hiddenUpgrades != 1 {
+		t.Fatalf("hiddenUpgrades = %d, want 1 held package", got.hiddenUpgrades)
+	}
+	if len(got.items) != 1 {
+		t.Fatalf("len(items) = %d, want 1 installed item", len(got.items))
+	}
+	if got.items[0].upgradeable {
+		t.Fatalf("held package still upgradeable: %#v", got.items[0])
+	}
+	if got.items[0].pkg.ID != "Git.Git" {
+		t.Fatalf("item ID = %q, want Git.Git", got.items[0].pkg.ID)
+	}
+}
+
+func TestCycleFocusedUpdatePolicyIgnoresSearchResults(t *testing.T) {
+	original := appSettings
+	originalCache := cache
+	appSettings = DefaultSettings()
+	cache = &packageCache{ttl: 2 * time.Minute, diskTTL: 24 * time.Hour}
+	t.Cleanup(func() {
+		appSettings = original
+		cache = originalCache
+	})
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.searchResults = []Package{{Name: "Firefox", ID: "Mozilla.Firefox", Source: "winget", Version: "130.0"}}
+
+	next, _ := ws.update(keyMsg("t"))
+	got := next.(workspaceScreen)
+	if appSettings.hasOverride("Mozilla.Firefox", "winget") {
+		t.Fatal("search result should not receive a package policy override")
+	}
+	if len(got.searchResults) != 1 {
+		t.Fatalf("searchResults = %#v, want unchanged", got.searchResults)
+	}
+}
+
+func TestCycleFocusedUpdatePolicyIgnoresNonWingetSources(t *testing.T) {
+	original := appSettings
+	originalCache := cache
+	appSettings = DefaultSettings()
+	cache = &packageCache{ttl: 2 * time.Minute, diskTTL: 24 * time.Hour}
+	t.Cleanup(func() {
+		appSettings = original
+		cache = originalCache
+	})
+
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.items = []workspaceItem{{
+		pkg:       Package{Name: "Some MSIX App", ID: "SomeMsix_abc123", Source: ""},
+		installed: "1.0",
+	}}
+
+	next, _ := ws.update(keyMsg("t"))
+	got := next.(workspaceScreen)
+	if appSettings.hasOverride("SomeMsix_abc123", "") {
+		t.Fatal("non-winget package should not receive a policy override")
+	}
+	if len(got.items) != 1 {
+		t.Fatalf("items = %#v, want unchanged", got.items)
+	}
+}
+
+func TestRenderItemTextShowsPolicyBadges(t *testing.T) {
+	original := appSettings
+	appSettings = DefaultSettings()
+	appSettings.Packages = map[string]PackageOverride{
+		packageRuleKey("Auto.Pkg", "winget"): {UpdatePolicy: PolicyAuto},
+		packageRuleKey("Held.Pkg", "winget"): {UpdatePolicy: PolicyHold},
+	}
+	t.Cleanup(func() { appSettings = original })
+
+	ws := newWorkspaceScreen()
+	auto := stripANSI(ws.renderItemText(workspaceItem{
+		pkg:       Package{Name: "Auto", ID: "Auto.Pkg", Source: "winget", Version: "1.0"},
+		installed: "1.0",
+	}, 80, false))
+	if !strings.Contains(auto, "[AUTO]") {
+		t.Fatalf("auto row = %q, want [AUTO] badge", auto)
+	}
+
+	held := stripANSI(ws.renderItemText(workspaceItem{
+		pkg:       Package{Name: "Held", ID: "Held.Pkg", Source: "winget", Version: "1.0"},
+		installed: "1.0",
+	}, 80, false))
+	if !strings.Contains(held, "[HOLD]") {
+		t.Fatalf("held row = %q, want [HOLD] badge", held)
 	}
 }

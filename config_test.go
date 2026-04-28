@@ -102,6 +102,21 @@ func TestGetOverrideReturnsDefault(t *testing.T) {
 func TestPackageOverrideGetSetValue(t *testing.T) {
 	var o PackageOverride
 
+	o.setValue("update_policy", "auto")
+	if o.getValue("update_policy") != "auto" {
+		t.Fatalf("update_policy = %q, want auto", o.getValue("update_policy"))
+	}
+
+	o.setValue("update_policy", "hold")
+	if o.getValue("update_policy") != "hold" {
+		t.Fatalf("update_policy = %q, want hold", o.getValue("update_policy"))
+	}
+
+	o.setValue("update_policy", "")
+	if o.getValue("update_policy") != "" {
+		t.Fatalf("update_policy after clear = %q, want empty", o.getValue("update_policy"))
+	}
+
 	o.setValue("scope", "machine")
 	if o.getValue("scope") != "machine" {
 		t.Fatalf("scope = %q, want %q", o.getValue("scope"), "machine")
@@ -269,6 +284,38 @@ func TestIsIgnoredVersion(t *testing.T) {
 	}
 }
 
+func TestUpdatePolicy(t *testing.T) {
+	s := DefaultSettings()
+	s.Packages = map[string]PackageOverride{
+		"Auto.Pkg": {UpdatePolicy: PolicyAuto},
+		"Held.Pkg": {UpdatePolicy: PolicyHold},
+	}
+	if got := s.updatePolicy("Auto.Pkg", "winget", "2.0"); got != PolicyAuto {
+		t.Fatalf("Auto.Pkg policy = %q, want auto", got)
+	}
+	if got := s.updatePolicy("Held.Pkg", "winget", "2.0"); got != PolicyHold {
+		t.Fatalf("Held.Pkg policy = %q, want hold", got)
+	}
+	if got := s.updatePolicy("Ask.Pkg", "winget", "2.0"); got != PolicyAsk {
+		t.Fatalf("Ask.Pkg policy = %q, want ask", got)
+	}
+}
+
+func TestLegacyIgnoreForcesHoldPolicy(t *testing.T) {
+	o := PackageOverride{UpdatePolicy: PolicyAuto, Ignore: true}
+	if got := o.effectiveUpdatePolicy("2.0"); got != PolicyHold {
+		t.Fatalf("effective policy = %q, want hold", got)
+	}
+
+	o = PackageOverride{UpdatePolicy: PolicyAuto, IgnoreVersion: "2.0"}
+	if got := o.effectiveUpdatePolicy("2.0"); got != PolicyHold {
+		t.Fatalf("effective version policy = %q, want hold", got)
+	}
+	if got := o.effectiveUpdatePolicy("2.1"); got != PolicyAuto {
+		t.Fatalf("effective moved-version policy = %q, want auto", got)
+	}
+}
+
 func TestIsIgnoredNilPackages(t *testing.T) {
 	s := DefaultSettings()
 	if s.isIgnored("Any.Pkg", "winget", "1.0") {
@@ -381,6 +428,11 @@ func TestPackageOverrideIsEmptyWithIgnore(t *testing.T) {
 	o = PackageOverride{IgnoreVersion: "1.0"}
 	if o.isEmpty() {
 		t.Fatal("expected override with IgnoreVersion to not be empty")
+	}
+
+	o = PackageOverride{UpdatePolicy: PolicyAuto}
+	if o.isEmpty() {
+		t.Fatal("expected override with UpdatePolicy Auto to not be empty")
 	}
 }
 
@@ -511,6 +563,45 @@ func TestBuildItemsIgnoreMatchesSourceOnly(t *testing.T) {
 	}
 	if !upgradeSources["msstore"] {
 		t.Fatal("msstore source should remain visible")
+	}
+}
+
+func TestBuildItemsPolicyHoldAndAuto(t *testing.T) {
+	original := appSettings
+	defer func() { appSettings = original }()
+
+	appSettings = DefaultSettings()
+	appSettings.Packages = map[string]PackageOverride{
+		packageRuleKey("Auto.Pkg", "winget"): {UpdatePolicy: PolicyAuto},
+		packageRuleKey("Held.Pkg", "winget"): {UpdatePolicy: PolicyHold},
+	}
+
+	installed := []Package{
+		{ID: "Auto.Pkg", Name: "Auto", Version: "1.0", Source: "winget"},
+		{ID: "Held.Pkg", Name: "Held", Version: "1.0", Source: "winget"},
+		{ID: "Ask.Pkg", Name: "Ask", Version: "1.0", Source: "winget"},
+	}
+	upgradeable := []Package{
+		{ID: "Auto.Pkg", Name: "Auto", Version: "1.0", Available: "2.0", Source: "winget"},
+		{ID: "Held.Pkg", Name: "Held", Version: "1.0", Available: "2.0", Source: "winget"},
+		{ID: "Ask.Pkg", Name: "Ask", Version: "1.0", Available: "2.0", Source: "winget"},
+	}
+
+	items, hidden := buildItems(installed, upgradeable)
+	if hidden != 1 {
+		t.Fatalf("hidden = %d, want 1 held package", hidden)
+	}
+	upgradeIDs := map[string]bool{}
+	for _, item := range items {
+		if item.upgradeable {
+			upgradeIDs[item.pkg.ID] = true
+		}
+	}
+	if !upgradeIDs["Auto.Pkg"] || !upgradeIDs["Ask.Pkg"] {
+		t.Fatalf("upgradeable IDs = %v, want Auto.Pkg and Ask.Pkg", upgradeIDs)
+	}
+	if upgradeIDs["Held.Pkg"] {
+		t.Fatalf("upgradeable IDs = %v, did not want Held.Pkg", upgradeIDs)
 	}
 }
 

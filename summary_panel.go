@@ -201,6 +201,9 @@ func (p summaryPanel) view() string {
 		overrideStyle := lipgloss.NewStyle().Foreground(override)
 		lines = append(lines, "")
 		lines = append(lines, overrideStyle.Bold(true).Render("⚙ Package Rules"))
+		if policy := o.displayedUpdatePolicy(); policy != PolicyAsk {
+			lines = append(lines, p.field("Policy", overrideStyle.Render(string(policy))))
+		}
 		if o.Ignore {
 			lines = append(lines, p.field("Ignore", overrideStyle.Render("all versions")))
 		} else if o.IgnoreVersion != "" {

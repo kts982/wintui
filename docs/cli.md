@@ -11,21 +11,14 @@ run headlessly and exit.
 | `wintui check [--json]` | Print upgradeable packages and exit |
 | `wintui list [--json]` | Print installed packages and exit |
 | `wintui show <id> [--source winget\|msstore] [--json]` | Print effective install/upgrade args and overrides for a single package (read-only; does not call winget) |
-| `wintui upgrade --all` | Upgrade every visible upgradeable package |
+| `wintui upgrade --all` | Upgrade every non-held upgradeable package |
+| `wintui upgrade --auto` | Upgrade only packages marked Auto |
+| `wintui upgrade --id <pkg>` | Upgrade one or more named packages (repeatable) |
 
 `wintui` (no subcommand) launches the TUI.
 
-### Deprecated root flags
-
-`--check` and `--list` at the root still work but print a deprecation
-warning. They will be removed in v2.5.0; use the subcommands above.
-
-| Deprecated | Replacement |
-|---|---|
-| `wintui --check` | `wintui check` |
-| `wintui --check --json` | `wintui check --json` |
-| `wintui --list` | `wintui list` |
-| `wintui --list --json` | `wintui list --json` |
+The old root `--check` and `--list` flags have been removed. Use
+`wintui check` and `wintui list`.
 
 ## Exit Codes
 
@@ -33,11 +26,11 @@ warning. They will be removed in v2.5.0; use the subcommands above.
 
 | Exit code | Meaning |
 |---|---|
-| `0` | No updates available (or all available updates are hidden by ignore rules) |
+| `0` | No updates available (or all available updates are held by policy) |
 | `1` | One or more visible updates available |
 
-`check` honors the same per-package ignore rules the TUI uses, so a
-hidden package will not flip the exit code.
+`check` honors the same per-package update policy the TUI uses, so a held
+package will not flip the exit code.
 
 ### `list`
 
@@ -48,14 +41,22 @@ hidden package will not flip the exit code.
 `show` exits with `0` on success and non-zero on argument errors
 (missing id, unsupported `--source`).
 
-### `upgrade --all`
+### `upgrade --all` / `upgrade --auto` / `upgrade --id`
 
 | Exit code | Meaning |
 |---|---|
-| `0` | All visible upgrades succeeded, no upgrades were available, or only the running WinTUI binary was skipped |
-| `1` | One or more package upgrades failed |
+| `0` | All selected upgrades succeeded, no matching upgrades were available, or only the running WinTUI binary was skipped |
+| `1` | One or more package upgrades failed, or `--id` named a held package |
 
-The running WinTUI binary is **not** upgraded by `upgrade --all`; it is
+`--all` upgrades every non-held package. `--auto` upgrades only packages
+whose per-package update policy is Auto. `--id` upgrades one or more named
+packages — the flag is repeatable (`--id A --id B`), packages without an
+available update are reported with no error, and naming a held package is
+an error (so the user notices their hold instead of silently skipping).
+
+`--all`, `--auto`, and `--id` are mutually exclusive.
+
+The running WinTUI binary is **not** upgraded by headless upgrade commands; it is
 skipped with a hint pointing at the TUI, where the self-upgrade handoff
 is verified. To upgrade WinTUI itself, run `wintui` and use the TUI.
 
@@ -78,8 +79,84 @@ wintui list --json > packages.json
 wintui show Mozilla.Firefox
 wintui show Mozilla.Firefox --json
 
-# Upgrade everything that is not on the ignore list
+# Upgrade everything that is not held
 wintui upgrade --all
+
+# Upgrade only packages marked Auto
+wintui upgrade --auto
+
+# Upgrade one or more specific packages by ID
+wintui upgrade --id Mozilla.Firefox --id Microsoft.VisualStudioCode
+
+# Pipe from check (PowerShell):
+wintui check --json | ConvertFrom-Json | ForEach-Object { wintui upgrade --id $_.id }
+
+# Pipe from check (bash, e.g. Git Bash):
+wintui check --json | jq -r '.[].id' | xargs -r -n1 wintui upgrade --id
+```
+
+## Recipes
+
+PowerShell snippets for common automation patterns. Each one assumes
+`wintui.exe` is on `PATH`.
+
+### Daily toast when updates are available
+
+Pair with Task Scheduler (`schtasks /Create ... /SC DAILY`) so the toast
+fires once per day:
+
+```powershell
+# Requires the BurntToast module: Install-Module -Name BurntToast
+$updates = wintui check --json | ConvertFrom-Json
+if ($updates.Count -gt 0) {
+    New-BurntToastNotification -Text "WinTUI", "$($updates.Count) update(s) available"
+}
+```
+
+### Upgrade everything matching a pattern
+
+Selectively upgrade by package ID prefix without touching anything else:
+
+```powershell
+wintui check --json | ConvertFrom-Json |
+    Where-Object { $_.id -like 'Microsoft.*' } |
+    ForEach-Object { wintui upgrade --id $_.id }
+```
+
+### Exit-code gate for CI / Task Scheduler
+
+`wintui check` exits 1 when visible updates exist — drop straight into a
+build step or scheduled job to short-circuit when patches are pending:
+
+```powershell
+wintui check
+if ($LASTEXITCODE -eq 1) {
+    Write-Host "Pending updates — failing build" -ForegroundColor Yellow
+    exit 1
+}
+```
+
+### Inspect-before-upgrade
+
+Print the exact `winget` command WinTUI would run for every pending
+update — useful for reviewing per-package overrides before pulling the
+trigger:
+
+```powershell
+wintui check --json | ConvertFrom-Json |
+    ForEach-Object { wintui show $_.id }
+```
+
+### Save an installed-package snapshot
+
+Until `wintui export` / `wintui import` lands, JSON snapshots make a fine
+manual baseline. Re-apply on a fresh machine via `winget install` per ID:
+
+```powershell
+wintui list --json | Out-File -Encoding utf8 packages.json
+# On the new machine:
+Get-Content packages.json | ConvertFrom-Json |
+    ForEach-Object { winget install --id $_.id --exact --accept-package-agreements }
 ```
 
 ## Human-Readable Output
@@ -118,14 +195,14 @@ Effective upgrade command:
 ```
 
 If the package has overrides, a "Per-package overrides" block is
-appended (scope, architecture, elevate, ignore, ignore_version). Global and
-per-package action settings can add flags such as `--silent`, `--scope`, or
-`--architecture` to the command preview.
+appended (update_policy, scope, architecture, elevate, ignore, ignore_version).
+Global and per-package action settings can add flags such as `--silent`,
+`--scope`, or `--architecture` to the command preview.
 
-### `upgrade --all`
+### `upgrade --all` / `upgrade --auto`
 
-`upgrade --all` streams winget output line-by-line under each package
-header and prints a summary line on completion.
+Headless upgrade commands stream winget output line-by-line under each
+package header and print a summary line on completion.
 
 ## JSON Output
 
@@ -163,14 +240,9 @@ The `override` field is omitted when no per-package rules exist.
 
 ## Notes
 
-- `--check` and `--list` (root flags, deprecated) are mutually exclusive.
 - `--json` is valid with `check`, `list`, and `show`.
-- `wintui upgrade --all` honors per-package ignore rules from `settings.json`.
-- The retry/relaunch flags below are internal and used by WinTUI's
-  elevated retry flows; they are not intended for direct user use:
-  - `--retry-op`
-  - `--id`
-  - `--name`
-  - `--source`
-  - `--package-version`
-  - `--retry-batch`
+- `wintui upgrade --all` and `wintui upgrade --auto` honor per-package update policy from `settings.json`.
+- `wintui upgrade --id` is the user-facing single-package mode. The
+  identically-named `--id` on the root command (alongside `--retry-op`,
+  `--name`, etc.) is internal to WinTUI's elevated retry flow and is not
+  intended for direct user use.

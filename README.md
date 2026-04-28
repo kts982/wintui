@@ -49,11 +49,11 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Normalized package actions** — press `Space` to stage the focused package, `g` to apply staged changes, or use `i` / `u` / `x` for direct install, upgrade, and uninstall accelerators
 - **Search & Install** — press `s` to search the winget catalog, `Space` to queue packages, `i` to install the focused result or the full install queue
 - **Upgrade / Uninstall** — stage packages across sections, then apply them together, or use `u` / `x` on the focused package or current selection
-- **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), release notes (`n` when available), a live command preview showing exactly what winget will run (including per-package overrides), and scrollable metadata
+- **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), release notes (`n` when available), Auto/Ask/Hold package policy, a live command preview showing exactly what winget will run (including per-package overrides), and scrollable metadata
 - **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners and the most recent winget output line, view compact results with `Ctrl+E` retry (elevated when needed, plain retry for process-in-use failures)
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
 - **Self-upgrade handoff** — upgrading `kts982.WinTUI` now finishes through a local handoff script, and only from an already elevated WinTUI session; non-admin sessions offer `Ctrl+A` to relaunch as admin and retry, with a manual admin command fallback when UAC relaunch is blocked
-- **Headless CLI** — `wintui check`, `wintui list`, `wintui show <id>`, and `wintui upgrade --all` for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, and `show`
+- **Headless CLI** — `wintui check`, `wintui list`, `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, and `wintui upgrade --id <pkg>` for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, and `show`
 
 **System Utilities**
 - **Health Check** — shells, dev tools, runtimes, package managers, disk space, Defender, developer mode
@@ -84,7 +84,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 ### Headless CLI
 
 ```powershell
-# Human-readable upgrade check (honors per-package ignore rules)
+# Human-readable upgrade check (honors per-package update policy)
 wintui check
 
 # Exit code 1 when visible updates are available
@@ -97,14 +97,20 @@ wintui list --json > packages.json
 # Inspect what WinTUI would pass to winget for a given package
 wintui show Mozilla.Firefox --json
 
-# Upgrade everything that is not on the ignore list
+# Upgrade everything that is not held
 wintui upgrade --all
+
+# Upgrade only packages marked Auto
+wintui upgrade --auto
+
+# Upgrade specific packages by ID (repeatable; pipe-friendly)
+wintui upgrade --id Mozilla.Firefox --id Microsoft.VisualStudioCode
 ```
 
-The old root flags `--check` and `--list` still work for one minor release
-with a deprecation warning. WinTUI itself is **not** upgraded by
-`upgrade --all`; the running binary is skipped with a hint pointing at
-the TUI, where the self-upgrade handoff is verified.
+The old root flags `--check` and `--list` have been removed; use
+`wintui check` and `wintui list`. WinTUI itself is **not** upgraded by
+headless upgrade commands; the running binary is skipped with a hint
+pointing at the TUI, where the self-upgrade handoff is verified.
 
 Further documentation:
 - [CLI reference](docs/cli.md)
@@ -128,6 +134,7 @@ Further documentation:
 | `g` | Apply staged changes |
 | `u` | Upgrade selected or focused package |
 | `x` | Uninstall selected or focused package |
+| `t` | Cycle focused winget/msstore package update policy: Ask → Auto → Hold |
 | `i` | Install queued packages or focused search result |
 | `a` | Stage all available updates |
 | `v` | Pick version (in detail view) |
@@ -172,9 +179,9 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 
 ### Per-Package Rules
 
-Any of the settings above can be overridden for a specific package, and packages can be ignored from the Updates list. Open a package's detail view and press `p` for the rules editor or `i` to toggle ignore.
+Any of the settings above can be overridden for a specific package, and winget/msstore-managed packages can be marked Ask, Auto, or Hold for updates. Press `t` from the package list to cycle the focused package through Ask → Auto → Hold, or open a package's detail view and press `p` for the full rules editor.
 
-Supported rules: `scope`, `architecture`, `elevate`, `ignore`, `ignore_version`. Ignored packages are hidden from Updates with a `(N hidden)` count on the section header.
+Supported rules: `update_policy`, `scope`, `architecture`, `elevate`, `ignore`, `ignore_version`. Auto and Hold packages show `[AUTO]` / `[HOLD]` badges in the package list. Held packages are omitted from normal upgrade actions with an `(N held)` count on the section header.
 
 For the full rule reference and behavior details, see [Per-package rules](docs/package-rules.md).
 

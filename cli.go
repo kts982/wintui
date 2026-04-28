@@ -20,7 +20,7 @@ var cliExitCode int
 var checkCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check for available upgrades",
-	Long: `Print the list of upgradeable packages, honoring per-package ignore rules.
+	Long: `Print the list of upgradeable packages, honoring per-package update policy.
 Exits 1 if any updates are available, 0 otherwise.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -40,25 +40,45 @@ var listCmd = &cobra.Command{
 // showSource is the --source flag for `wintui show <id>`. Defaults to winget.
 var showSource string
 
-// upgradeAllFlag is set by the `wintui upgrade --all` flag. When more action
-// modes (--auto, --id) land, swap this single bool for a richer set of mutually
-// exclusive flags via cobra.MarkFlagsOneRequired.
-var upgradeAllFlag bool
+var (
+	upgradeAllFlag  bool
+	upgradeAutoFlag bool
+	upgradeIDsFlag  []string
+)
 
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Upgrade packages without launching the TUI",
-	Long: `Upgrade packages headlessly. Currently only --all is supported; per-package
-'auto' policy will land alongside the Auto/Ask/Hold work.
+	Long: `Upgrade packages headlessly.
 
-Honors the same per-package ignore rules the TUI uses, so a hidden package
-will not be upgraded by --all.`,
+--all upgrades every non-held package. --auto upgrades only packages whose
+per-package update policy is Auto. --id upgrades one or more named packages
+(repeatable). Held packages are skipped by --all/--auto; naming a held
+package via --id is an error.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		modes := 0
 		if upgradeAllFlag {
-			return runUpgradeAll()
+			modes++
 		}
-		return fmt.Errorf("specify --all (use 'wintui upgrade --all')")
+		if upgradeAutoFlag {
+			modes++
+		}
+		if len(upgradeIDsFlag) > 0 {
+			modes++
+		}
+		switch {
+		case modes > 1:
+			return fmt.Errorf("specify only one of --all, --auto, or --id")
+		case upgradeAllFlag:
+			return runUpgradeAll()
+		case upgradeAutoFlag:
+			return runUpgradeAuto()
+		case len(upgradeIDsFlag) > 0:
+			return runUpgradeIDs(upgradeIDsFlag)
+		default:
+			return fmt.Errorf("specify --all, --auto, or --id <package>")
+		}
 	},
 }
 
@@ -100,8 +120,8 @@ func runCheck() error {
 		return err
 	}
 
-	// Route through the shared planner so --check honors the same ignore
-	// rules the TUI does. Hidden packages must not flip the exit code.
+	// Route through the shared planner so check honors the same package
+	// policy the TUI does. Held packages must not flip the exit code.
 	pkgs, _ := selectUpgrades(raw, appSettings)
 
 	if jsonFlag {
@@ -185,6 +205,9 @@ func runShow(id, source string) error {
 		if out.Override.Elevate != nil {
 			fmt.Printf("  elevate:        %t\n", *out.Override.Elevate)
 		}
+		if normalizeUpdatePolicy(out.Override.UpdatePolicy) != PolicyAsk {
+			fmt.Printf("  update_policy:  %s\n", out.Override.UpdatePolicy)
+		}
 		if out.Override.Ignore {
 			fmt.Println("  ignore:         true")
 		}
@@ -212,8 +235,114 @@ func runUpgradeAll() error {
 	return upgradeAll(ctx, raw, appSettings, os.Stdout)
 }
 
+func runUpgradeAuto() error {
+	ctx := context.Background()
+	raw, err := getUpgradeableCtx(ctx)
+	if err != nil {
+		return err
+	}
+	return upgradeAuto(ctx, raw, appSettings, os.Stdout)
+}
+
+func runUpgradeIDs(ids []string) error {
+	ctx := context.Background()
+	raw, err := getUpgradeableCtx(ctx)
+	if err != nil {
+		return err
+	}
+	return upgradeIDs(ctx, ids, raw, appSettings, os.Stdout)
+}
+
+// upgradeIDs upgrades each requested ID using the cached upgradeable list.
+// IDs not present in the list are reported as "no update available" (exit 0).
+// Held packages produce an error (exit 1) — naming a held package via --id is
+// treated as a sign the user forgot the policy. Self-package is skipped with
+// the same hint as --all/--auto and does not flip the exit code.
+func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Settings, out io.Writer) error {
+	upgradeable := make(map[string]Package, len(raw))
+	for _, pkg := range raw {
+		upgradeable[strings.ToLower(strings.TrimSpace(pkg.ID))] = pkg
+	}
+
+	requested := make([]string, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	for _, rawID := range ids {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			continue
+		}
+		key := strings.ToLower(id)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		requested = append(requested, id)
+	}
+	if len(requested) == 0 {
+		return fmt.Errorf("specify --id <package>")
+	}
+
+	fmt.Fprintf(out, "Upgrading %d package(s) by ID:\n", len(requested))
+
+	var (
+		failures    []string
+		held        []string
+		notFound    []string
+		skippedSelf bool
+		upgraded    int
+	)
+
+	for _, id := range requested {
+		key := strings.ToLower(id)
+		pkg, ok := upgradeable[key]
+		if !ok {
+			fmt.Fprintf(out, "\n→ %s\n  • no update available\n", id)
+			notFound = append(notFound, id)
+			continue
+		}
+
+		fmt.Fprintf(out, "\n→ %s (%s) %s → %s\n", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
+
+		if settings.updatePolicy(pkg.ID, pkg.Source, pkg.Available) == PolicyHold {
+			fmt.Fprintln(out, "  ✗ held by policy. Remove the hold from settings or use the TUI.")
+			held = append(held, pkg.ID)
+			continue
+		}
+		if isSelfPackageID(pkg.ID) && isRunningInstalledWinTUI() {
+			fmt.Fprintln(out, "  • skipped: WinTUI cannot upgrade itself headlessly. Run 'wintui' (TUI) and upgrade from there, or run 'winget upgrade "+pkg.ID+"' manually.")
+			skippedSelf = true
+			continue
+		}
+		if err := streamUpgradeFn(ctx, pkg, out); err != nil {
+			fmt.Fprintf(out, "  ✗ failed: %v\n", err)
+			failures = append(failures, pkg.ID)
+		} else {
+			fmt.Fprintln(out, "  ✓ upgraded")
+			upgraded++
+		}
+	}
+
+	fmt.Fprintf(out, "\n%d/%d succeeded.", upgraded, len(requested))
+	if len(failures) > 0 {
+		fmt.Fprintf(out, " Failed: %s", strings.Join(failures, ", "))
+		cliExitCode = 1
+	}
+	if len(held) > 0 {
+		fmt.Fprintf(out, " Held: %s", strings.Join(held, ", "))
+		cliExitCode = 1
+	}
+	if len(notFound) > 0 {
+		fmt.Fprintf(out, " No update: %s", strings.Join(notFound, ", "))
+	}
+	if skippedSelf {
+		fmt.Fprint(out, " (WinTUI self-upgrade skipped)")
+	}
+	fmt.Fprintln(out)
+	return nil
+}
+
 // upgradeAll runs `winget upgrade` for every visible upgradeable package
-// (i.e. those not hidden by ignore rules), streaming output to out and
+// (i.e. those not held by policy), streaming output to out and
 // reporting per-package success/failure. Sets cliExitCode = 1 if any failed.
 //
 // The running WinTUI binary is skipped: the TUI hands self-upgrades off to
@@ -221,26 +350,43 @@ func runUpgradeAll() error {
 // Replicating that dance from a one-shot CLI is fragile, so we point the
 // user at the TUI's verified path instead.
 func upgradeAll(ctx context.Context, raw []Package, settings Settings, out io.Writer) error {
-	visible, hidden := selectUpgrades(raw, settings)
+	plan := planUpgrades(raw, settings)
+	return upgradePlanned(ctx, plan.Visible, plan.HiddenCount(), "visible", out)
+}
 
-	if len(visible) == 0 {
-		if hidden > 0 {
-			fmt.Fprintf(out, "All non-hidden packages are up to date (%d hidden by ignore rules).\n", hidden)
-		} else {
+func upgradeAuto(ctx context.Context, raw []Package, settings Settings, out io.Writer) error {
+	plan := planUpgrades(raw, settings)
+	return upgradePlanned(ctx, plan.Auto, plan.HiddenCount(), "auto", out)
+}
+
+func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, out io.Writer) error {
+	if len(pkgs) == 0 {
+		switch {
+		case mode == "auto" && held > 0:
+			fmt.Fprintf(out, "No auto-update packages have updates available (%d held by policy).\n", held)
+		case mode == "auto":
+			fmt.Fprintln(out, "No auto-update packages have updates available.")
+		case held > 0:
+			fmt.Fprintf(out, "All non-held packages are up to date (%d held by policy).\n", held)
+		default:
 			fmt.Fprintln(out, "All packages are up to date.")
 		}
 		return nil
 	}
 
-	fmt.Fprintf(out, "Upgrading %d package(s)", len(visible))
-	if hidden > 0 {
-		fmt.Fprintf(out, " (%d hidden by ignore rules)", hidden)
+	if mode == "auto" {
+		fmt.Fprintf(out, "Auto-upgrading %d package(s)", len(pkgs))
+	} else {
+		fmt.Fprintf(out, "Upgrading %d package(s)", len(pkgs))
+	}
+	if held > 0 {
+		fmt.Fprintf(out, " (%d held by policy)", held)
 	}
 	fmt.Fprintln(out, ":")
 
 	var failures []string
 	var skippedSelf bool
-	for _, pkg := range visible {
+	for _, pkg := range pkgs {
 		fmt.Fprintf(out, "\n→ %s (%s) %s → %s\n", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
 		if isSelfPackageID(pkg.ID) && isRunningInstalledWinTUI() {
 			fmt.Fprintln(out, "  • skipped: WinTUI cannot upgrade itself headlessly. Run 'wintui' (TUI) and upgrade from there, or run 'winget upgrade "+pkg.ID+"' manually.")
@@ -255,11 +401,11 @@ func upgradeAll(ctx context.Context, raw []Package, settings Settings, out io.Wr
 		}
 	}
 
-	upgraded := len(visible) - len(failures)
+	upgraded := len(pkgs) - len(failures)
 	if skippedSelf {
 		upgraded--
 	}
-	fmt.Fprintf(out, "\n%d/%d succeeded.", upgraded, len(visible))
+	fmt.Fprintf(out, "\n%d/%d succeeded.", upgraded, len(pkgs))
 	if len(failures) > 0 {
 		fmt.Fprintf(out, " Failed: %s", strings.Join(failures, ", "))
 		cliExitCode = 1

@@ -150,6 +150,26 @@ func TestPickResolvedID(t *testing.T) {
 	})
 }
 
+func TestShouldResolveTruncatedPackageIDSkipsRawIdentities(t *testing.T) {
+	cases := []Package{
+		{ID: `MSIX\Microsoft.GetHelp_10.2409.41132.0_x64__8wekyb3d8bbwe`, idTruncated: true},
+		{ID: `{11111111-2222-3333-4444-555555555555}`, idTruncated: true},
+		{ID: `Microsoft.GetHelp_8wekyb3d8bbwe`, idTruncated: true},
+	}
+	for _, pkg := range cases {
+		if shouldResolveTruncatedPackageID(pkg) {
+			t.Fatalf("shouldResolveTruncatedPackageID(%q) = true, want false", pkg.ID)
+		}
+	}
+}
+
+func TestShouldResolveTruncatedPackageIDAllowsCanonicalIDs(t *testing.T) {
+	pkg := Package{ID: "Microsoft.VisualStudio.2022.BuildTo", Source: "winget", idTruncated: true}
+	if !shouldResolveTruncatedPackageID(pkg) {
+		t.Fatal("canonical winget ID should be eligible for truncated-ID resolution")
+	}
+}
+
 func TestParseWingetShowFixture(t *testing.T) {
 	got := parseWingetShow(strings.ReplaceAll(loadWingetFixture(t, "show_firefox.txt"), "\n", "\r\n"))
 	want := PackageDetail{

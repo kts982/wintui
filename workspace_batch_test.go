@@ -238,6 +238,217 @@ func TestBuildItemsFiltersIgnoredUpgrades(t *testing.T) {
 	}
 }
 
+func TestLaunchAutoUpdateCountdownStartsForAutoPolicy(t *testing.T) {
+	original := appSettings
+	appSettings = DefaultSettings()
+	appSettings.Packages = map[string]PackageOverride{
+		packageRuleKey("A.A", "winget"): {UpdatePolicy: PolicyAuto},
+	}
+	t.Cleanup(func() { appSettings = original })
+
+	ws := newWorkspaceScreen()
+	msg := workspaceDataMsg{
+		installed: []Package{
+			{Name: "A", ID: "A.A", Source: "winget", Version: "1.0"},
+		},
+		upgradeable: []Package{
+			{Name: "A", ID: "A.A", Source: "winget", Version: "1.0", Available: "2.0"},
+		},
+	}
+
+	next, cmd := ws.update(msg)
+	got := next.(workspaceScreen)
+	if cmd == nil {
+		t.Fatal("cmd = nil, want countdown tick command")
+	}
+	if !got.launchAutoChecked {
+		t.Fatal("launchAutoChecked = false, want true")
+	}
+	if got.modal == nil {
+		t.Fatal("modal = nil, want auto-update countdown modal")
+	}
+	if got.modal.phase != execPhaseCountdown {
+		t.Fatalf("modal.phase = %d, want execPhaseCountdown", got.modal.phase)
+	}
+	if got.modal.countdown != launchAutoUpdateCountdownSeconds {
+		t.Fatalf("countdown = %d, want %d", got.modal.countdown, launchAutoUpdateCountdownSeconds)
+	}
+	if len(got.modal.items) != 1 || got.modal.items[0].item.pkg.ID != "A.A" {
+		t.Fatalf("modal items = %#v, want A.A", got.modal.items)
+	}
+}
+
+func TestLaunchAutoUpdateWaitsForFreshData(t *testing.T) {
+	original := appSettings
+	appSettings = DefaultSettings()
+	appSettings.Packages = map[string]PackageOverride{
+		packageRuleKey("A.A", "winget"): {UpdatePolicy: PolicyAuto},
+	}
+	t.Cleanup(func() { appSettings = original })
+
+	ws := newWorkspaceScreen()
+	msg := workspaceDataMsg{
+		installed: []Package{
+			{Name: "A", ID: "A.A", Source: "winget", Version: "1.0"},
+		},
+		upgradeable: []Package{
+			{Name: "A", ID: "A.A", Source: "winget", Version: "1.0", Available: "2.0"},
+		},
+		fromDisk: true,
+		savedAt:  time.Now().Add(-time.Hour),
+	}
+
+	next, _ := ws.update(msg)
+	got := next.(workspaceScreen)
+	if got.launchAutoChecked {
+		t.Fatal("launchAutoChecked = true, want false until fresh data arrives")
+	}
+	if got.modal != nil {
+		t.Fatalf("modal = %#v, want nil for stale disk data", got.modal)
+	}
+	if !got.refreshing {
+		t.Fatal("refreshing = false, want background refresh")
+	}
+}
+
+func TestAutoUpdateCountdownCanStartOrCancel(t *testing.T) {
+	ws := newWorkspaceScreen()
+	ws.state = workspaceConfirm
+	items := []batchItem{{
+		action: retryOpUpgrade,
+		item: workspaceItem{
+			pkg:         Package{Name: "A", ID: "A.A", Source: "winget", Version: "1.0", Available: "2.0"},
+			upgradeable: true,
+		},
+		status: batchQueued,
+	}}
+	m := newExecModal(retryOpUpgrade, items)
+	m.phase = execPhaseCountdown
+	m.countdown = 1
+	ws.modal = &m
+
+	next, cmd := ws.update(autoUpdateCountdownTickMsg{})
+	started := next.(workspaceScreen)
+	if started.state != workspaceExecuting {
+		t.Fatalf("state after countdown = %d, want workspaceExecuting", started.state)
+	}
+	if started.modal == nil || started.modal.phase != execPhaseRunning {
+		t.Fatalf("modal after countdown = %#v, want running", started.modal)
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want batch start command")
+	}
+
+	ws = newWorkspaceScreen()
+	ws.state = workspaceConfirm
+	m = newExecModal(retryOpUpgrade, items)
+	m.phase = execPhaseCountdown
+	m.countdown = launchAutoUpdateCountdownSeconds
+	ws.modal = &m
+	next, _ = ws.update(keyMsg("esc"))
+	cancelled := next.(workspaceScreen)
+	if cancelled.modal != nil {
+		t.Fatalf("modal after cancel = %#v, want nil", cancelled.modal)
+	}
+	if cancelled.state != workspaceEmpty {
+		t.Fatalf("state after cancel = %d, want workspaceEmpty with no items", cancelled.state)
+	}
+}
+
+func TestLaunchAutoUpdateDefersSelfPackageOnly(t *testing.T) {
+	original := appSettings
+	origExe := currentExecutablePath
+	origEval := evalSymlinksPath
+	appSettings = DefaultSettings()
+	appSettings.Packages = map[string]PackageOverride{
+		packageRuleKey(selfPackageID, "winget"): {UpdatePolicy: PolicyAuto},
+	}
+	currentExecutablePath = func() (string, error) {
+		return `C:\Users\test\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
+	}
+	evalSymlinksPath = func(path string) (string, error) { return path, nil }
+	t.Cleanup(func() {
+		appSettings = original
+		currentExecutablePath = origExe
+		evalSymlinksPath = origEval
+	})
+
+	ws := newWorkspaceScreen()
+	msg := workspaceDataMsg{
+		installed: []Package{
+			{Name: "WinTUI", ID: selfPackageID, Source: "winget", Version: "2.4.0"},
+		},
+		upgradeable: []Package{
+			{Name: "WinTUI", ID: selfPackageID, Source: "winget", Version: "2.4.0", Available: "2.5.0"},
+		},
+	}
+
+	next, _ := ws.update(msg)
+	got := next.(workspaceScreen)
+	if got.modal != nil {
+		t.Fatalf("modal = %#v, want nil when only self-package is Auto", got.modal)
+	}
+	if !got.selfAutoDeferred {
+		t.Fatal("selfAutoDeferred = false, want true")
+	}
+}
+
+func TestLaunchAutoUpdateDefersSelfWithOtherAutoPackages(t *testing.T) {
+	original := appSettings
+	origExe := currentExecutablePath
+	origEval := evalSymlinksPath
+	appSettings = DefaultSettings()
+	appSettings.Packages = map[string]PackageOverride{
+		packageRuleKey(selfPackageID, "winget"): {UpdatePolicy: PolicyAuto},
+		packageRuleKey("Other.Pkg", "winget"):   {UpdatePolicy: PolicyAuto},
+	}
+	currentExecutablePath = func() (string, error) {
+		return `C:\Users\test\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
+	}
+	evalSymlinksPath = func(path string) (string, error) { return path, nil }
+	t.Cleanup(func() {
+		appSettings = original
+		currentExecutablePath = origExe
+		evalSymlinksPath = origEval
+	})
+
+	ws := newWorkspaceScreen()
+	msg := workspaceDataMsg{
+		installed: []Package{
+			{Name: "WinTUI", ID: selfPackageID, Source: "winget", Version: "2.4.0"},
+			{Name: "Other", ID: "Other.Pkg", Source: "winget", Version: "1.0"},
+		},
+		upgradeable: []Package{
+			{Name: "WinTUI", ID: selfPackageID, Source: "winget", Version: "2.4.0", Available: "2.5.0"},
+			{Name: "Other", ID: "Other.Pkg", Source: "winget", Version: "1.0", Available: "2.0"},
+		},
+	}
+
+	next, _ := ws.update(msg)
+	got := next.(workspaceScreen)
+	if got.modal == nil {
+		t.Fatal("modal = nil, want countdown modal for non-self Auto package")
+	}
+	if !got.selfAutoDeferred || !got.modal.selfAutoDeferred {
+		t.Fatalf("selfAutoDeferred screen=%v modal=%v, want both true", got.selfAutoDeferred, got.modal.selfAutoDeferred)
+	}
+	if len(got.modal.items) != 1 || got.modal.items[0].item.pkg.ID != "Other.Pkg" {
+		t.Fatalf("modal items = %#v, want only Other.Pkg", got.modal.items)
+	}
+}
+
+func TestSelfAutoDeferredBannerDismissesOnEsc(t *testing.T) {
+	ws := newWorkspaceScreen()
+	ws.state = workspaceReady
+	ws.selfAutoDeferred = true
+
+	next, _ := ws.update(keyMsg("esc"))
+	got := next.(workspaceScreen)
+	if got.selfAutoDeferred {
+		t.Fatal("selfAutoDeferred = true after esc, want cleared")
+	}
+}
+
 func TestIncrementalUpdateUpgradeRemovesFromUpgradeable(t *testing.T) {
 	originalCache := cache
 	cache = &packageCache{ttl: 2 * time.Minute, diskTTL: 24 * time.Hour}

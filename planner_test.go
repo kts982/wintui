@@ -67,3 +67,30 @@ func TestSelectUpgradesFiltersVersionPin(t *testing.T) {
 		t.Fatalf("hidden = %d, want 1", hidden)
 	}
 }
+
+func TestPlanUpgradesPartitionsPolicies(t *testing.T) {
+	settings := DefaultSettings()
+	settings.Packages = map[string]PackageOverride{
+		packageRuleKey("Auto.Pkg", "winget"): {UpdatePolicy: PolicyAuto},
+		packageRuleKey("Held.Pkg", "winget"): {UpdatePolicy: PolicyHold},
+	}
+	pkgs := []Package{
+		{Name: "Ask", ID: "Ask.Pkg", Source: "winget", Available: "2.0"},
+		{Name: "Auto", ID: "Auto.Pkg", Source: "winget", Available: "2.0"},
+		{Name: "Held", ID: "Held.Pkg", Source: "winget", Available: "2.0"},
+	}
+
+	plan := planUpgrades(pkgs, settings)
+	if len(plan.Visible) != 2 {
+		t.Fatalf("len(Visible) = %d, want 2", len(plan.Visible))
+	}
+	if len(plan.Auto) != 1 || plan.Auto[0].ID != "Auto.Pkg" {
+		t.Fatalf("Auto = %#v, want only Auto.Pkg", plan.Auto)
+	}
+	if len(plan.Held) != 1 || plan.Held[0].ID != "Held.Pkg" {
+		t.Fatalf("Held = %#v, want only Held.Pkg", plan.Held)
+	}
+	if plan.HiddenCount() != 1 {
+		t.Fatalf("HiddenCount = %d, want 1", plan.HiddenCount())
+	}
+}

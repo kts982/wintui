@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -854,6 +855,9 @@ func resolveTruncatedPackages(ctx context.Context, pkgs []Package, resolverCmd s
 		if !pkgs[i].idTruncated || pkgs[i].ID == "" {
 			continue
 		}
+		if !shouldResolveTruncatedPackageID(pkgs[i]) {
+			continue
+		}
 		if resolved, ok := resolvePackageID(ctx, pkgs[i], resolverCmd); ok {
 			pkgs[i] = resolved
 		}
@@ -861,12 +865,20 @@ func resolveTruncatedPackages(ctx context.Context, pkgs []Package, resolverCmd s
 	return pkgs
 }
 
+func shouldResolveTruncatedPackageID(pkg Package) bool {
+	return !isNonCanonical(pkg.ID)
+}
+
+const truncatedIDResolveTimeout = 3 * time.Second
+
 func resolvePackageID(ctx context.Context, pkg Package, resolverCmd string) (Package, bool) {
 	args := []string{resolverCmd, "--id", pkg.ID}
 	if pkg.Source != "" {
 		args = append(args, "--source", pkg.Source)
 	}
-	out, err := runWingetCtx(ctx, args...)
+	resolveCtx, cancel := context.WithTimeout(ctx, truncatedIDResolveTimeout)
+	defer cancel()
+	out, err := runWingetCtx(resolveCtx, args...)
 	if err != nil && len(out) == 0 {
 		return pkg, false
 	}

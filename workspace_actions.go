@@ -242,6 +242,41 @@ func (s workspaceScreen) openDetailToOverrides() (screen, tea.Cmd) {
 	return s, cmd
 }
 
+func nextDisplayedUpdatePolicy(policy UpdatePolicy) UpdatePolicy {
+	switch policy {
+	case PolicyAsk:
+		return PolicyAuto
+	case PolicyAuto:
+		return PolicyHold
+	default:
+		return PolicyAsk
+	}
+}
+
+func (s workspaceScreen) cycleFocusedUpdatePolicy() (screen, tea.Cmd) {
+	item, section, ok := s.focusedItemContext()
+	if !ok || section == "queue" || section == "search" {
+		return s, nil
+	}
+	if !canFetchDetails(item.pkg.Source) {
+		return s, nil
+	}
+
+	o := appSettings.getOverride(item.pkg.ID, item.pkg.Source)
+	nextPolicy := nextDisplayedUpdatePolicy(o.displayedUpdatePolicy())
+	o.UpdatePolicy = nextPolicy
+	o.Ignore = false
+	o.IgnoreVersion = ""
+
+	if err := persistPackageOverride(item.pkg.ID, item.pkg.Source, o); err != nil {
+		s.err = err
+		return s, nil
+	}
+
+	s.rebuildItemsAfterPolicyChange()
+	return s, s.focusSummary()
+}
+
 func (s workspaceScreen) updateDetail(msg tea.KeyPressMsg) (screen, tea.Cmd) {
 	updated, cmd, handled := s.detail.update(msg)
 	s.detail = updated
