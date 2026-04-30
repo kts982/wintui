@@ -540,12 +540,12 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 		switch current.action {
 		case retryOpUpgrade:
 			version := s.selectedVersions[item.key()]
-			_, outChan, errChan, initErr = upgradePackageElevatedStreamCtx(item.pkg.ID, item.pkg.Source, version)
+			_, outChan, errChan, initErr = upgradePackageElevatedStreamCtx(s.ctx, item.pkg, version)
 		case retryOpInstall:
 			version := s.selectedVersions[item.key()]
-			_, outChan, errChan, initErr = installPackageElevatedStreamCtx(item.pkg.ID, item.pkg.Source, version)
+			_, outChan, errChan, initErr = installPackageElevatedStreamCtx(s.ctx, item.pkg, version)
 		default: // uninstall
-			_, outChan, errChan, initErr = uninstallPackageElevatedStreamCtx(item.pkg, current.allVersions)
+			_, outChan, errChan, initErr = uninstallPackageElevatedStreamCtx(s.ctx, item.pkg, current.allVersions)
 		}
 		if initErr != nil {
 			current.status = batchFailed
@@ -557,10 +557,10 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 		switch current.action {
 		case retryOpUpgrade:
 			version := s.selectedVersions[item.key()]
-			_, outChan, errChan = upgradePackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
+			_, outChan, errChan = upgradePackageStreamCtx(s.ctx, item.pkg, version)
 		case retryOpInstall:
 			version := s.selectedVersions[item.key()]
-			_, outChan, errChan = installPackageStreamCtx(s.ctx, item.pkg.ID, item.pkg.Source, version)
+			_, outChan, errChan = installPackageStreamCtx(s.ctx, item.pkg, version)
 		default: // uninstall
 			_, outChan, errChan = uninstallPackageStreamCtx(s.ctx, item.pkg, current.allVersions)
 		}
@@ -590,7 +590,7 @@ func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 			pkg := bi.item.pkg
 			act := bi.action
 			cmds = append(cmds, func() tea.Msg {
-				result, err := lookupSinglePackageCtx(ctx, pkg.ID, pkg.Source)
+				result, err := lookupSinglePackageCtx(ctx, pkg)
 				return incrementalUpdateMsg{action: act, pkg: pkg, result: result, err: err}
 			})
 		}

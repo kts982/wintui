@@ -421,7 +421,7 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 // streaming pipeline the TUI uses, indenting each output line under out.
 // Returns the final winget error (or nil on success).
 func streamUpgradeToStdout(ctx context.Context, pkg Package, out io.Writer) error {
-	_, outChan, errChan := upgradePackageStreamCtx(ctx, pkg.ID, pkg.Source, "")
+	_, outChan, errChan := upgradePackageStreamCtx(ctx, pkg, "")
 	for line := range outChan {
 		// Skip the TUI's progress sentinels; they are not human-readable.
 		if _, isProgress := parseProgressSentinel(line); isProgress {

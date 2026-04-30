@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -168,6 +169,46 @@ func TestShouldResolveTruncatedPackageIDAllowsCanonicalIDs(t *testing.T) {
 	if !shouldResolveTruncatedPackageID(pkg) {
 		t.Fatal("canonical winget ID should be eligible for truncated-ID resolution")
 	}
+}
+
+func TestResolveTruncatedPackageNoOpPaths(t *testing.T) {
+	// Lazy resolution must not shell out for inputs that don't need it.
+	// These cases are critical: the action-time gate calls
+	// resolveTruncatedPackage on every package, and a winget exec on rows
+	// that don't need resolving would re-introduce the per-row latency we
+	// just removed from refresh.
+	t.Run("non-truncated package returns unchanged without winget call", func(t *testing.T) {
+		pkg := Package{ID: "Mozilla.Firefox", Source: "winget"}
+		got, err := resolveTruncatedPackage(context.Background(), pkg)
+		if err != nil {
+			t.Fatalf("err = %v, want nil for non-truncated", err)
+		}
+		if !reflect.DeepEqual(got, pkg) {
+			t.Fatalf("got = %#v, want unchanged %#v", got, pkg)
+		}
+	})
+
+	t.Run("non-canonical truncated ID returns unchanged without winget call", func(t *testing.T) {
+		pkg := Package{ID: `MSIX\Microsoft.GetHelp_10.2409.41132.0_x64__8wekyb3d8bbwe`, idTruncated: true}
+		got, err := resolveTruncatedPackage(context.Background(), pkg)
+		if err != nil {
+			t.Fatalf("err = %v, want nil for non-canonical (resolver can't help)", err)
+		}
+		if !reflect.DeepEqual(got, pkg) {
+			t.Fatalf("got = %#v, want unchanged %#v", got, pkg)
+		}
+	})
+
+	t.Run("empty ID returns unchanged", func(t *testing.T) {
+		pkg := Package{idTruncated: true}
+		got, err := resolveTruncatedPackage(context.Background(), pkg)
+		if err != nil {
+			t.Fatalf("err = %v, want nil for empty ID", err)
+		}
+		if !reflect.DeepEqual(got, pkg) {
+			t.Fatalf("got = %#v, want unchanged %#v", got, pkg)
+		}
+	})
 }
 
 func TestParseWingetShowFixture(t *testing.T) {

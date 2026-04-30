@@ -26,8 +26,9 @@ type Package struct {
 	// winget's table output ended in a Unicode horizontal ellipsis (U+2026)
 	// because the value didn't fit the console width. Consumers must not
 	// pass a truncated ID to `winget --id ... --exact` — it will fail with
-	// 0x8a150014. The resolver in resolveTruncatedPackages substitutes the
-	// full ID before these flags are exposed.
+	// 0x8a150014. resolveTruncatedPackage substitutes the full ID lazily,
+	// at the action gate, so refresh-time listings don't pay the per-row
+	// re-query cost.
 	idTruncated   bool
 	nameTruncated bool
 }
@@ -95,7 +96,7 @@ func getUpgradeableCtx(ctx context.Context) ([]Package, error) {
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return resolveTruncatedPackages(ctx, parseWingetTable(out), "list"), nil
+	return parseWingetTable(out), nil
 }
 
 func getInstalledCtx(ctx context.Context) ([]Package, error) {
@@ -107,7 +108,7 @@ func getInstalledCtx(ctx context.Context) ([]Package, error) {
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return resolveTruncatedPackages(ctx, parseWingetTable(out), "list"), nil
+	return parseWingetTable(out), nil
 }
 
 func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
@@ -117,15 +118,19 @@ func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return resolveTruncatedPackages(ctx, parseWingetTable(out), "search"), nil
+	return parseWingetTable(out), nil
 }
 
 // lookupSinglePackageCtx fetches the installed state of a single package by ID.
 // Used for incremental cache updates after install/upgrade/uninstall.
-func lookupSinglePackageCtx(ctx context.Context, id, source string) ([]Package, error) {
-	args := []string{"list", "--id", id, "--exact"}
-	if source != "" {
-		args = append(args, "--source", source)
+func lookupSinglePackageCtx(ctx context.Context, pkg Package) ([]Package, error) {
+	resolved, err := resolveTruncatedPackage(ctx, pkg)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"list", "--id", resolved.ID, "--exact"}
+	if resolved.Source != "" {
+		args = append(args, "--source", resolved.Source)
 	}
 	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
@@ -201,8 +206,12 @@ func uninstallCommandArgs(pkg Package, includePurge, allVersions bool) []string 
 	return append(args, appSettings.BuildUninstallArgs(includePurge)...)
 }
 
-func installPackageSourceCtx(ctx context.Context, id, source, version string) (string, error) {
-	args := installCommandArgs(id, source, version)
+func installPackageSourceCtx(ctx context.Context, pkg Package, version string) (string, error) {
+	resolved, err := resolveTruncatedPackage(ctx, pkg)
+	if err != nil {
+		return "", err
+	}
+	args := installCommandArgs(resolved.ID, resolved.Source, version)
 	return runWingetActionCtx(ctx, args...)
 }
 
@@ -225,15 +234,19 @@ func shouldRetryUninstallWithoutPurge(err error, output string) bool {
 	return false
 }
 
-func showPackage(id, source, version string) (PackageDetail, error) {
-	return showPackageCtx(context.Background(), id, source, version)
+func showPackage(pkg Package, version string) (PackageDetail, error) {
+	return showPackageCtx(context.Background(), pkg, version)
 }
 
-func showPackageCtx(ctx context.Context, id, source, version string) (PackageDetail, error) {
-	args := []string{"show", "--id", id, "--exact"}
+func showPackageCtx(ctx context.Context, pkg Package, version string) (PackageDetail, error) {
+	resolved, err := resolveTruncatedPackage(ctx, pkg)
+	if err != nil {
+		return PackageDetail{}, err
+	}
+	args := []string{"show", "--id", resolved.ID, "--exact"}
 	args = appendVersionArg(args, version)
-	if source == "winget" || source == "msstore" {
-		args = append(args, "--source", source)
+	if resolved.Source == "winget" || resolved.Source == "msstore" {
+		args = append(args, "--source", resolved.Source)
 	}
 	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
@@ -241,18 +254,22 @@ func showPackageCtx(ctx context.Context, id, source, version string) (PackageDet
 	}
 	detail := parseWingetShow(out)
 	if detail.ID == "" {
-		detail.ID = id
+		detail.ID = resolved.ID
 	}
 	if detail.Source == "" {
-		detail.Source = source
+		detail.Source = resolved.Source
 	}
 	return detail, nil
 }
 
-func showPackageVersionsCtx(ctx context.Context, id, source string) ([]string, error) {
-	args := []string{"show", "--id", id, "--exact", "--versions"}
-	if source == "winget" || source == "msstore" {
-		args = append(args, "--source", source)
+func showPackageVersionsCtx(ctx context.Context, pkg Package) ([]string, error) {
+	resolved, err := resolveTruncatedPackage(ctx, pkg)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"show", "--id", resolved.ID, "--exact", "--versions"}
+	if resolved.Source == "winget" || resolved.Source == "msstore" {
+		args = append(args, "--source", resolved.Source)
 	}
 	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
@@ -839,30 +856,33 @@ func extractPackage(line string, cols []colPos) Package {
 	return pkg
 }
 
-// resolveTruncatedPackages substitutes the full ID for any package whose Id
+// resolveTruncatedPackage substitutes the full ID for a package whose Id
 // column was truncated by winget at the console width. winget renders the
 // trailing characters as "…" (U+2026); without recovery, downstream calls of
 // the form `winget --id <truncated> --exact` fail with 0x8a150014.
 //
+// Resolution is lazy: callers invoke this just before issuing a winget action
+// that uses --id ... --exact, so refresh-time listings don't pay the per-row
+// re-query cost. Returns the original package unchanged when idTruncated is
+// false or the ID is non-canonical (MSIX/GUID/store identities can't be
+// resolved this way and need a different lookup strategy).
+//
 // Recovery strategy: re-query winget with the truncated value as a non-exact
 // --id prefix. The result set is small enough that columns auto-size to fit,
 // returning the full ID. When the prefix matches more than one row, the Name
-// (if intact) disambiguates. resolverCmd is "list" for installed/upgrade
-// listings and "search" for search results — the same query verb the caller
-// originally used, since the resolver looks up rows in the same source set.
-func resolveTruncatedPackages(ctx context.Context, pkgs []Package, resolverCmd string) []Package {
-	for i := range pkgs {
-		if !pkgs[i].idTruncated || pkgs[i].ID == "" {
-			continue
-		}
-		if !shouldResolveTruncatedPackageID(pkgs[i]) {
-			continue
-		}
-		if resolved, ok := resolvePackageID(ctx, pkgs[i], resolverCmd); ok {
-			pkgs[i] = resolved
-		}
+// (if intact) disambiguates.
+func resolveTruncatedPackage(ctx context.Context, pkg Package) (Package, error) {
+	if !pkg.idTruncated || pkg.ID == "" {
+		return pkg, nil
 	}
-	return pkgs
+	if !shouldResolveTruncatedPackageID(pkg) {
+		return pkg, nil
+	}
+	resolved, ok := resolvePackageID(ctx, pkg, "list")
+	if !ok {
+		return pkg, fmt.Errorf("could not recover full package ID for %q (winget truncated the listing)", pkg.ID)
+	}
+	return resolved, nil
 }
 
 func shouldResolveTruncatedPackageID(pkg Package) bool {
@@ -1088,31 +1108,70 @@ func runActionStreamForPackage(ctx context.Context, pkgID, source string, args .
 	return runActionSmartStreamCtx(ctx, args...)
 }
 
-func installPackageStreamCtx(ctx context.Context, id, source, version string) ([]string, <-chan string, <-chan error) {
-	args := installCommandArgs(id, source, version)
-	out, err := runActionStreamForPackage(ctx, id, source, args...)
-	return args, out, err
+func installPackageStreamCtx(ctx context.Context, pkg Package, version string) ([]string, <-chan string, <-chan error) {
+	resolved, err := resolveTruncatedPackage(ctx, pkg)
+	if err != nil {
+		return nil, closedStringChan(), errChanWith(err)
+	}
+	args := installCommandArgs(resolved.ID, resolved.Source, version)
+	out, errCh := runActionStreamForPackage(ctx, resolved.ID, resolved.Source, args...)
+	return args, out, errCh
 }
 
-func installPackageElevatedStreamCtx(id, source, version string) ([]string, <-chan string, <-chan error, error) {
-	args := installCommandArgs(id, source, version)
-	out, err, initErr := globalElevator.runCommandElevated(args...)
-	return args, out, err, initErr
+func installPackageElevatedStreamCtx(ctx context.Context, pkg Package, version string) ([]string, <-chan string, <-chan error, error) {
+	resolved, err := resolveTruncatedPackage(ctx, pkg)
+	if err != nil {
+		return nil, closedStringChan(), errChanWith(err), nil
+	}
+	args := installCommandArgs(resolved.ID, resolved.Source, version)
+	out, errCh, initErr := globalElevator.runCommandElevated(args...)
+	return args, out, errCh, initErr
 }
 
-func upgradePackageStreamCtx(ctx context.Context, id, source, version string) ([]string, <-chan string, <-chan error) {
-	args := upgradeCommandArgs(id, source, version)
-	out, err := runActionStreamForPackage(ctx, id, source, args...)
-	return args, out, err
+func upgradePackageStreamCtx(ctx context.Context, pkg Package, version string) ([]string, <-chan string, <-chan error) {
+	resolved, err := resolveTruncatedPackage(ctx, pkg)
+	if err != nil {
+		return nil, closedStringChan(), errChanWith(err)
+	}
+	args := upgradeCommandArgs(resolved.ID, resolved.Source, version)
+	out, errCh := runActionStreamForPackage(ctx, resolved.ID, resolved.Source, args...)
+	return args, out, errCh
 }
 
-func upgradePackageElevatedStreamCtx(id, source, version string) ([]string, <-chan string, <-chan error, error) {
-	args := upgradeCommandArgs(id, source, version)
-	out, err, initErr := globalElevator.runCommandElevated(args...)
-	return args, out, err, initErr
+func upgradePackageElevatedStreamCtx(ctx context.Context, pkg Package, version string) ([]string, <-chan string, <-chan error, error) {
+	resolved, err := resolveTruncatedPackage(ctx, pkg)
+	if err != nil {
+		return nil, closedStringChan(), errChanWith(err), nil
+	}
+	args := upgradeCommandArgs(resolved.ID, resolved.Source, version)
+	out, errCh, initErr := globalElevator.runCommandElevated(args...)
+	return args, out, errCh, initErr
+}
+
+// closedStringChan returns an immediately-closed string channel, used by the
+// stream wrappers when truncated-ID resolution fails so consumers see a clean
+// EOF on stdout while reading the surfaced error from errChan.
+func closedStringChan() <-chan string {
+	c := make(chan string)
+	close(c)
+	return c
+}
+
+// errChanWith returns a buffered error channel pre-loaded with err and closed,
+// so callers receive the error on a single select/range without blocking.
+func errChanWith(err error) <-chan error {
+	c := make(chan error, 1)
+	c <- err
+	close(c)
+	return c
 }
 
 func uninstallPackageStreamCtx(ctx context.Context, pkg Package, allVersions bool) ([]string, <-chan string, <-chan error) {
+	resolved, err := resolveTruncatedPackage(ctx, pkg)
+	if err != nil {
+		return nil, closedStringChan(), errChanWith(err)
+	}
+	pkg = resolved
 	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall, allVersions)
 	outChan := make(chan string)
 	errChan := make(chan error, 1)
@@ -1159,7 +1218,12 @@ func uninstallPackageStreamCtx(ctx context.Context, pkg Package, allVersions boo
 	return args, outChan, errChan
 }
 
-func uninstallPackageElevatedStreamCtx(pkg Package, allVersions bool) ([]string, <-chan string, <-chan error, error) {
+func uninstallPackageElevatedStreamCtx(ctx context.Context, pkg Package, allVersions bool) ([]string, <-chan string, <-chan error, error) {
+	resolved, err := resolveTruncatedPackage(ctx, pkg)
+	if err != nil {
+		return nil, closedStringChan(), errChanWith(err), nil
+	}
+	pkg = resolved
 	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall, allVersions)
 	outChan := make(chan string)
 	errChan := make(chan error, 1)

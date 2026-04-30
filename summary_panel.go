@@ -11,7 +11,7 @@ import (
 
 // summaryFetchFunc is the signature for fetching package metadata.
 // Injected for testability.
-type summaryFetchFunc func(ctx context.Context, id, source, version string) (PackageDetail, error)
+type summaryFetchFunc func(ctx context.Context, pkg Package, version string) (PackageDetail, error)
 
 // summaryPanel renders a persistent side panel showing compact package info.
 // It displays fields from the Package struct instantly and fetches additional
@@ -43,8 +43,8 @@ func newSummaryPanelWith(fetch summaryFetchFunc) summaryPanel {
 	}
 }
 
-func defaultSummaryFetch(ctx context.Context, id, source, version string) (PackageDetail, error) {
-	return showPackageCtx(ctx, id, source, version)
+func defaultSummaryFetch(ctx context.Context, pkg Package, version string) (PackageDetail, error) {
+	return showPackageCtx(ctx, pkg, version)
 }
 
 // canFetchDetails returns true if the package source supports winget show.
@@ -129,12 +129,11 @@ func (p *summaryPanel) update(msg tea.Msg) tea.Cmd {
 		p.cancelPending()
 		ctx, cancel := context.WithCancel(context.Background())
 		p.cancelFn = cancel
-		id := p.pkg.ID
-		source := p.pkg.Source
+		focused := *p.pkg
 		fetchID := msg.fetchID
 		fetch := p.fetchFunc
 		return func() tea.Msg {
-			d, err := fetch(ctx, id, source, "")
+			d, err := fetch(ctx, focused, "")
 			return summaryDetailMsg{fetchID: fetchID, detail: d, err: err}
 		}
 

@@ -85,7 +85,7 @@ func TestSummaryPanelSamePackageSkipsFetch(t *testing.T) {
 
 func TestSummaryPanelAsyncFetchFlow(t *testing.T) {
 	fetched := false
-	fakeFetch := func(ctx context.Context, id, source, version string) (PackageDetail, error) {
+	fakeFetch := func(ctx context.Context, pkg Package, version string) (PackageDetail, error) {
 		fetched = true
 		return PackageDetail{Publisher: "TestPub", License: "MIT"}, nil
 	}
@@ -120,7 +120,7 @@ func TestSummaryPanelAsyncFetchFlow(t *testing.T) {
 }
 
 func TestSummaryPanelStaleResultDiscarded(t *testing.T) {
-	p := newSummaryPanelWith(func(ctx context.Context, id, source, version string) (PackageDetail, error) {
+	p := newSummaryPanelWith(func(ctx context.Context, pkg Package, version string) (PackageDetail, error) {
 		return PackageDetail{Publisher: "Stale"}, nil
 	})
 	p.setSize(40, 20)
@@ -141,7 +141,7 @@ func TestSummaryPanelStaleResultDiscarded(t *testing.T) {
 }
 
 func TestSummaryPanelFetchError(t *testing.T) {
-	p := newSummaryPanelWith(func(ctx context.Context, id, source, version string) (PackageDetail, error) {
+	p := newSummaryPanelWith(func(ctx context.Context, pkg Package, version string) (PackageDetail, error) {
 		return PackageDetail{}, fmt.Errorf("network error")
 	})
 	p.setSize(40, 20)

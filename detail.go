@@ -38,12 +38,12 @@ type detailVersionSelectedMsg struct {
 }
 
 // fetchDetail returns a Cmd that fetches package details async.
-func fetchDetail(id, source, version string) tea.Cmd {
+func fetchDetail(pkg Package, version string) tea.Cmd {
 	return func() tea.Msg {
-		d, err := showPackage(id, source, version)
+		d, err := showPackage(pkg, version)
 		return packageDetailMsg{
-			pkgID:   id,
-			source:  source,
+			pkgID:   pkg.ID,
+			source:  pkg.Source,
 			version: version,
 			detail:  d,
 			err:     err,
@@ -51,10 +51,10 @@ func fetchDetail(id, source, version string) tea.Cmd {
 	}
 }
 
-func fetchVersions(id, source string) tea.Cmd {
+func fetchVersions(pkg Package) tea.Cmd {
 	return func() tea.Msg {
-		versions, err := showPackageVersionsCtx(context.Background(), id, source)
-		return packageVersionsMsg{pkgID: id, source: source, versions: versions, err: err}
+		versions, err := showPackageVersionsCtx(context.Background(), pkg)
+		return packageVersionsMsg{pkgID: pkg.ID, source: pkg.Source, versions: versions, err: err}
 	}
 }
 
@@ -80,6 +80,7 @@ type detailPanel struct {
 	err                error
 	pkgID              string
 	source             string
+	idTruncated        bool // captured from the focused Package so lazy ID resolution can run on action.
 	allowVersionSelect bool
 	selectedVersion    string
 	latestVersion      string
@@ -116,6 +117,7 @@ func (p detailPanel) showWithVersion(pkg Package, selectedVersion string, allowV
 	p.detail = PackageDetail{}
 	p.pkgID = pkg.ID
 	p.source = pkg.Source
+	p.idTruncated = pkg.idTruncated
 	p.allowVersionSelect = allowVersionSelect
 	p.selectedVersion = selectedVersion
 	p.latestVersion = ""
@@ -149,7 +151,7 @@ func (p detailPanel) showWithVersion(pkg Package, selectedVersion string, allowV
 
 	cmds := []tea.Cmd{
 		p.spinner.Tick,
-		fetchDetail(p.pkgID, p.source, p.targetVersion()),
+		fetchDetail(Package{ID: p.pkgID, Source: p.source, idTruncated: p.idTruncated}, p.targetVersion()),
 	}
 	return p, tea.Batch(cmds...)
 }
@@ -363,7 +365,7 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 					return p, nil, true
 				}
 				p.versionsLoading = true
-				return p, tea.Batch(p.spinner.Tick, fetchVersions(p.pkgID, p.source)), true
+				return p, tea.Batch(p.spinner.Tick, fetchVersions(Package{ID: p.pkgID, Source: p.source, idTruncated: p.idTruncated})), true
 			}
 		case "c":
 			if p.state == detailReady && p.allowVersionSelect && p.selectedVersion != "" {

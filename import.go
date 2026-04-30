@@ -405,7 +405,9 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 
 func importInstallSingleCmd(ctx context.Context, id, source string, index int) tea.Cmd {
 	return func() tea.Msg {
-		out, err := installPackageSourceCtx(ctx, id, source, "")
+		// Imported IDs come from settings.json — they're complete by
+		// construction, so resolveTruncatedPackage inside the wrapper is a no-op.
+		out, err := installPackageSourceCtx(ctx, Package{ID: id, Source: source}, "")
 		return singleImportInstallDoneMsg{output: out, err: err, index: index}
 	}
 }
