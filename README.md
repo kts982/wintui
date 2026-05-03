@@ -53,10 +53,12 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners and the most recent winget output line, view compact results with `Ctrl+E` retry (elevated when needed, plain retry for process-in-use failures)
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
 - **Self-upgrade handoff** — WinTUI can check for its own winget update before launch and close so a local handoff script can run `winget upgrade kts982.WinTUI` after the current process exits
-- **Headless CLI** — `wintui check`, `wintui list`, `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, and `wintui upgrade --id <pkg>` for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, and `show`
+- **Headless CLI** — `wintui check`, `wintui list`, `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, `wintui upgrade --id <pkg>`, and `wintui doctor` (verdict-first readiness check) for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, `show`, and `doctor`
 
 **System Utilities**
-- **Health Check** — shells, dev tools, runtimes, package managers, disk space, Defender, developer mode
+- **Health Tab** — slim WinTUI / winget readiness panel: WinTUI version + path, winget version, source freshness, cached upgrade counts (visible / auto / held + cache age), privileges + Auto Elevate context, system drive free space, and a neutral Settings summary line. Loads instantly — no fresh winget calls or disk scans
+- **`wintui doctor`** — verdict-first headless health (`OK` / `WARN: N issues` / `FAIL: N issues`, exit 0/1/2). `--verbose` adds the per-row table; `--full` re-adds verbose system diagnostics (RAM, Defender, drives, ping, Windows PowerShell); `--dev-tools` appends a developer-tools detection group; `--json` emits structured output for scripts
+- **Toast notifications** — opt-in (off by default). When enabled, fires a single Windows toast on TUI batch finish, on `wintui upgrade --auto/--all` finish, and when `wintui check` finds updates. AUMID-attributed as "WinTUI" via a one-time Start Menu shortcut drop on first toast
 - **Temp Cleanup** — scan and delete temp files older than 7 days
 - **Settings** — persistent config for winget options (scope, architecture, silent/interactive, force, purge, etc.)
 
@@ -173,6 +175,7 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 | Include Unknown Versions | show packages with unknown versions |
 | Auto Elevate | automatically request admin rights |
 | WinTUI Auto Update | check for and apply WinTUI's own update before launch |
+| Toast Notifications | Windows toast on TUI batch finish, scheduled `wintui upgrade --auto/--all`, and `wintui check` finding updates (off by default) |
 
 **Action Mode: Silent + Auto Elevate** runs all install/upgrade/uninstall operations through the elevated helper upfront, avoiding UAC popups from installers that elevate themselves.
 

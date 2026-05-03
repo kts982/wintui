@@ -14,6 +14,7 @@ run headlessly and exit.
 | `wintui upgrade --all` | Upgrade every non-held upgradeable package |
 | `wintui upgrade --auto` | Upgrade only packages marked Auto |
 | `wintui upgrade --id <pkg>` | Upgrade one or more named packages (repeatable) |
+| `wintui doctor [--verbose] [--full] [--dev-tools] [--json]` | Verdict-first readiness check: `OK` / `WARN: N issues` / `FAIL: N issues` and exit 0/1/2 |
 
 `wintui` (no subcommand) launches the TUI.
 
@@ -47,6 +48,22 @@ package will not flip the exit code.
 |---|---|
 | `0` | All selected upgrades succeeded, no matching upgrades were available, or only the running WinTUI binary was skipped |
 | `1` | One or more package upgrades failed, or `--id` named a held package |
+
+### `doctor`
+
+| Exit code | Meaning |
+|---|---|
+| `0` | All readiness rows are PASS / INFO — `OK` |
+| `1` | At least one row is WARN, none are FAIL — `WARN: N issues` |
+| `2` | At least one row is FAIL — `FAIL: N issues` |
+
+The slim default check set is identical to the TUI Health tab. `--full`
+re-adds the verbose system-diagnostics rows (RAM, Defender, internet ping,
+extra fixed drives, OS / uptime, PATH, Windows PowerShell). `--dev-tools`
+appends a developer-tools detection group (Git, VS Code, Docker, Node,
+Python, Go, etc.) — every missing tool is a WARN, so this flag generally
+flips the verdict to WARN unless your machine has the full dev stack
+installed. `--verbose` prints the per-row table beneath the verdict line.
 
 `--all` upgrades every non-held package. `--auto` upgrades only packages
 whose per-package update policy is Auto. `--id` upgrades one or more named
@@ -104,15 +121,32 @@ PowerShell snippets for common automation patterns. Each one assumes
 
 ### Daily toast when updates are available
 
-Pair with Task Scheduler (`schtasks /Create ... /SC DAILY`) so the toast
-fires once per day:
+Enable **Toast Notifications** in the Settings tab once (or set
+`"toast_notifications": true` in `%APPDATA%\wintui\settings.json`), then
+pair `wintui check` with Task Scheduler (`schtasks /Create ... /SC DAILY`).
+WinTUI fires the toast itself when the scan finds at least one update —
+no PowerShell module dependency, AUMID-attributed as "WinTUI" in Action
+Center:
 
 ```powershell
-# Requires the BurntToast module: Install-Module -Name BurntToast
-$updates = wintui check --json | ConvertFrom-Json
-if ($updates.Count -gt 0) {
-    New-BurntToastNotification -Text "WinTUI", "$($updates.Count) update(s) available"
-}
+# Once Toast Notifications is on, this is all the schedule needs:
+wintui check
+```
+
+The toast is silent when nothing is available, so a daily scheduled run
+produces zero noise on up-to-date machines.
+
+### Verdict-driven scheduled health check
+
+`wintui doctor` exits 0/1/2 based on readiness state, so it slots into
+Task Scheduler / CI gates the same way `check` does. Combined with toast
+notifications, a scheduled `doctor` becomes a "tell me when something
+needs attention" probe:
+
+```powershell
+# Daily readiness verdict — pair with Task Scheduler for a quiet probe
+wintui doctor
+if ($LASTEXITCODE -ne 0) { wintui doctor --verbose }
 ```
 
 ### Upgrade everything matching a pattern
@@ -240,9 +274,36 @@ JSON output is an array of package objects with lowercase keys:
 
 The `override` field is omitted when no per-package rules exist.
 
+### `doctor`
+
+```json
+{
+  "verdict": "WARN",
+  "summary": "WARN: 1 issue",
+  "exit_code": 1,
+  "counts": { "pass": 4, "warn": 1, "fail": 0, "info": 2 },
+  "checks": [
+    {
+      "check": "WinTUI",
+      "status": "PASS",
+      "details": "v2.6.0 · installed · config writeable"
+    },
+    {
+      "check": "Sources",
+      "status": "WARN",
+      "details": "winget · no cached scan yet",
+      "recommendation": "Run wintui or winget upgrade to populate the cache."
+    }
+  ]
+}
+```
+
+`verdict` is one of `OK` / `WARN` / `FAIL`; `exit_code` always matches.
+`recommendation` is omitted on rows that don't have one.
+
 ## Notes
 
-- `--json` is valid with `check`, `list`, and `show`.
+- `--json` is valid with `check`, `list`, `show`, and `doctor`.
 - `wintui upgrade --all` and `wintui upgrade --auto` honor per-package update policy from `settings.json`.
 - `wintui upgrade --id` is the user-facing single-package mode. The
   identically-named `--id` on the root command (alongside `--retry-op`,
