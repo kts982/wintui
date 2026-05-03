@@ -140,26 +140,38 @@ func TestNotifyBatchFinishBodyShape(t *testing.T) {
 		{
 			"all succeeded",
 			[]batchItem{{status: batchDone}, {status: batchDone}, {status: batchDone}},
-			"3 of 3 succeeded",
+			"3 of 3 upgraded",
 			true,
 		},
 		{
 			"mixed",
 			[]batchItem{{status: batchDone}, {status: batchFailed}, {status: batchDone}},
-			"2 of 3 succeeded · 1 failed",
+			"2 of 3 upgraded · 1 failed",
 			true,
 		},
 		{
 			"all failed",
 			[]batchItem{{status: batchFailed}, {status: batchFailed}},
-			"0 of 2 succeeded · 2 failed",
+			"0 of 2 upgraded · 2 failed",
 			true,
 		},
 		{
-			"pending-restart only — no toast",
+			"done + pending-restart (mixed) surfaces both",
+			[]batchItem{{status: batchDone}, {status: batchPendingRestart}},
+			"1 of 2 upgraded · 1 awaiting restart",
+			true,
+		},
+		{
+			"pending-restart only still surfaces — user needs to know",
 			[]batchItem{{status: batchPendingRestart}},
-			"",
-			false,
+			"0 of 1 upgraded · 1 awaiting restart",
+			true,
+		},
+		{
+			"failed + pending mix",
+			[]batchItem{{status: batchFailed}, {status: batchPendingRestart}, {status: batchDone}},
+			"1 of 3 upgraded · 1 failed · 1 awaiting restart",
+			true,
 		},
 	}
 

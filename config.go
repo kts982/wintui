@@ -601,7 +601,7 @@ var settingDefs = []settingDef{
 		key:          "toast_notifications",
 		label:        "Toast Notifications",
 		desc:         "Windows toast on batch / scheduled run finish",
-		detail:       "When enabled, WinTUI sends a single Windows toast on TUI batch finish, on `wintui upgrade --auto/--all` finish, and when `wintui check` finds updates. A minimal Start Menu shortcut is dropped on first toast so notifications attribute as WinTUI rather than PowerShell. Skipped when running elevated or in CI.",
+		detail:       "When enabled, WinTUI sends a single Windows toast on TUI batch finish, on `wintui upgrade --auto/--all` finish, and when `wintui check` finds updates. A minimal Start Menu shortcut is dropped on first toast so notifications attribute as WinTUI rather than PowerShell. Skipped when running in CI or when WINTUI_DISABLE_TOAST is set.",
 		stype:        settingToggle,
 		enabledHint:  "Send a Windows toast on batch and scheduled-run finish.",
 		disabledHint: "No Windows toasts will be sent.",

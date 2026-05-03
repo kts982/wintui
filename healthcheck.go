@@ -99,9 +99,25 @@ func checkWingetTool() healthCheck {
 			Recommendation: "Install App Installer from Microsoft Store.",
 		}
 	}
-	ver := strings.TrimSpace(cmdOutput(path, "--version"))
+	rawOut, runErr := cmdOutputErr(path, "--version")
+	ver := strings.TrimSpace(rawOut)
 	if i := strings.IndexByte(ver, '\n'); i > 0 {
 		ver = strings.TrimSpace(ver[:i])
+	}
+	if runErr != nil {
+		// Shim exists on PATH but cannot execute — broken WindowsApps
+		// app-execution alias, missing App Installer registration, etc.
+		// Surfacing this as FAIL is the whole point of having the check.
+		detail := "winget --version failed: " + runErr.Error()
+		if ver != "" {
+			detail += " · output: " + ver
+		}
+		return healthCheck{
+			Check:          "winget",
+			Status:         "FAIL",
+			Details:        detail,
+			Recommendation: "Reinstall App Installer from Microsoft Store, or check the WindowsApps execution alias for winget.",
+		}
 	}
 	if ver == "" {
 		ver = "detected"
@@ -257,12 +273,22 @@ func checkDiskSpace(drive string) healthCheck {
 // ── Utility ────────────────────────────────────────────────────────
 
 func cmdOutput(name string, args ...string) string {
+	out, _ := cmdOutputErr(name, args...)
+	return out
+}
+
+// cmdOutputErr runs a command and returns the combined stdout/stderr along
+// with any exec error. Use this when a non-zero exit or spawn failure should
+// affect the caller's result — e.g. checkWingetTool, where a broken winget
+// shim (PATH hit but execution refused) would otherwise look like a healthy
+// "detected" output.
+func cmdOutputErr(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	_ = cmd.Run()
-	return out.String()
+	err := cmd.Run()
+	return out.String(), err
 }
 
 func cmdOutputTrim(name string, args ...string) string {

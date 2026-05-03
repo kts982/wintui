@@ -148,9 +148,11 @@ func shortcutPath() (string, error) {
 	return filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", toastDisplayName+".lnk"), nil
 }
 
-// ensureToastShortcut creates the Start Menu shortcut on first toast and sets
-// PKEY_AppUserModel_ID = toastAppID via IPropertyStore (the only way Windows
-// will route toasts back to WinTUI by AUMID). Subsequent calls no-op.
+// ensureToastShortcut guarantees that the Start Menu shortcut exists and has
+// PKEY_AppUserModel_ID = toastAppID set on it. Idempotent and self-healing:
+// a previous run that crashed between Save() and SetAppId left a poisoned
+// .lnk on disk; the marker-file gate detects that case and re-runs the AUMID
+// step rather than trusting bare existence.
 //
 // The PowerShell + inline C# dance is the well-known approach: WScript.Shell
 // to write the .lnk, then SHGetPropertyStoreFromParsingName to set the AUMID
@@ -163,7 +165,14 @@ func ensureToastShortcut() error {
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(path); err == nil {
+	markerPath := aumidMarkerPath(path)
+
+	// Both the .lnk and the success marker must exist to trust the AUMID is set.
+	// The marker is written ONLY after SetAppId completes — so its presence
+	// means the previous run got past the brittle Add-Type/COM step.
+	_, lnkErr := os.Stat(path)
+	_, markerErr := os.Stat(markerPath)
+	if lnkErr == nil && markerErr == nil {
 		return nil
 	}
 
@@ -172,7 +181,11 @@ func ensureToastShortcut() error {
 		return fmt.Errorf("could not resolve wintui executable path")
 	}
 
-	script := renderShortcutScript(path, exePath)
+	// The script's Save step short-circuits if the .lnk already exists, but
+	// the AumidSetter step always runs and is idempotent (SetValue + Commit
+	// on an already-correct property is a no-op).
+	lnkExists := lnkErr == nil
+	script := renderShortcutScript(path, exePath, lnkExists)
 	scriptPath, err := writeToastScript(script)
 	if err != nil {
 		return err
@@ -190,12 +203,28 @@ func ensureToastShortcut() error {
 		}
 	}
 	_ = os.Remove(scriptPath)
+
+	// Marker write happens AFTER the script returns clean. If we crashed
+	// between Save() and SetAppId, the marker stays absent and the next call
+	// re-runs to repair the AUMID.
+	if err := os.WriteFile(markerPath, []byte(toastAppID), 0644); err != nil {
+		return fmt.Errorf("write aumid marker: %w", err)
+	}
+
 	// Settle pause: the Action Center indexer maps AUMID to shortcut by
 	// scanning the Start Menu folder asynchronously. Without this delay the
 	// very first toast after opt-in races the indexer and silently drops.
-	// Subsequent runs hit the early-return above and skip the pause.
+	// Only paid on first creation (or repair); subsequent calls hit the
+	// early-return above.
 	time.Sleep(1500 * time.Millisecond)
 	return nil
+}
+
+// aumidMarkerPath returns the success-marker file path next to the shortcut.
+// Sibling location (same directory, .aumid extension) keeps it discoverable
+// and easy to clear manually if a user ever needs to force a re-run.
+func aumidMarkerPath(lnkPath string) string {
+	return strings.TrimSuffix(lnkPath, ".lnk") + ".aumid"
 }
 
 // appendToastErrorLog writes failures from the shortcut-ensure or toast-send
@@ -243,25 +272,32 @@ Remove-Item -LiteralPath $PSCommandPath -ErrorAction SilentlyContinue
 }
 
 // notifyBatchFinish summarizes a completed exec-modal batch and dispatches
-// the toast. Pending-restart-only batches (self-upgrade handoff staged but
-// no real result yet) are skipped — there's nothing meaningful to report.
+// the toast. Pending-restart items (e.g. WinTUI self-upgrade handoff staged
+// but waiting for the user to press Enter) are surfaced explicitly so a
+// mixed batch doesn't claim "1 of 1 succeeded" while one item still needs
+// action. Skipped only if the entire batch had no meaningful outcomes.
 func notifyBatchFinish(items []batchItem) {
-	var done, failed int
+	var done, failed, pending int
 	for _, bi := range items {
 		switch bi.status {
 		case batchDone:
 			done++
 		case batchFailed:
 			failed++
+		case batchPendingRestart:
+			pending++
 		}
 	}
-	if done == 0 && failed == 0 {
+	if done == 0 && failed == 0 && pending == 0 {
 		return
 	}
-	total := done + failed
-	body := fmt.Sprintf("%d of %d succeeded", done, total)
+	total := done + failed + pending
+	body := fmt.Sprintf("%d of %d upgraded", done, total)
 	if failed > 0 {
 		body += fmt.Sprintf(" · %d failed", failed)
+	}
+	if pending > 0 {
+		body += fmt.Sprintf(" · %d awaiting restart", pending)
 	}
 	sendToast(toastDisplayName, body)
 }
@@ -308,23 +344,18 @@ func escapeToastXML(s string) string {
 	return r.Replace(s)
 }
 
-// renderShortcutScript writes the .lnk via WScript.Shell, then sets the AUMID
-// property via SHGetPropertyStoreFromParsingName. Both steps run inline; the
-// inline C# is compiled once per invocation, which is fine because we only
-// hit this on the very first toast after the user opts in.
+// renderShortcutScript writes the .lnk via WScript.Shell (skipped if it
+// already exists — see lnkExists), then always sets the AUMID property via
+// SHGetPropertyStoreFromParsingName. The AumidSetter step is idempotent
+// (SetValue + Commit on an already-correct property is a no-op), so always
+// running it is the cheap way to repair a previously-poisoned .lnk.
 //
 // Path values are interpolated as PowerShell single-quoted literals (psQuote)
 // so backslashes stay single. %q would produce Go-style "C:\\..." which PS
 // reads literally as doubled backslashes — WScript.Shell tolerates that, but
 // SHGetPropertyStoreFromParsingName rejects it with E_INVALIDARG.
-func renderShortcutScript(lnkPath, exePath string) string {
-	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-
-$lnkPath = %s
-$exePath = %s
-$appId   = %s
-
-$shell = New-Object -ComObject WScript.Shell
+func renderShortcutScript(lnkPath, exePath string, lnkExists bool) string {
+	saveStep := `$shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($lnkPath)
 $shortcut.TargetPath = $exePath
 $shortcut.WorkingDirectory = (Split-Path -Parent $exePath)
@@ -332,7 +363,18 @@ $shortcut.IconLocation = "$exePath,0"
 $shortcut.Description = 'WinTUI'
 $shortcut.Save()
 [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut) | Out-Null
-[System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+[System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null`
+	if lnkExists {
+		saveStep = "# .lnk already on disk — skip Save() and only repair the AUMID property"
+	}
+
+	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+
+$lnkPath = %s
+$exePath = %s
+$appId   = %s
+
+%s
 
 Add-Type -TypeDefinition @'
 using System;
@@ -388,7 +430,7 @@ public static class AumidSetter {
 '@
 
 [AumidSetter]::SetAppId($lnkPath, $appId)
-`, psQuote(lnkPath), psQuote(exePath), psQuote(toastAppID))
+`, psQuote(lnkPath), psQuote(exePath), psQuote(toastAppID), saveStep)
 }
 
 // psQuote wraps s as a PowerShell single-quoted string literal. In single
