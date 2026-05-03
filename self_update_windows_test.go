@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,50 +185,125 @@ func TestStartSelfUpgradeHandoffClearsManifestOverrideAfterLaunch(t *testing.T) 
 	}
 }
 
-func TestStartSelfUpgradeHandoffRequiresAdmin(t *testing.T) {
+func TestStartSelfUpgradeHandoffDoesNotRequireAdmin(t *testing.T) {
 	origExe := currentExecutablePath
 	origEval := evalSymlinksPath
 	origElevated := isElevated
+	origCacheDir := userCacheDirPath
+	origStartHost := startSelfUpdateHost
 	currentExecutablePath = func() (string, error) {
 		return `C:\Users\ktsio\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
 	}
 	evalSymlinksPath = func(path string) (string, error) { return path, nil }
 	isElevated = func() bool { return false }
+	userCacheDirPath = func() (string, error) { return t.TempDir(), nil }
+	startSelfUpdateHost = func(cmd *exec.Cmd) error { return nil }
 	t.Cleanup(func() {
 		currentExecutablePath = origExe
 		evalSymlinksPath = origEval
 		isElevated = origElevated
+		userCacheDirPath = origCacheDir
+		startSelfUpdateHost = origStartHost
 	})
 
-	err := startSelfUpgradeHandoff("winget", "")
-	if err == nil || !strings.Contains(err.Error(), "already be running as administrator") {
-		t.Fatalf("startSelfUpgradeHandoff() err = %v, want admin requirement", err)
+	if err := startSelfUpgradeHandoff("winget", ""); err != nil {
+		t.Fatalf("startSelfUpgradeHandoff() err = %v, want nil for non-admin handoff", err)
 	}
 }
 
-func TestPendingSelfUpgradeManualAdminCommand(t *testing.T) {
-	cmd, err := pendingSelfUpgradeManualAdminCommand(retryRequest{
-		Op:      retryOpUpgrade,
-		ID:      "kts982.WinTUI.Canary",
-		Name:    "WinTUI Canary",
-		Source:  "winget",
-		Version: "0.0.3",
-	})
-	if err != nil {
-		t.Fatalf("pendingSelfUpgradeManualAdminCommand() err = %v", err)
+func TestMaybeStartStartupSelfUpdateSchedulesHandoff(t *testing.T) {
+	origSettings := appSettings
+	origExe := currentExecutablePath
+	origEval := evalSymlinksPath
+	origCacheDir := userCacheDirPath
+	origStartHost := startSelfUpdateHost
+	origRunCheck := runSelfUpdateCheckCtx
+	appSettings = DefaultSettings()
+	currentExecutablePath = func() (string, error) {
+		return `C:\Users\ktsio\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
 	}
+	evalSymlinksPath = func(path string) (string, error) { return path, nil }
+	cacheDir := t.TempDir()
+	userCacheDirPath = func() (string, error) { return cacheDir, nil }
+	var gotArgs []string
+	runSelfUpdateCheckCtx = func(ctx context.Context, args ...string) (string, error) {
+		gotArgs = append([]string(nil), args...)
+		return "Name    Id             Version  Available  Source\n" +
+			"---------------------------------------------------\n" +
+			"WinTUI  kts982.WinTUI  2.4.0    2.5.0      winget\n", nil
+	}
+	started := false
+	startSelfUpdateHost = func(cmd *exec.Cmd) error {
+		started = true
+		return nil
+	}
+	t.Cleanup(func() {
+		appSettings = origSettings
+		currentExecutablePath = origExe
+		evalSymlinksPath = origEval
+		userCacheDirPath = origCacheDir
+		startSelfUpdateHost = origStartHost
+		runSelfUpdateCheckCtx = origRunCheck
+	})
 
-	for _, want := range []string{
-		"wintui",
-		"'--retry-op' 'upgrade'",
-		"'--id' 'kts982.WinTUI.Canary'",
-		"'--name' 'WinTUI Canary'",
-		"'--source' 'winget'",
-		"'--package-version' '0.0.3'",
-	} {
-		if !strings.Contains(cmd, want) {
-			t.Fatalf("pendingSelfUpgradeManualAdminCommand() = %q, missing %q", cmd, want)
-		}
+	scheduled, err := maybeStartStartupSelfUpdate()
+	if err != nil {
+		t.Fatalf("maybeStartStartupSelfUpdate() err = %v", err)
+	}
+	if !scheduled {
+		t.Fatal("scheduled = false, want true")
+	}
+	if !started {
+		t.Fatal("startSelfUpdateHost was not called")
+	}
+	wantArgs := []string{"list", "--upgrade-available", "--id", selfPackageID, "--exact", "--source", "winget"}
+	if strings.Join(gotArgs, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("startup check args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
+func TestMaybeStartStartupSelfUpdateSkipsWhenNoUpdate(t *testing.T) {
+	origSettings := appSettings
+	origExe := currentExecutablePath
+	origEval := evalSymlinksPath
+	origCacheDir := userCacheDirPath
+	origStartHost := startSelfUpdateHost
+	origRunCheck := runSelfUpdateCheckCtx
+	appSettings = DefaultSettings()
+	currentExecutablePath = func() (string, error) {
+		return `C:\Users\ktsio\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
+	}
+	evalSymlinksPath = func(path string) (string, error) { return path, nil }
+	cacheDir := t.TempDir()
+	userCacheDirPath = func() (string, error) { return cacheDir, nil }
+	runSelfUpdateCheckCtx = func(ctx context.Context, args ...string) (string, error) {
+		return "Name    Id             Version  Source\n" +
+			"-------------------------------------------\n" +
+			"WinTUI  kts982.WinTUI  2.5.0    winget\n", nil
+	}
+	started := false
+	startSelfUpdateHost = func(cmd *exec.Cmd) error {
+		started = true
+		return nil
+	}
+	t.Cleanup(func() {
+		appSettings = origSettings
+		currentExecutablePath = origExe
+		evalSymlinksPath = origEval
+		userCacheDirPath = origCacheDir
+		startSelfUpdateHost = origStartHost
+		runSelfUpdateCheckCtx = origRunCheck
+	})
+
+	scheduled, err := maybeStartStartupSelfUpdate()
+	if err != nil {
+		t.Fatalf("maybeStartStartupSelfUpdate() err = %v", err)
+	}
+	if scheduled {
+		t.Fatal("scheduled = true, want false when no Available column")
+	}
+	if started {
+		t.Fatal("startSelfUpdateHost was called despite no available update")
 	}
 }
 
@@ -249,6 +325,7 @@ func TestRenderSelfUpdateScriptIncludesExpectedCommands(t *testing.T) {
 		"Wait-Process -Id $ParentPid -Timeout 120",
 		"& winget.exe @WingetArgs",
 		"'kts982.WinTUI'",
+		"'--accept-source-agreements'",
 		"'--force'",
 		"manual relaunch required: start wintui again",
 		"$PSCommandPath",
@@ -375,21 +452,5 @@ func TestCleanupStaleSelfUpdateManifestOverrideRemovesMissingTarget(t *testing.T
 
 	if _, err := os.Stat(overridePath); !os.IsNotExist(err) {
 		t.Fatalf("expected missing-target manifest override to be removed; err=%v", err)
-	}
-}
-
-func TestRetryRequestArgsEncodesBatch(t *testing.T) {
-	args, err := retryRequestArgs(retryRequest{
-		Op: retryOpUpgrade,
-		Items: []retryItem{
-			{ID: "kts982.WinTUI", Name: "WinTUI", Source: "winget", Version: "2.4.0"},
-			{ID: "Git.Git", Name: "Git", Source: "winget"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("retryRequestArgs() err = %v", err)
-	}
-	if len(args) != 4 || args[0] != "--retry-op" || args[1] != "upgrade" || args[2] != "--retry-batch" || args[3] == "" {
-		t.Fatalf("retryRequestArgs() = %#v, want retry batch args", args)
 	}
 }

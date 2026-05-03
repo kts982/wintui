@@ -37,7 +37,9 @@ var rootCmd = &cobra.Command{
   wintui upgrade --all             upgrade every visible upgradeable package
   wintui upgrade --auto            upgrade packages marked Auto
   wintui upgrade --id Mozilla.Firefox  upgrade a single named package (repeatable)
-  wintui check --json              machine-readable output (--json works on check, list, show)`,
+  wintui doctor                    one-line readiness verdict (exit 0/1/2)
+  wintui doctor --verbose --full   full check table including system diagnostics
+  wintui check --json              machine-readable output (--json works on check, list, show, doctor)`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		appSettings = LoadSettings()
 		cleanupStaleSelfUpdateHelpers()
@@ -60,6 +62,20 @@ var rootCmd = &cobra.Command{
 			}
 			if !req.valid() {
 				return fmt.Errorf("invalid retry request")
+			}
+		}
+
+		if req == nil {
+			if appSettings.AutoSelfUpdate && isRunningInstalledWinTUI() {
+				fmt.Fprintln(os.Stdout, "Checking for WinTUI updates…")
+			}
+			scheduled, err := maybeStartStartupSelfUpdate()
+			if scheduled {
+				fmt.Fprintf(os.Stdout, "WinTUI update available. Closing now so winget can upgrade %s.\nStart wintui again after the upgrade completes.\nLog: %s\n", selfPackageID, selfUpdateLogPath())
+				return nil
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "WinTUI auto-update handoff failed: %v\n", err)
 			}
 		}
 
@@ -95,7 +111,11 @@ func init() {
 	upgradeCmd.Flags().BoolVar(&upgradeAllFlag, "all", false, "Upgrade all available non-held packages")
 	upgradeCmd.Flags().BoolVar(&upgradeAutoFlag, "auto", false, "Upgrade packages marked Auto")
 	upgradeCmd.Flags().StringArrayVar(&upgradeIDsFlag, "id", nil, "Upgrade a specific package by ID (repeatable)")
-	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd)
+	doctorCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
+	doctorCmd.Flags().BoolVar(&doctorVerboseFlag, "verbose", false, "Show per-row check table beneath the verdict")
+	doctorCmd.Flags().BoolVar(&doctorFullFlag, "full", false, "Re-add the trimmed system-diagnostics rows (RAM, Defender, ping, etc.)")
+	doctorCmd.Flags().BoolVar(&doctorDevToolsFlag, "dev-tools", false, "Append a developer-tools detection group")
+	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd)
 }
 
 func main() {

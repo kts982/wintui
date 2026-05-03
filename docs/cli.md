@@ -57,8 +57,10 @@ an error (so the user notices their hold instead of silently skipping).
 `--all`, `--auto`, and `--id` are mutually exclusive.
 
 The running WinTUI binary is **not** upgraded by headless upgrade commands; it is
-skipped with a hint pointing at the TUI, where the self-upgrade handoff
-is verified. To upgrade WinTUI itself, run `wintui` and use the TUI.
+skipped with a hint pointing at the TUI startup self-update handoff. To
+upgrade WinTUI itself, run `wintui`; the default-on WinTUI Auto Update
+setting checks before the TUI starts and exits to let winget replace the
+released binary when an update is available.
 
 ## Examples
 

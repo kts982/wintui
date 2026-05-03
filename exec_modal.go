@@ -109,10 +109,6 @@ func (m execModal) pendingSelfUpgradeItem() (batchItem, bool) {
 	return batchItem{}, false
 }
 
-func (m execModal) pendingSelfUpgradeRequiresAdmin() bool {
-	return m.hasPendingSelfUpgrade() && !isElevated()
-}
-
 // view renders the modal centered in the content area (below chrome).
 func (m execModal) view(width, height int) string {
 	maxW := min(width-8, 80)
@@ -387,17 +383,9 @@ func (m execModal) viewComplete() (string, []string, string) {
 
 	// Summary line.
 	if pending > 0 && failed == 0 {
-		pendingLabel := "pending restart"
-		if m.pendingSelfUpgradeRequiresAdmin() {
-			pendingLabel = "waiting for admin restart"
-		}
-		body = append(body, warnStyle.Render(fmt.Sprintf("%d completed, %d %s", succeeded-pending, pending, pendingLabel)))
+		body = append(body, warnStyle.Render(fmt.Sprintf("%d completed, %d pending restart", succeeded-pending, pending)))
 	} else if pending > 0 {
-		pendingLabel := "pending restart"
-		if m.pendingSelfUpgradeRequiresAdmin() {
-			pendingLabel = "waiting for admin restart"
-		}
-		body = append(body, warnStyle.Render(fmt.Sprintf("%d completed, %d failed, %d %s", succeeded-pending, failed, pending, pendingLabel)))
+		body = append(body, warnStyle.Render(fmt.Sprintf("%d completed, %d failed, %d pending restart", succeeded-pending, failed, pending)))
 	} else if failed == 0 {
 		body = append(body, successStyle.Render(fmt.Sprintf("All %d packages succeeded.", succeeded)))
 	} else {
@@ -413,21 +401,13 @@ func (m execModal) viewComplete() (string, []string, string) {
 			line += "  " + renderActionTag(bi.action)
 		}
 		if bi.status == batchPendingRestart {
-			if m.pendingSelfUpgradeRequiresAdmin() {
-				line += "  " + warnStyle.Render("restart WinTUI as admin to finish upgrade")
-			} else {
-				line += "  " + warnStyle.Render("finish upgrade, then start wintui again")
-			}
+			line += "  " + warnStyle.Render("finish upgrade, then start wintui again")
 		} else if bi.err != nil {
 			line += "  " + errorStyle.Render(bi.err.Error())
 		} else {
 			line += "  " + successStyle.Render("done")
 		}
 		body = append(body, line)
-
-		if bi.status == batchPendingRestart && m.pendingSelfUpgradeRequiresAdmin() {
-			body = append(body, "    "+warnStyle.Render("Press ctrl+a to relaunch WinTUI as administrator and retry the self-upgrade."))
-		}
 
 		if bi.status == batchFailed && bi.blockedByProc {
 			body = append(body, "    "+warnStyle.Render("Close the running application and press ctrl+e to retry."))
@@ -441,13 +421,8 @@ func (m execModal) viewComplete() (string, []string, string) {
 
 	actions := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("enter") + " close"
 	if pending > 0 {
-		if m.pendingSelfUpgradeRequiresAdmin() {
-			actions = lipgloss.NewStyle().Bold(true).Foreground(accent).Render("ctrl+a") + " relaunch as admin  •  " +
-				lipgloss.NewStyle().Bold(true).Foreground(accent).Render("enter") + " close"
-		} else {
-			actions = lipgloss.NewStyle().Bold(true).Foreground(accent).Render("enter") + " finish upgrade  •  " +
-				lipgloss.NewStyle().Bold(true).Foreground(accent).Render("esc") + " close"
-		}
+		actions = lipgloss.NewStyle().Bold(true).Foreground(accent).Render("enter") + " finish upgrade  •  " +
+			lipgloss.NewStyle().Bold(true).Foreground(accent).Render("esc") + " close"
 	}
 
 	// Offer retry via ctrl+e when any failed items could benefit — either
@@ -593,12 +568,8 @@ func (m execModal) helpKeys() []key.Binding {
 		}
 		enterDesc := "close"
 		if m.hasPendingSelfUpgrade() {
-			if m.pendingSelfUpgradeRequiresAdmin() {
-				bindings = append(bindings, key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("ctrl+a", "relaunch as admin")))
-			} else {
-				enterDesc = "finish upgrade"
-				bindings = append(bindings, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")))
-			}
+			enterDesc = "finish upgrade"
+			bindings = append(bindings, key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")))
 		}
 		bindings = append(bindings, key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterDesc)))
 		return bindings

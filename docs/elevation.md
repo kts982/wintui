@@ -94,12 +94,11 @@ Ctrl+E also retries these items. The label changes to `ctrl+e retry` when only p
 
 ## Self-Upgrade Safety
 
-WinTUI's own WinGet upgrade path is intentionally stricter than normal package upgrades:
+WinTUI's own WinGet upgrade path is handled outside the running TUI process:
 
-- WinTUI only completes its self-upgrade handoff when the current WinTUI session is already elevated
-- Non-admin sessions stop at the result modal and show `Ctrl+A` to relaunch WinTUI as administrator and retry
-- If the `Ctrl+A` relaunch is blocked or cancelled by Windows, the result modal shows a command the user can run from an administrator PowerShell
-- The handoff now uses a local PowerShell script in WinTUI's cache directory instead of dropping a temporary helper EXE into `%TEMP%`
+- **WinTUI Auto Update** is on by default. When WinTUI is running from its winget install, startup checks `kts982.WinTUI` before the TUI starts. If an update is available, WinTUI launches a local handoff script and exits.
+- Manual self-upgrade from the Updates list uses the same handoff: press `Enter` on the result modal to close WinTUI and let winget upgrade the released binary.
+- The handoff uses a local PowerShell script in WinTUI's cache directory instead of dropping a temporary helper EXE into `%TEMP%`
 - After the handoff finishes, WinTUI does not reopen itself automatically; start `wintui` again manually
 
 ## Recommended Usage

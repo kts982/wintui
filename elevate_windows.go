@@ -10,8 +10,7 @@ import (
 )
 
 const (
-	swHide       = 0
-	swShowNormal = 1
+	swHide = 0
 )
 
 var relaunchAsAdminFunc = relaunchAsAdmin

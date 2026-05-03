@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -17,6 +19,8 @@ const (
 	selfUpdateScriptPrefix = "handoff-"
 	selfUpdateLogName      = "wintui-self-update.log"
 	selfUpdateManifestName = "rehearsal-manifest.txt"
+
+	startupSelfUpdateCheckTimeout = 8 * time.Second
 )
 
 var (
@@ -28,6 +32,7 @@ var (
 	evalSymlinksPath      = filepath.EvalSymlinks
 	userCacheDirPath      = os.UserCacheDir
 	startSelfUpdateHost   = startSelfUpdateScriptHost
+	runSelfUpdateCheckCtx = runWingetCtx
 
 	// hideWingetChildWindow, when true, hides the console window spawned by
 	// child processes (winget.exe). This is used by the elevated helper which
@@ -61,9 +66,6 @@ func startSelfUpgradeHandoff(source, version string) error {
 	if !isRunningInstalledWinTUI() {
 		return fmt.Errorf("self-upgrade requires the installed WinTUI binary")
 	}
-	if !isElevated() {
-		return fmt.Errorf("self-upgrade handoff requires WinTUI to already be running as administrator")
-	}
 
 	scriptPath, err := writeSelfUpdateScript(os.Getpid(), source, version)
 	if err != nil {
@@ -79,6 +81,45 @@ func startSelfUpgradeHandoff(source, version string) error {
 	return nil
 }
 
+func maybeStartStartupSelfUpdate() (bool, error) {
+	if !appSettings.AutoSelfUpdate || !isRunningInstalledWinTUI() {
+		return false, nil
+	}
+
+	pkg, ok := startupSelfUpdateAvailable()
+	if !ok {
+		return false, nil
+	}
+
+	source := pkg.Source
+	if strings.TrimSpace(source) == "" {
+		source = "winget"
+	}
+	appendSelfUpdateLogf("startup self-update available: %s %s -> %s", pkg.ID, pkg.Version, pkg.Available)
+	if err := startSelfUpgradeHandoff(source, ""); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func startupSelfUpdateAvailable() (Package, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), startupSelfUpdateCheckTimeout)
+	defer cancel()
+
+	out, err := runSelfUpdateCheckCtx(ctx, "list", "--upgrade-available", "--id", selfPackageID, "--exact", "--source", "winget")
+	if err != nil && strings.TrimSpace(out) == "" {
+		appendSelfUpdateLogf("startup self-update check skipped: %v", err)
+		return Package{}, false
+	}
+
+	for _, pkg := range parseWingetTable(out) {
+		if isSelfPackageID(pkg.ID) && strings.TrimSpace(pkg.Available) != "" {
+			return pkg, true
+		}
+	}
+	return Package{}, false
+}
+
 func powerShellHostArgs(scriptPath string) []string {
 	return []string{
 		"-NoLogo",
@@ -88,65 +129,6 @@ func powerShellHostArgs(scriptPath string) []string {
 		"-WindowStyle", "Minimized",
 		"-File", scriptPath,
 	}
-}
-
-func startPendingSelfUpgradeAdminRelaunch(req retryRequest) error {
-	exePath, err := currentExecutablePath()
-	if err != nil {
-		return err
-	}
-
-	args, err := retryRequestArgs(req)
-	if err != nil {
-		return err
-	}
-
-	appendSelfUpdateLogf("relaunching as admin for pending self-upgrade retry")
-	return relaunchAsAdminFunc(exePath, args, swShowNormal)
-}
-
-func pendingSelfUpgradeManualAdminCommand(req retryRequest) (string, error) {
-	args, err := retryRequestArgs(req)
-	if err != nil {
-		return "", err
-	}
-
-	parts := []string{"wintui"}
-	for _, arg := range args {
-		parts = append(parts, quotePowerShellCommandArg(arg))
-	}
-	return strings.Join(parts, " "), nil
-}
-
-func quotePowerShellCommandArg(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
-}
-
-func retryRequestArgs(req retryRequest) ([]string, error) {
-	if !req.valid() {
-		return nil, fmt.Errorf("invalid retry request")
-	}
-
-	args := []string{"--retry-op", string(req.Op)}
-	if req.isBatch() {
-		encoded, err := encodeRetryItems(req.Items)
-		if err != nil {
-			return nil, err
-		}
-		return append(args, "--retry-batch", encoded), nil
-	}
-
-	args = append(args, "--id", req.ID)
-	if strings.TrimSpace(req.Name) != "" {
-		args = append(args, "--name", req.Name)
-	}
-	if strings.TrimSpace(req.Source) != "" {
-		args = append(args, "--source", req.Source)
-	}
-	if strings.TrimSpace(req.Version) != "" {
-		args = append(args, "--package-version", req.Version)
-	}
-	return args, nil
 }
 
 func writeSelfUpdateScript(parentPID int, source, version string) (string, error) {
@@ -322,6 +304,9 @@ func selfUpgradeCommandArgs(source, version string) []string {
 	}
 
 	args := upgradeCommandArgs(selfPackageID, source, version)
+	if !containsArg(args, "--accept-source-agreements") {
+		args = append(args, "--accept-source-agreements")
+	}
 	if !containsArg(args, "--force") {
 		args = append(args, "--force")
 	}
@@ -367,12 +352,7 @@ func clearSelfUpgradeManifestOverride() {
 }
 
 func containsArg(args []string, target string) bool {
-	for _, arg := range args {
-		if arg == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(args, target)
 }
 
 func isRunningInstalledWinTUI() bool {
@@ -386,12 +366,7 @@ func isRunningInstalledWinTUI() bool {
 		candidates = append(candidates, resolved)
 	}
 
-	for _, path := range candidates {
-		if pathLooksLikeInstalledWinTUI(path) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(candidates, pathLooksLikeInstalledWinTUI)
 }
 
 func pathLooksLikeInstalledWinTUI(path string) bool {

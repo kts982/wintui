@@ -178,6 +178,9 @@ type Settings struct {
 	// Attempt to automatically elevate commands that require admin
 	AutoElevate bool `json:"auto_elevate"`
 
+	// Check for and hand off WinTUI's own winget upgrade before launching the TUI
+	AutoSelfUpdate bool `json:"auto_self_update"`
+
 	// Per-package option overrides, keyed by source-qualified package key.
 	// New writes use "<source>:<id>"; reads also support legacy plain-ID keys.
 	Packages map[string]PackageOverride `json:"packages,omitempty"`
@@ -186,10 +189,11 @@ type Settings struct {
 // DefaultSettings returns settings with sensible defaults.
 func DefaultSettings() Settings {
 	return Settings{
-		Scope:       "",
-		InstallMode: "",
-		Source:      "winget",
-		AutoElevate: true,
+		Scope:          "",
+		InstallMode:    "",
+		Source:         "winget",
+		AutoElevate:    true,
+		AutoSelfUpdate: true,
 	}
 }
 
@@ -580,6 +584,15 @@ var settingDefs = []settingDef{
 		enabledHint:  "WinTUI will handle elevation automatically. In silent mode, all actions run elevated.",
 		disabledHint: "All actions run non-elevated. Use Ctrl+E to retry on failure.",
 	},
+	{
+		key:          "auto_self_update",
+		label:        "WinTUI Auto Update",
+		desc:         "Update WinTUI before launch",
+		detail:       "When enabled and WinTUI is running from its winget install, startup checks for a WinTUI update and closes to let winget apply it before the TUI starts.",
+		stype:        settingToggle,
+		enabledHint:  "Startup will hand WinTUI updates to winget before the TUI starts.",
+		disabledHint: "WinTUI will only update when you apply it from the Updates list.",
+	},
 }
 
 // getValue returns the current value for a setting key.
@@ -605,6 +618,8 @@ func (s Settings) getValue(key string) string {
 		return boolStr(s.IncludeUnknown)
 	case "auto_elevate":
 		return boolStr(s.AutoElevate)
+	case "auto_self_update":
+		return boolStr(s.AutoSelfUpdate)
 	}
 	return ""
 }
@@ -632,6 +647,8 @@ func (s *Settings) setValue(key, val string) {
 		s.IncludeUnknown = val == "true"
 	case "auto_elevate":
 		s.AutoElevate = val == "true"
+	case "auto_self_update":
+		s.AutoSelfUpdate = val == "true"
 	}
 }
 
@@ -646,6 +663,7 @@ func settingsEqual(a, b Settings) bool {
 		a.IncludeUnknown == b.IncludeUnknown &&
 		a.Source == b.Source &&
 		a.AutoElevate == b.AutoElevate &&
+		a.AutoSelfUpdate == b.AutoSelfUpdate &&
 		packagesEqual(a.Packages, b.Packages)
 }
 

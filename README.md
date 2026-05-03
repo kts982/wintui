@@ -52,7 +52,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), release notes (`n` when available), Auto/Ask/Hold package policy, a live command preview showing exactly what winget will run (including per-package overrides), and scrollable metadata
 - **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners and the most recent winget output line, view compact results with `Ctrl+E` retry (elevated when needed, plain retry for process-in-use failures)
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
-- **Self-upgrade handoff** — upgrading `kts982.WinTUI` now finishes through a local handoff script, and only from an already elevated WinTUI session; non-admin sessions offer `Ctrl+A` to relaunch as admin and retry, with a manual admin command fallback when UAC relaunch is blocked
+- **Self-upgrade handoff** — WinTUI can check for its own winget update before launch and close so a local handoff script can run `winget upgrade kts982.WinTUI` after the current process exits
 - **Headless CLI** — `wintui check`, `wintui list`, `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, and `wintui upgrade --id <pkg>` for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, and `show`
 
 **System Utilities**
@@ -79,7 +79,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 .\wintui.exe
 ```
 
-> **Tip:** Some operations require administrator privileges. The subtitle bar shows `● admin` / `● user` status. Enable **Silent** mode + **Auto Elevate** in Settings for hands-off elevated operations, or press `Ctrl+E` on the result modal when a package fails. WinTUI only finishes its own upgrade from an already elevated session; otherwise the result modal offers `Ctrl+A` to relaunch WinTUI as admin and retry. After the handoff finishes, start `wintui` again manually.
+> **Tip:** Some operations require administrator privileges. The subtitle bar shows `● admin` / `● user` status. Enable **Silent** mode + **Auto Elevate** in Settings for hands-off elevated operations, or press `Ctrl+E` on the result modal when a package fails. WinTUI's own update is handled by closing WinTUI and letting winget replace the released binary; after the handoff finishes, start `wintui` again manually.
 
 ### Headless CLI
 
@@ -110,7 +110,7 @@ wintui upgrade --id Mozilla.Firefox --id Microsoft.VisualStudioCode
 The old root flags `--check` and `--list` have been removed; use
 `wintui check` and `wintui list`. WinTUI itself is **not** upgraded by
 headless upgrade commands; the running binary is skipped with a hint
-pointing at the TUI, where the self-upgrade handoff is verified.
+pointing at the TUI startup self-update handoff.
 
 Further documentation:
 - [CLI reference](docs/cli.md)
@@ -172,6 +172,7 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 | Purge on Uninstall | delete all package files |
 | Include Unknown Versions | show packages with unknown versions |
 | Auto Elevate | automatically request admin rights |
+| WinTUI Auto Update | check for and apply WinTUI's own update before launch |
 
 **Action Mode: Silent + Auto Elevate** runs all install/upgrade/uninstall operations through the elevated helper upfront, avoiding UAC popups from installers that elevate themselves.
 

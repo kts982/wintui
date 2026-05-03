@@ -93,6 +93,17 @@ func (c *packageCache) getUpgradeableRaw() []Package {
 	return cp
 }
 
+// getUpgradeableSavedAt returns the timestamp of the last upgradeable cache write.
+// Zero time means no scan has been cached yet.
+func (c *packageCache) getUpgradeableSavedAt() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.upgradeable == nil {
+		return time.Time{}
+	}
+	return c.upgradeAt
+}
+
 func (c *packageCache) prime(installed, upgradeable []Package, savedAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

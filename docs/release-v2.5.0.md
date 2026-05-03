@@ -1,8 +1,9 @@
 # WinTUI v2.5.0 Release Notes
 
 WinTUI v2.5.0 introduces a per-package update policy (Ask/Auto/Hold), an
-on-launch auto-update flow, two new `upgrade` subcommand modes, and a
-significant refresh-latency fix for users with long winget package IDs.
+on-launch auto-update flow, a default-on WinTUI self-update check, two new
+`upgrade` subcommand modes, and a significant refresh-latency fix for users
+with long winget package IDs.
 
 ## Per-package update policy
 
@@ -57,12 +58,13 @@ cancel the auto-batch and use the TUI normally. Once cancelled, the
 countdown won't re-appear in the same session — only an explicit `r`
 refresh will re-evaluate.
 
-The WinTUI self-package is deliberately filtered out of the on-launch
-batch even when set to Auto. Self-upgrade can't run unattended (the
-handoff needs an explicit Enter when admin, Ctrl+A when not), so
-WinTUI defers it to the regular Updates flow and surfaces a banner
-explaining that your Auto setting was acknowledged but isn't running
-this round.
+WinTUI's own package is deliberately filtered out of the per-package
+Auto batch. It is handled by the separate **WinTUI Auto Update** setting,
+which is on by default: startup checks `kts982.WinTUI` before the TUI
+starts, launches a local handoff script when an update is available, and
+exits so winget can replace the released binary. If that setting is off,
+manual self-upgrade from the Updates list still uses the same handoff
+after you press `Enter` on the result modal.
 
 ## Headless CLI cleanup
 
@@ -79,10 +81,12 @@ check` and `wintui list` instead.
 
 ## Notes
 
-- No breaking changes to settings, keybindings, or the v2.3.x
-  self-upgrade handoff.
+- No breaking changes to existing settings or keybindings. New installs
+  default `auto_self_update` to true; existing configs also inherit true
+  unless the setting is explicitly turned off.
 - `settings.json` is fully backward compatible — Ignore and
   IgnoreVersion still work, just routed through the new planner as
   Hold.
 - `wintui upgrade --auto` does **not** upgrade the running WinTUI
-  binary; like `--all`, it skips with a hint pointing at the TUI.
+  binary; like `--all`, it skips with a hint pointing at the startup
+  self-update handoff.

@@ -82,6 +82,143 @@ package via --id is an error.`,
 	},
 }
 
+var (
+	doctorFullFlag     bool
+	doctorDevToolsFlag bool
+	doctorVerboseFlag  bool
+)
+
+var doctorCmd = &cobra.Command{
+	Use:   "doctor",
+	Short: "Run a verdict-first WinTUI / winget readiness check",
+	Long: `Print a one-line verdict (OK / WARN: N issues / FAIL: N issues) and exit
+0 / 1 / 2 respectively. Shares the check engine with the Health tab.
+
+--verbose adds the per-row table beneath the verdict.
+--full re-adds the verbose system-diagnostics rows (RAM, Defender, ping,
+extra drives, OS/uptime, PATH, Windows PowerShell) that were trimmed from
+the slim TUI default.
+--dev-tools appends a developer-tools detection group.
+--json emits the full report as structured JSON.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runDoctor(doctorOptions{
+			Full:     doctorFullFlag,
+			DevTools: doctorDevToolsFlag,
+			Verbose:  doctorVerboseFlag,
+			JSON:     jsonFlag,
+		}, os.Stdout)
+	},
+}
+
+type doctorOptions struct {
+	Full     bool
+	DevTools bool
+	Verbose  bool
+	JSON     bool
+}
+
+type doctorCounts struct {
+	Pass int `json:"pass"`
+	Warn int `json:"warn"`
+	Fail int `json:"fail"`
+	Info int `json:"info"`
+}
+
+type doctorOutput struct {
+	Verdict  string        `json:"verdict"` // OK | WARN | FAIL
+	Summary  string        `json:"summary"` // "OK" | "WARN: 2 issues" | "FAIL: 1 issue"
+	ExitCode int           `json:"exit_code"`
+	Counts   doctorCounts  `json:"counts"`
+	Checks   []healthCheck `json:"checks"`
+}
+
+func buildDoctorOutput(report healthReport) doctorOutput {
+	var counts doctorCounts
+	for _, c := range report.Checks {
+		switch strings.ToUpper(c.Status) {
+		case "PASS":
+			counts.Pass++
+		case "WARN":
+			counts.Warn++
+		case "FAIL":
+			counts.Fail++
+		case "INFO":
+			counts.Info++
+		}
+	}
+
+	verdict := "OK"
+	exit := 0
+	summary := "OK"
+	switch {
+	case counts.Fail > 0:
+		verdict = "FAIL"
+		exit = 2
+		summary = fmt.Sprintf("FAIL: %s", pluralIssues(counts.Fail))
+	case counts.Warn > 0:
+		verdict = "WARN"
+		exit = 1
+		summary = fmt.Sprintf("WARN: %s", pluralIssues(counts.Warn))
+	}
+
+	return doctorOutput{
+		Verdict:  verdict,
+		Summary:  summary,
+		ExitCode: exit,
+		Counts:   counts,
+		Checks:   report.Checks,
+	}
+}
+
+func pluralIssues(n int) string {
+	if n == 1 {
+		return "1 issue"
+	}
+	return fmt.Sprintf("%d issues", n)
+}
+
+func runDoctor(opts doctorOptions, out io.Writer) error {
+	report := runDoctorReport(opts.Full, opts.DevTools)
+	result := buildDoctorOutput(report)
+	cliExitCode = result.ExitCode
+
+	if opts.JSON {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
+	}
+
+	fmt.Fprintln(out, result.Summary)
+	if opts.Verbose {
+		fmt.Fprintln(out)
+		printDoctorTable(out, report.Checks)
+	}
+	return nil
+}
+
+func printDoctorTable(out io.Writer, checks []healthCheck) {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "STATUS\tCHECK\tDETAILS")
+	for _, c := range checks {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", c.Status, c.Check, c.Details)
+	}
+	_ = tw.Flush()
+
+	var recs []string
+	for _, c := range checks {
+		if c.Status != "PASS" && c.Status != "INFO" && c.Recommendation != "" {
+			recs = appendUnique(recs, c.Recommendation)
+		}
+	}
+	if len(recs) > 0 {
+		fmt.Fprintln(out, "\nRecommendations:")
+		for _, r := range recs {
+			fmt.Fprintf(out, "  • %s\n", r)
+		}
+	}
+}
+
 var showCmd = &cobra.Command{
 	Use:   "show <id>",
 	Short: "Show effective install/upgrade command and overrides for a package",

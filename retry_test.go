@@ -240,7 +240,7 @@ func TestExecModalBlockedByProcessRetryCandidates(t *testing.T) {
 	}
 }
 
-func TestExecModalPendingSelfUpgradeRequiresAdminAdvertisesCtrlA(t *testing.T) {
+func TestExecModalPendingSelfUpgradeFinishesWithEnter(t *testing.T) {
 	forceNotElevated(t)
 
 	m := newExecModal(retryOpUpgrade, []batchItem{{
@@ -254,36 +254,29 @@ func TestExecModalPendingSelfUpgradeRequiresAdminAdvertisesCtrlA(t *testing.T) {
 
 	helps := bindingHelps(m.helpKeys())
 	var (
-		foundCtrlA bool
 		foundEnter bool
 	)
 	for _, h := range helps {
 		switch h.Key {
 		case "ctrl+a":
-			foundCtrlA = true
-			if h.Desc != "relaunch as admin" {
-				t.Fatalf("ctrl+a desc = %q, want %q", h.Desc, "relaunch as admin")
-			}
+			t.Fatal("did not expect ctrl+a binding for self-upgrade handoff")
 		case "enter":
 			foundEnter = true
-			if h.Desc != "close" {
-				t.Fatalf("enter desc = %q, want %q", h.Desc, "close")
+			if h.Desc != "finish upgrade" {
+				t.Fatalf("enter desc = %q, want %q", h.Desc, "finish upgrade")
 			}
 		}
 	}
-	if !foundCtrlA {
-		t.Fatal("expected ctrl+a binding for admin-gated self-upgrade")
-	}
 	if !foundEnter {
-		t.Fatal("expected enter binding to remain available for close")
+		t.Fatal("expected enter binding to finish self-upgrade")
 	}
 
 	_, body, actions := m.viewComplete()
 	plainBody := strings.Join(body, "\n")
-	if !strings.Contains(plainBody, "restart WinTUI as admin to finish upgrade") {
-		t.Fatalf("viewComplete() body missing admin restart guidance: %q", plainBody)
+	if !strings.Contains(plainBody, "finish upgrade, then start wintui again") {
+		t.Fatalf("viewComplete() body missing handoff guidance: %q", plainBody)
 	}
-	if !strings.Contains(actions, "ctrl+a") {
-		t.Fatalf("viewComplete() actions missing ctrl+a: %q", actions)
+	if strings.Contains(actions, "ctrl+a") {
+		t.Fatalf("viewComplete() actions unexpectedly includes ctrl+a: %q", actions)
 	}
 }
