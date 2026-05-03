@@ -176,19 +176,27 @@ func (p summaryPanel) view() string {
 	// Package name + ID (always shown).
 	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.pkg.Name))
 	lines = append(lines, helpStyle.Render(p.pkg.ID))
+
+	// Chips: source (identity, dim), upgrade-available (state, cyan),
+	// override gear (warm yellow). Skipped when none apply.
+	if chips := p.renderChips(); chips != "" {
+		lines = append(lines, chips)
+	}
+
 	lines = append(lines, helpStyle.Render(strings.Repeat("─", innerWidth)))
 
-	// Version info.
+	// Version info — values painted in state cyan since "what version" is
+	// the headline state for a package.
 	if p.installed != "" {
-		lines = append(lines, p.field("Installed", p.installed))
+		lines = append(lines, p.stateField("Installed", p.installed))
 	} else if p.pkg.Version != "" {
-		lines = append(lines, p.field("Version", p.pkg.Version))
+		lines = append(lines, p.stateField("Version", p.pkg.Version))
 	}
 	if p.pkg.Available != "" {
-		lines = append(lines, p.field("Available", p.pkg.Available))
+		lines = append(lines, p.stateField("Available", p.pkg.Available))
 	}
 	if p.target != "" && p.target != p.pkg.Available {
-		lines = append(lines, p.field("Target", p.target))
+		lines = append(lines, p.stateField("Target", p.target))
 	}
 	if p.pkg.Source != "" {
 		lines = append(lines, p.field("Source", p.pkg.Source))
@@ -235,7 +243,7 @@ func (p summaryPanel) view() string {
 			lines = append(lines, p.field("License", p.detail.License))
 		}
 		if p.detail.Homepage != "" {
-			lines = append(lines, p.field("Homepage", truncate(p.detail.Homepage, innerWidth-10)))
+			lines = append(lines, p.urlField("Homepage", truncate(p.detail.Homepage, innerWidth-10)))
 		}
 
 		if p.detail.Description != "" {
@@ -291,6 +299,45 @@ func (p summaryPanel) renderEmpty() string {
 func (p summaryPanel) field(label, value string) string {
 	return lipgloss.NewStyle().Foreground(secondary).Render(label+": ") +
 		lipgloss.NewStyle().Foreground(bright).Render(value)
+}
+
+// stateField is for values that represent "current state" — version numbers,
+// target version, etc. Painted in the state-accent so they stand out from
+// identity values like Publisher / License.
+func (p summaryPanel) stateField(label, value string) string {
+	return lipgloss.NewStyle().Foreground(secondary).Render(label+": ") +
+		stateStyle.Render(value)
+}
+
+// urlField marks a homepage / release-notes link visually distinct so users
+// recognize it as actionable (`o` opens the homepage in the detail view).
+func (p summaryPanel) urlField(label, value string) string {
+	return lipgloss.NewStyle().Foreground(secondary).Render(label+": ") +
+		urlStyle.Render(value)
+}
+
+// renderChips builds the inline chip row that sits under the package name+ID.
+// Source (identity, dim brackets), upgrade-available (state cyan, bold with
+// arrow), and override gear (warm yellow) — only chips that apply are shown.
+func (p summaryPanel) renderChips() string {
+	var chips []string
+
+	if src := strings.TrimSpace(p.pkg.Source); src != "" {
+		chips = append(chips, chipStyle.Render("["+strings.ToLower(src)+"]"))
+	}
+
+	if p.pkg.Available != "" {
+		chips = append(chips, stateStyle.Bold(true).Render("↑ "+p.pkg.Available))
+	}
+
+	if appSettings.hasOverride(p.pkg.ID, p.pkg.Source) {
+		chips = append(chips, lipgloss.NewStyle().Foreground(override).Bold(true).Render("⚙ override"))
+	}
+
+	if len(chips) == 0 {
+		return ""
+	}
+	return strings.Join(chips, "  ")
 }
 
 func wordWrap(s string, width int) string {

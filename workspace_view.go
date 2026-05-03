@@ -439,7 +439,10 @@ func renderUpdatePolicyBadge(pkgID, source string) string {
 	o := appSettings.getOverride(pkgID, source)
 	switch o.displayedUpdatePolicy() {
 	case PolicyAuto:
-		return " " + lipgloss.NewStyle().Bold(true).Foreground(success).Render("[AUTO]")
+		// AUTO is intent the user has SET (vs. pass/fail or success/danger).
+		// Painting it in the state-accent ties it visually to the staged
+		// checkbox and upgrade-available chip in the detail panel.
+		return " " + lipgloss.NewStyle().Bold(true).Foreground(state).Render("[AUTO]")
 	case PolicyHold:
 		return " " + lipgloss.NewStyle().Bold(true).Foreground(warning).Render("[HOLD]")
 	default:

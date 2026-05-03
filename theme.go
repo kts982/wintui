@@ -4,9 +4,20 @@ import "charm.land/lipgloss/v2"
 
 // ── Colour palette ─────────────────────────────────────────────────
 
+// Palette principle:
+//
+//	accent (pink)     — primary navigation + structure: tabs, borders, cursor,
+//	                    headers, key hints. Answers "where are you?".
+//	secondary (lavender) — labels and section titles.
+//	state (mint-cyan) — your intent or current state: staged checkboxes,
+//	                    AUTO policy badges, version values, upgrade-available
+//	                    chips. Answers "what have you set / what changed?".
+//	override (warm yellow) — per-package rule indicator (gear ⚙).
+//	success/danger/warning — pass/fail/warn semantics.
 var (
 	accent    = lipgloss.Color("212") // pink
 	secondary = lipgloss.Color("99")  // lavender
+	state     = lipgloss.Color("86")  // mint-cyan — "your intent / current state"
 	dim       = lipgloss.Color("240") // grey
 	bright    = lipgloss.Color("252") // near-white
 	success   = lipgloss.Color("78")  // green
@@ -47,13 +58,23 @@ var (
 	errorStyle   = lipgloss.NewStyle().Foreground(danger).Bold(true)
 	warnStyle    = lipgloss.NewStyle().Foreground(warning)
 	helpStyle    = lipgloss.NewStyle().Foreground(dim)
+
+	// stateStyle highlights "your intent or current state" — version numbers,
+	// upgrade-available chips, AUTO policy badges, staged checkmarks.
+	stateStyle = lipgloss.NewStyle().Foreground(state)
+	// urlStyle marks an actionable link in the detail panel.
+	urlStyle = lipgloss.NewStyle().Foreground(secondary).Underline(true)
+	// chipStyle is the dim brackets used for identity-only chips like source.
+	chipStyle = lipgloss.NewStyle().Foreground(dim)
 )
 
 // ── Helpers ────────────────────────────────────────────────────────
 
 func checkbox(checked bool) string {
 	if checked {
-		return lipgloss.NewStyle().Foreground(accent).Bold(true).Render("[✓]")
+		// Staged is INTENT — paint it with the state-accent so the user can
+		// scan their staging at a glance against the structural pink.
+		return lipgloss.NewStyle().Foreground(state).Bold(true).Render("[✓]")
 	}
 	return lipgloss.NewStyle().Foreground(dim).Render("[ ]")
 }
