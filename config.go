@@ -181,6 +181,10 @@ type Settings struct {
 	// Check for and hand off WinTUI's own winget upgrade before launching the TUI
 	AutoSelfUpdate bool `json:"auto_self_update"`
 
+	// Send a Windows toast on TUI batch finish, headless upgrade --auto/--all
+	// finish, and `wintui check` finding updates. Default off; opt-in.
+	ToastNotifications bool `json:"toast_notifications"`
+
 	// Per-package option overrides, keyed by source-qualified package key.
 	// New writes use "<source>:<id>"; reads also support legacy plain-ID keys.
 	Packages map[string]PackageOverride `json:"packages,omitempty"`
@@ -593,6 +597,15 @@ var settingDefs = []settingDef{
 		enabledHint:  "Startup will hand WinTUI updates to winget before the TUI starts.",
 		disabledHint: "WinTUI will only update when you apply it from the Updates list.",
 	},
+	{
+		key:          "toast_notifications",
+		label:        "Toast Notifications",
+		desc:         "Windows toast on batch / scheduled run finish",
+		detail:       "When enabled, WinTUI sends a single Windows toast on TUI batch finish, on `wintui upgrade --auto/--all` finish, and when `wintui check` finds updates. A minimal Start Menu shortcut is dropped on first toast so notifications attribute as WinTUI rather than PowerShell. Skipped when running elevated or in CI.",
+		stype:        settingToggle,
+		enabledHint:  "Send a Windows toast on batch and scheduled-run finish.",
+		disabledHint: "No Windows toasts will be sent.",
+	},
 }
 
 // getValue returns the current value for a setting key.
@@ -620,6 +633,8 @@ func (s Settings) getValue(key string) string {
 		return boolStr(s.AutoElevate)
 	case "auto_self_update":
 		return boolStr(s.AutoSelfUpdate)
+	case "toast_notifications":
+		return boolStr(s.ToastNotifications)
 	}
 	return ""
 }
@@ -649,6 +664,8 @@ func (s *Settings) setValue(key, val string) {
 		s.AutoElevate = val == "true"
 	case "auto_self_update":
 		s.AutoSelfUpdate = val == "true"
+	case "toast_notifications":
+		s.ToastNotifications = val == "true"
 	}
 }
 
@@ -664,6 +681,7 @@ func settingsEqual(a, b Settings) bool {
 		a.Source == b.Source &&
 		a.AutoElevate == b.AutoElevate &&
 		a.AutoSelfUpdate == b.AutoSelfUpdate &&
+		a.ToastNotifications == b.ToastNotifications &&
 		packagesEqual(a.Packages, b.Packages)
 }
 

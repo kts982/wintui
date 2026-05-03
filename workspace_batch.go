@@ -523,6 +523,8 @@ func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 		s.searchQuery = ""
 	}
 
+	notifyBatchFinish(s.modal.items)
+
 	// Emit incremental lookups for each successful item, using s.ctx so they
 	// are cancelled if the user does a manual refresh (resetAndReload).
 	ctx := s.ctx

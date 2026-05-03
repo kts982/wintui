@@ -282,6 +282,7 @@ func runCheck() error {
 	if len(pkgs) > 0 {
 		cliExitCode = 1
 	}
+	notifyCheckFoundUpdates(len(pkgs))
 	return nil
 }
 
@@ -475,6 +476,7 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 		fmt.Fprint(out, " (WinTUI self-upgrade skipped)")
 	}
 	fmt.Fprintln(out)
+	notifyCLIUpgradeFinish(upgraded, len(failures))
 	return nil
 }
 
@@ -551,6 +553,7 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 		fmt.Fprint(out, " (WinTUI self-upgrade skipped)")
 	}
 	fmt.Fprintln(out)
+	notifyCLIUpgradeFinish(upgraded, len(failures))
 	return nil
 }
 
