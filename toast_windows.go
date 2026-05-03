@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -47,14 +49,12 @@ func sendToast(title, body string) {
 	sendToastFn(title, body)
 }
 
-// shouldSuppressToast filters out environments where toasts can't surface or
-// would surprise the user. Elevated sessions notify into the elevated user's
-// desktop (often invisible to the interactive logon); CI and explicit kill
-// switches also skip.
+// shouldSuppressToast filters out environments where toasts would surprise
+// users or can't surface at all. Limited to CI and an explicit kill switch:
+// UAC-elevated processes share the user's session and notification stream,
+// so an `isElevated()` check would be wrong (and would silently break the
+// scheduled `wintui check` use case, which often runs elevated).
 func shouldSuppressToast() bool {
-	if isElevated() {
-		return true
-	}
 	if getEnvFn("CI") != "" {
 		return true
 	}
@@ -66,8 +66,8 @@ func shouldSuppressToast() bool {
 
 // sendToastWindows is the production toast delivery path: ensures the AUMID
 // Start Menu shortcut exists (so attribution renders as "WinTUI" not
-// "PowerShell"), then dispatches a detached, hidden-window PowerShell
-// instance that invokes Windows.UI.Notifications.ToastNotificationManager.
+// "PowerShell"), then dispatches a hidden-window PowerShell instance that
+// invokes Windows.UI.Notifications.ToastNotificationManager.
 func sendToastWindows(title, body string) {
 	_ = ensureToastShortcut()
 
@@ -96,14 +96,14 @@ func toastPowerShellHostArgs(scriptPath string) []string {
 	}
 }
 
-// configureToastScriptHost detaches the helper so the parent (TUI / CLI) can
-// exit before the toast renders, and hides the console window entirely.
-// CREATE_NO_WINDOW is the difference vs the self-update host, which uses
-// CREATE_NEW_CONSOLE because that script has visible progress output.
+// configureToastScriptHost hides the helper console. CREATE_NO_WINDOW alone
+// (no DETACHED_PROCESS) is enough for the fire-and-forget case: the child
+// outlives the parent because we never call Wait, and DETACHED_PROCESS was
+// observed to break PowerShell's WinRT type loading on some configurations.
 func configureToastScriptHost(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
-		CreationFlags: windows.CREATE_NO_WINDOW | windows.DETACHED_PROCESS,
+		CreationFlags: windows.CREATE_NO_WINDOW,
 	}
 }
 
@@ -155,6 +155,9 @@ func shortcutPath() (string, error) {
 // The PowerShell + inline C# dance is the well-known approach: WScript.Shell
 // to write the .lnk, then SHGetPropertyStoreFromParsingName to set the AUMID
 // property. Mirrors what BurntToast's New-BTShortcut does internally.
+//
+// On failure, stderr is appended to %LOCALAPPDATA%\wintui\toast\error.log
+// so future silent failures (Add-Type compile errors, missing types) surface.
 func ensureToastShortcut() error {
 	path, err := shortcutPath()
 	if err != nil {
@@ -177,11 +180,38 @@ func ensureToastShortcut() error {
 
 	cmd := exec.Command("powershell.exe", toastPowerShellHostArgs(scriptPath)...)
 	configureToastScriptHost(cmd)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("shortcut-ensure: %w", err)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	if runErr != nil || stderr.Len() > 0 {
+		appendToastErrorLog(scriptPath, runErr, stderr.String())
+		if runErr != nil {
+			return fmt.Errorf("shortcut-ensure: %w", runErr)
+		}
 	}
 	_ = os.Remove(scriptPath)
+	// Settle pause: the Action Center indexer maps AUMID to shortcut by
+	// scanning the Start Menu folder asynchronously. Without this delay the
+	// very first toast after opt-in races the indexer and silently drops.
+	// Subsequent runs hit the early-return above and skip the pause.
+	time.Sleep(1500 * time.Millisecond)
 	return nil
+}
+
+// appendToastErrorLog writes failures from the shortcut-ensure or toast-send
+// PowerShell handoff to a per-user log file so silent breakage is debuggable.
+func appendToastErrorLog(scriptPath string, runErr error, stderr string) {
+	dir, err := toastStateDir()
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "error.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "[%s] script=%s err=%v\nstderr:\n%s\n---\n",
+		time.Now().Format(time.RFC3339), scriptPath, runErr, stderr)
 }
 
 // renderToastScript builds the PS script that fires a single text-only toast
@@ -282,12 +312,17 @@ func escapeToastXML(s string) string {
 // property via SHGetPropertyStoreFromParsingName. Both steps run inline; the
 // inline C# is compiled once per invocation, which is fine because we only
 // hit this on the very first toast after the user opts in.
+//
+// Path values are interpolated as PowerShell single-quoted literals (psQuote)
+// so backslashes stay single. %q would produce Go-style "C:\\..." which PS
+// reads literally as doubled backslashes — WScript.Shell tolerates that, but
+// SHGetPropertyStoreFromParsingName rejects it with E_INVALIDARG.
 func renderShortcutScript(lnkPath, exePath string) string {
 	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 
-$lnkPath = %q
-$exePath = %q
-$appId   = %q
+$lnkPath = %s
+$exePath = %s
+$appId   = %s
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($lnkPath)
@@ -350,8 +385,15 @@ public static class AumidSetter {
         }
     }
 }
-'@ -ReferencedAssemblies System.Runtime.InteropServices
+'@
 
 [AumidSetter]::SetAppId($lnkPath, $appId)
-`, lnkPath, exePath, toastAppID)
+`, psQuote(lnkPath), psQuote(exePath), psQuote(toastAppID))
+}
+
+// psQuote wraps s as a PowerShell single-quoted string literal. In single
+// quotes, the only special character is the apostrophe itself (escaped by
+// doubling it); backslashes, dollar signs, and backticks are all literal.
+func psQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }

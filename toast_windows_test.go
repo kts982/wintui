@@ -62,7 +62,10 @@ func TestSendToastFiresWhenSettingOn(t *testing.T) {
 	}
 }
 
-func TestSendToastSuppressedWhenElevated(t *testing.T) {
+func TestSendToastFiresWhenElevated(t *testing.T) {
+	// Elevation does NOT suppress: UAC-elevated processes share the user's
+	// session and notification stream, and the scheduled-task case for
+	// `wintui check` often runs elevated.
 	calls, restore := captureToast(t)
 	defer restore()
 	isElevated = func() bool { return true }
@@ -73,8 +76,8 @@ func TestSendToastSuppressedWhenElevated(t *testing.T) {
 
 	sendToast("X", "Y")
 
-	if len(*calls) != 0 {
-		t.Fatalf("toast fired while elevated: %#v", *calls)
+	if len(*calls) != 1 {
+		t.Fatalf("expected toast to fire while elevated, got %d calls", len(*calls))
 	}
 }
 
