@@ -458,19 +458,19 @@ func appendDetailField(lines *[]string, label, value string) {
 		return
 	}
 	*lines = append(*lines, fmt.Sprintf("  %s  %s",
-		lipgloss.NewStyle().Bold(true).Width(18).Render(label),
+		lipgloss.NewStyle().Bold(true).Foreground(secondary).Width(18).Render(label),
 		value))
 }
 
 func appendDetailSection(lines *[]string, heading, releaseNotesHeading string, d PackageDetail) {
 	*lines = append(*lines, "")
 	*lines = append(*lines, "  "+lipgloss.NewStyle().Bold(true).Foreground(accent).Render(heading))
-	appendDetailField(lines, "Version", d.Version)
+	appendDetailField(lines, "Version", stateStyle.Render(d.Version))
 	appendDetailField(lines, "Publisher", d.Publisher)
 	appendDetailField(lines, "License", d.License)
 	appendDetailField(lines, "Moniker", d.Moniker)
 	if d.Homepage != "" {
-		appendDetailField(lines, "Homepage", lipgloss.NewStyle().Foreground(secondary).Underline(true).Render(d.Homepage))
+		appendDetailField(lines, "Homepage", urlStyle.Render(d.Homepage))
 	}
 	appendDetailField(lines, "Release Date", d.ReleaseDate)
 	appendDetailField(lines, "Installer", d.InstallerType)
@@ -503,7 +503,7 @@ func appendDetailSection(lines *[]string, heading, releaseNotesHeading string, d
 			if d.ReleaseNotes != "" {
 				*lines = append(*lines, "")
 			}
-			*lines = append(*lines, "  "+lipgloss.NewStyle().Foreground(secondary).Underline(true).Render(d.ReleaseNotesURL))
+			*lines = append(*lines, "  "+urlStyle.Render(d.ReleaseNotesURL))
 		}
 	}
 }
@@ -528,13 +528,13 @@ func wrapDetailLines(lines []string, width int) []string {
 func (p detailPanel) detailLines(totalWidth int) []string {
 	var lines []string
 	if p.installedVersion != "" {
-		appendDetailField(&lines, "Installed Version", p.installedVersion)
+		appendDetailField(&lines, "Installed Version", stateStyle.Render(p.installedVersion))
 	}
 	if p.latestVersion != "" {
-		appendDetailField(&lines, "Latest Available", p.latestVersion)
+		appendDetailField(&lines, "Latest Available", stateStyle.Render(p.latestVersion))
 	}
 	if p.allowVersionSelect {
-		appendDetailField(&lines, "Target Version", p.targetVersionLabel())
+		appendDetailField(&lines, "Target Version", stateStyle.Render(p.targetVersionLabel()))
 	}
 	source := p.detail.Source
 	if source == "" {
