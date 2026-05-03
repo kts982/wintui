@@ -213,16 +213,25 @@ func (s settingsScreen) renderDetailPanel(panelWidth int, compact bool) string {
 	def := settingDefs[s.cursor]
 	val := appSettings.getValue(def.key)
 
+	// renderTitledPanel reserves 2 cols for the side borders. Wrap content
+	// to that inner width before styling so long descriptions don't overflow
+	// past the right border.
+	innerWidth := max(panelWidth-2, 10)
+
 	var lines []string
 	lines = append(lines, infoStyle.Render("Current: "+def.choiceLabel(valOrOnOff(def, val))))
 	if hint := strings.TrimSpace(def.currentHint(val)); hint != "" {
-		lines = append(lines, itemStyle.Render(hint))
+		for _, hl := range strings.Split(wordWrap(hint, innerWidth), "\n") {
+			lines = append(lines, itemStyle.Render(hl))
+		}
 	}
 	if !compact {
 		if detail := strings.TrimSpace(def.detail); detail != "" {
 			lines = append(lines, "")
 			for _, dl := range strings.Split(detail, "\n") {
-				lines = append(lines, helpStyle.Render(dl))
+				for _, wrapped := range strings.Split(wordWrap(dl, innerWidth), "\n") {
+					lines = append(lines, helpStyle.Render(wrapped))
+				}
 			}
 		}
 	}
