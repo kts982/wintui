@@ -75,6 +75,11 @@ type workspaceScreen struct {
 	searchLoading   bool            // search in progress
 	installQueue    []workspaceItem // sticky queue of packages selected for install
 	installQueueMap map[string]bool // quick lookup by packageSourceKey
+
+	// Export/import overlay (Packages tab keys: e = export, I = import).
+	importer        importModel
+	exportingMsg    string // transient status line shown after `e` finishes
+	exportingActive bool   // true while the export goroutine is running
 }
 
 func newWorkspaceScreen() workspaceScreen {
@@ -106,6 +111,7 @@ func newWorkspaceScreen() workspaceScreen {
 		exec:             newExecutionLog(),
 		searchInput:      si,
 		installQueueMap:  make(map[string]bool),
+		importer:         newImportModel(),
 		ctx:              ctx,
 		cancel:           cancel,
 		refreshCtx:       refreshCtx,
@@ -156,6 +162,27 @@ type selfUpgradeScheduledMsg struct {
 // countUpgradeable returns how many items are upgradeable.
 
 func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
+	// Import overlay owns the foreground while active. Pass every msg
+	// through it; if the importer consumes (e.g. its keybindings, its own
+	// async messages) we short-circuit. Window-size messages and
+	// non-consumed messages still flow to the regular workspace handler
+	// so background state stays consistent.
+	if s.importer.active {
+		installed := s.installedPackages()
+		var importCmd tea.Cmd
+		var consumed bool
+		s.importer, importCmd, consumed = s.importer.update(msg, installed)
+		if !s.importer.active {
+			// Importer just finished — reload package list so any newly
+			// installed entries show up immediately when the overlay closes.
+			next, reloadCmd := s.resetAndReload()
+			return next, tea.Batch(importCmd, reloadCmd)
+		}
+		if consumed {
+			return s, importCmd
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
@@ -370,6 +397,10 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, s.searchInput.Focus()
 		case "i":
 			return s.beginAction(retryOpInstall)
+		case "I":
+			return s.beginImport()
+		case "e":
+			return s.beginExport()
 		case "g":
 			return s.beginApplyAction()
 		case "u":
@@ -381,6 +412,13 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case "t":
 			return s.cycleFocusedUpdatePolicy()
 		}
+
+	case exportDoneMsg:
+		return s.handleExportDone(msg)
+
+	case clearExportMsg:
+		s.exportingMsg = ""
+		return s, nil
 
 	case workspaceDataMsg:
 		if msg.err != nil && msg.installed == nil {

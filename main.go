@@ -115,7 +115,12 @@ func init() {
 	doctorCmd.Flags().BoolVar(&doctorVerboseFlag, "verbose", false, "Show per-row check table beneath the verdict")
 	doctorCmd.Flags().BoolVar(&doctorFullFlag, "full", false, "Re-add the trimmed system-diagnostics rows (RAM, Defender, ping, etc.)")
 	doctorCmd.Flags().BoolVar(&doctorDevToolsFlag, "dev-tools", false, "Append a developer-tools detection group")
-	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd)
+	exportCmd.Flags().StringVar(&exportOutputFlag, "output", "", "Write to PATH instead of stdout")
+	exportCmd.Flags().BoolVar(&exportWithVersionsFlag, "with-versions", false, "Include exact installed versions in the export")
+	importCmd.Flags().BoolVar(&importDryRunFlag, "dry-run", false, "Print the plan without installing anything")
+	importCmd.Flags().BoolVar(&importAllFlag, "all", false, "Also install packages flagged as possible name matches")
+	importCmd.Flags().BoolVar(&jsonFlag, "json", false, "Print the plan as JSON (implies --dry-run)")
+	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd, exportCmd, importCmd)
 }
 
 func main() {

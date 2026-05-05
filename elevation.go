@@ -92,6 +92,67 @@ func (m *elevationManager) shutdown() {
 	}
 }
 
+// cleanupTargetElevated runs an admin-required cleanup target through the
+// elevated helper. The TUI sends only the registry ID; the helper resolves
+// and validates the path on its side. Caller must serialize against any
+// outstanding runCommandElevated — both share m.conn without locking the
+// connection across reads.
+func (m *elevationManager) cleanupTargetElevated(targetID string) (cleanupTargetResult, error) {
+	if err := m.ensureHelper(); err != nil {
+		return cleanupTargetResult{}, err
+	}
+
+	m.mu.Lock()
+	conn := m.conn
+	m.mu.Unlock()
+
+	req := helperRequest{Action: "cleanup_delete", TargetID: targetID}
+	b, err := json.Marshal(req)
+	if err != nil {
+		return cleanupTargetResult{}, err
+	}
+	if _, err := conn.Write(append(b, '\n')); err != nil {
+		m.markConnLost()
+		return cleanupTargetResult{}, fmt.Errorf("send cleanup request: %w", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	var wire cleanupTargetResultWire
+	gotResult := false
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			m.markConnLost()
+			return cleanupTargetResult{}, fmt.Errorf("helper connection lost: %w", err)
+		}
+		var resp helperResponse
+		if err := json.Unmarshal([]byte(line), &resp); err != nil {
+			continue
+		}
+		switch resp.Type {
+		case "result":
+			if err := json.Unmarshal([]byte(resp.Data), &wire); err != nil {
+				return cleanupTargetResult{}, fmt.Errorf("parse helper result: %w", err)
+			}
+			gotResult = true
+		case "done":
+			if !gotResult {
+				return cleanupTargetResult{}, fmt.Errorf("helper finished without sending a result")
+			}
+			return cleanupResultFromWire(wire), nil
+		case "error":
+			return cleanupTargetResult{}, fmt.Errorf("%s", resp.Data)
+		}
+	}
+}
+
+func (m *elevationManager) markConnLost() {
+	m.mu.Lock()
+	m.conn = nil
+	m.mu.Unlock()
+}
+
 func (m *elevationManager) runCommandElevated(args ...string) (<-chan string, <-chan error, error) {
 	if err := m.ensureHelper(); err != nil {
 		return nil, nil, err

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -616,6 +617,202 @@ func TestLegacyPlainIDOverrideStillReads(t *testing.T) {
 		t.Fatalf("legacy scope = %q, want machine", o.Scope)
 	}
 }
+
+// ── Cleanup settings ──────────────────────────────────────────────────
+
+func TestCleanupAutoScanDefaultsToSafe(t *testing.T) {
+	s := DefaultSettings()
+	if got := s.getValue("cleanup_auto_scan"); got != "" {
+		t.Fatalf("default cleanup_auto_scan = %q, want empty (safe)", got)
+	}
+}
+
+func TestCleanupAutoScanRoundTripsThroughGetSet(t *testing.T) {
+	s := DefaultSettings()
+	for _, val := range []string{"all", "off", ""} {
+		s.setValue("cleanup_auto_scan", val)
+		if got := s.getValue("cleanup_auto_scan"); got != val {
+			t.Errorf("after set %q, get returned %q", val, got)
+		}
+	}
+}
+
+func TestCleanupAutoScanNormalizesUnknownValues(t *testing.T) {
+	s := DefaultSettings()
+	s.setValue("cleanup_auto_scan", "garbage")
+	if got := s.getValue("cleanup_auto_scan"); got != "" {
+		t.Errorf("unknown value should normalize to safe (empty), got %q", got)
+	}
+}
+
+func TestCleanupAutoScanJSONOmitsSafeDefault(t *testing.T) {
+	s := DefaultSettings()
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := raw["cleanup_auto_scan"]; ok {
+		t.Fatal("expected 'cleanup_auto_scan' key to be omitted at safe default")
+	}
+}
+
+func TestCleanupAutoScanJSONIncludesNonDefault(t *testing.T) {
+	s := DefaultSettings()
+	s.CleanupAutoScan = CleanupAutoScanOff
+	data, _ := json.MarshalIndent(s, "", "  ")
+	var raw map[string]any
+	json.Unmarshal(data, &raw)
+	if got, ok := raw["cleanup_auto_scan"]; !ok || got != "off" {
+		t.Errorf("expected cleanup_auto_scan=off in JSON, got %v", raw["cleanup_auto_scan"])
+	}
+}
+
+func TestSettingsEqualNormalizesCleanupAutoScan(t *testing.T) {
+	a := DefaultSettings()                       // CleanupAutoScan = ""
+	b := DefaultSettings()                       // also ""
+	b.CleanupAutoScan = CleanupAutoScan("bogus") // normalizes to safe
+	if !settingsEqual(a, b) {
+		t.Fatal("settings with unknown vs empty cleanup_auto_scan should compare equal (both safe)")
+	}
+
+	c := DefaultSettings()
+	c.CleanupAutoScan = CleanupAutoScanOff
+	if settingsEqual(a, c) {
+		t.Fatal("safe vs off should not compare equal")
+	}
+}
+
+func TestCleanupTargetEnabledDefaultChecked(t *testing.T) {
+	s := DefaultSettings()
+	def := cleanupTargetDef{id: "user_temp", defaultChecked: true}
+	if !s.cleanupTargetEnabled(def) {
+		t.Fatal("default-checked target should always be enabled, even with empty list")
+	}
+	// Even if the list explicitly excludes (or doesn't mention) it.
+	s.CleanupEnabledTargets = []string{"unrelated"}
+	if !s.cleanupTargetEnabled(def) {
+		t.Fatal("default-checked target should not depend on the persisted list")
+	}
+}
+
+func TestCleanupTargetEnabledOptIn(t *testing.T) {
+	def := cleanupTargetDef{id: "yarn_cache", defaultChecked: false}
+	s := DefaultSettings()
+	if s.cleanupTargetEnabled(def) {
+		t.Fatal("non-default target with empty list should be off")
+	}
+	s.CleanupEnabledTargets = []string{"yarn_cache"}
+	if !s.cleanupTargetEnabled(def) {
+		t.Fatal("non-default target should be on when ID is in list")
+	}
+}
+
+func TestSetCleanupTargetEnabledSkipsDefaultChecked(t *testing.T) {
+	s := DefaultSettings()
+	def := cleanupTargetDef{id: "user_temp", defaultChecked: true}
+
+	s.setCleanupTargetEnabled(def, true)
+	if len(s.CleanupEnabledTargets) != 0 {
+		t.Errorf("default-checked opt-in should not be persisted, got %v", s.CleanupEnabledTargets)
+	}
+	s.setCleanupTargetEnabled(def, false)
+	if len(s.CleanupEnabledTargets) != 0 {
+		t.Errorf("default-checked opt-out should not be persisted, got %v", s.CleanupEnabledTargets)
+	}
+}
+
+func TestSetCleanupTargetEnabledTogglesOptIn(t *testing.T) {
+	s := DefaultSettings()
+	def := cleanupTargetDef{id: "go_build", defaultChecked: false}
+
+	s.setCleanupTargetEnabled(def, true)
+	if !slices.Contains(s.CleanupEnabledTargets, "go_build") {
+		t.Errorf("expected go_build to be added, got %v", s.CleanupEnabledTargets)
+	}
+
+	// Idempotent: enabling twice doesn't duplicate.
+	s.setCleanupTargetEnabled(def, true)
+	count := 0
+	for _, id := range s.CleanupEnabledTargets {
+		if id == "go_build" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected go_build to appear once, got %d times", count)
+	}
+
+	s.setCleanupTargetEnabled(def, false)
+	if slices.Contains(s.CleanupEnabledTargets, "go_build") {
+		t.Errorf("expected go_build to be removed, got %v", s.CleanupEnabledTargets)
+	}
+	if s.CleanupEnabledTargets != nil {
+		t.Errorf("expected nil slice when last entry removed, got %v", s.CleanupEnabledTargets)
+	}
+}
+
+func TestSetCleanupTargetEnabledPreservesOthers(t *testing.T) {
+	s := DefaultSettings()
+	s.CleanupEnabledTargets = []string{"npm_cache", "go_build", "yarn_cache"}
+
+	s.setCleanupTargetEnabled(cleanupTargetDef{id: "go_build"}, false)
+	want := []string{"npm_cache", "yarn_cache"}
+	if !reflect.DeepEqual(s.CleanupEnabledTargets, want) {
+		t.Errorf("got %v, want %v", s.CleanupEnabledTargets, want)
+	}
+}
+
+func TestCleanupSettingsJSONRoundTrip(t *testing.T) {
+	s := DefaultSettings()
+	s.CleanupAutoScan = CleanupAutoScanAll
+	s.CleanupEnabledTargets = []string{"go_build", "yarn_cache"}
+
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var loaded Settings
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !settingsEqual(s, loaded) {
+		t.Fatalf("round-trip mismatch:\n  got:  %#v\n  want: %#v", loaded, s)
+	}
+}
+
+func TestCleanupSettingsJSONOmitsEmptyTargets(t *testing.T) {
+	s := DefaultSettings()
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]any
+	json.Unmarshal(data, &raw)
+	if _, ok := raw["cleanup_enabled_targets"]; ok {
+		t.Fatal("empty CleanupEnabledTargets should be omitted from JSON")
+	}
+}
+
+func TestStringSetsEqualOrderInsensitive(t *testing.T) {
+	if !stringSetsEqual([]string{"a", "b", "c"}, []string{"c", "a", "b"}) {
+		t.Fatal("order should not affect equality")
+	}
+	if !stringSetsEqual(nil, []string{}) {
+		t.Fatal("nil and empty slice should compare equal")
+	}
+	if stringSetsEqual([]string{"a"}, []string{"b"}) {
+		t.Fatal("disjoint sets should not be equal")
+	}
+	if stringSetsEqual([]string{"a", "b"}, []string{"a"}) {
+		t.Fatal("different sizes should not be equal")
+	}
+}
+
+// ── End cleanup settings ──────────────────────────────────────────────
 
 func TestUpgradeCommandArgsWithOverride(t *testing.T) {
 	original := appSettings

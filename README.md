@@ -49,6 +49,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Normalized package actions** — press `Space` to stage the focused package, `g` to apply staged changes, or use `i` / `u` / `x` for direct install, upgrade, and uninstall accelerators
 - **Search & Install** — press `s` to search the winget catalog, `Space` to queue packages, `i` to install the focused result or the full install queue
 - **Upgrade / Uninstall** — stage packages across sections, then apply them together, or use `u` / `x` on the focused package or current selection
+- **Export / Import** — press `e` to drop the installed package list as a dated JSON on your Desktop, or `Shift+I` to open the import overlay (scans Desktop / home / cwd for export files, lets you toggle which entries to install). The same flow is also headless via `wintui export` and `wintui import`
 - **Package Details** — press `Enter` or `→` for a full detail overlay with version picker (`v`), homepage (`o`), release notes (`n` when available), Auto/Ask/Hold package policy, a live command preview showing exactly what winget will run (including per-package overrides), and scrollable metadata
 - **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners and the most recent winget output line, view compact results with `Ctrl+E` retry (elevated when needed, plain retry for process-in-use failures)
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
@@ -59,7 +60,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Health Tab** — slim WinTUI / winget readiness panel: WinTUI version + path, winget version, source freshness, cached upgrade counts (visible / auto / held + cache age), privileges + Auto Elevate context, system drive free space, and a neutral Settings summary line. Loads instantly — no fresh winget calls or disk scans
 - **`wintui doctor`** — verdict-first headless health (`OK` / `WARN: N issues` / `FAIL: N issues`, exit 0/1/2). `--verbose` adds the per-row table; `--full` re-adds verbose system diagnostics (RAM, Defender, drives, ping, Windows PowerShell); `--dev-tools` appends a developer-tools detection group; `--json` emits structured output for scripts
 - **Toast notifications** — opt-in (off by default). When enabled, fires a single Windows toast on TUI batch finish, on `wintui upgrade --auto/--all` finish, and when `wintui check` finds updates. AUMID-attributed as "WinTUI" via a one-time Start Menu shortcut drop on first toast
-- **Temp Cleanup** — scan and delete temp files older than 7 days
+- **Cleanup tab** — registry-driven multi-target cleanup with grouped panels (Core Temp, Caches, Developer caches, GPU shader caches), per-target sizing, age-aware scrubbing, and an elevated helper for admin-only paths (`%WINDIR%\Temp`, system minidumps). Configurable auto-scan policy (`safe` / `all` / `off`); developer caches default to off and opt-in toggles persist across sessions
 - **Settings** — persistent config for winget options (scope, architecture, silent/interactive, force, purge, etc.)
 
 **UX**
@@ -107,6 +108,11 @@ wintui upgrade --auto
 
 # Upgrade specific packages by ID (repeatable; pipe-friendly)
 wintui upgrade --id Mozilla.Firefox --id Microsoft.VisualStudioCode
+
+# Export and re-import package lists across machines
+wintui export --output packages.json
+wintui import packages.json --dry-run     # preview before installing
+wintui import packages.json               # install the safe subset
 ```
 
 The old root flags `--check` and `--list` have been removed; use

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // InstallScope constrains the install/upgrade scope.
@@ -51,6 +52,29 @@ func normalizeUpdatePolicy(policy UpdatePolicy) UpdatePolicy {
 		return PolicyHold
 	default:
 		return PolicyAsk
+	}
+}
+
+// CleanupAutoScan is the tri-state for what the cleanup tab auto-scans on
+// open. The persisted-on-disk default is "" (safe); any unknown value
+// normalizes to safe so a hand-edited settings.json can't disable scanning
+// silently.
+type CleanupAutoScan string
+
+const (
+	CleanupAutoScanSafe CleanupAutoScan = ""    // default: scan core temp + caches + GPU vendor caches
+	CleanupAutoScanAll  CleanupAutoScan = "all" // scan every present target on tab open
+	CleanupAutoScanOff  CleanupAutoScan = "off" // never auto-scan; user presses s/r explicitly
+)
+
+func normalizeCleanupAutoScan(c CleanupAutoScan) CleanupAutoScan {
+	switch c {
+	case CleanupAutoScanAll:
+		return CleanupAutoScanAll
+	case CleanupAutoScanOff:
+		return CleanupAutoScanOff
+	default:
+		return CleanupAutoScanSafe
 	}
 }
 
@@ -184,6 +208,16 @@ type Settings struct {
 	// Send a Windows toast on TUI batch finish, headless upgrade --auto/--all
 	// finish, and `wintui check` finding updates. Default off; opt-in.
 	ToastNotifications bool `json:"toast_notifications"`
+
+	// CleanupAutoScan controls what the cleanup tab scans on open:
+	// "" (safe, default), "all", or "off". See CleanupAutoScan constants.
+	CleanupAutoScan CleanupAutoScan `json:"cleanup_auto_scan,omitempty"`
+
+	// CleanupEnabledTargets is the set of cleanup target IDs the user has
+	// opted into beyond the registry's default-checked safe set. Default-on
+	// targets are not persisted here (that's noise); only positive opt-ins
+	// for advanced/admin targets like "go_build" or "yarn_cache".
+	CleanupEnabledTargets []string `json:"cleanup_enabled_targets,omitempty"`
 
 	// Per-package option overrides, keyed by source-qualified package key.
 	// New writes use "<source>:<id>"; reads also support legacy plain-ID keys.
@@ -328,6 +362,35 @@ func (s *Settings) expireVersionIgnores(upgradeable []Package) bool {
 		s.Packages = nil
 	}
 	return changed
+}
+
+// cleanupTargetEnabled reports whether `def` should start checked when the
+// cleanup tab opens. Default-checked registry entries (Core Temp, Caches)
+// are always on; everything else is on iff its ID is in CleanupEnabledTargets.
+func (s Settings) cleanupTargetEnabled(def cleanupTargetDef) bool {
+	if def.defaultChecked {
+		return true
+	}
+	return slices.Contains(s.CleanupEnabledTargets, def.id)
+}
+
+// setCleanupTargetEnabled persists the user's opt-in for non-default-checked
+// targets. Default-checked entries are always-on by design and never
+// persisted (that would be noise); this method silently ignores them.
+func (s *Settings) setCleanupTargetEnabled(def cleanupTargetDef, enabled bool) {
+	if def.defaultChecked {
+		return
+	}
+	var out []string
+	for _, id := range s.CleanupEnabledTargets {
+		if id != def.id {
+			out = append(out, id)
+		}
+	}
+	if enabled {
+		out = append(out, def.id)
+	}
+	s.CleanupEnabledTargets = out
 }
 
 // configPath returns the path to the settings JSON file.
@@ -606,6 +669,24 @@ var settingDefs = []settingDef{
 		enabledHint:  "Send a Windows toast on batch and scheduled-run finish.",
 		disabledHint: "No Windows toasts will be sent.",
 	},
+	{
+		key:     "cleanup_auto_scan",
+		label:   "Cleanup Auto-Scan",
+		desc:    "What the Cleanup tab scans on open",
+		detail:  "Controls which cleanup targets are sized automatically when you open the Cleanup tab.\nSafe scans the default-checked safe set and any GPU vendor caches present, leaving developer caches alone until you check them.\nAll scans every present target on tab open — slower but gives you a complete picture.\nOff disables auto-scan; press s to size the focused target or r to rescan.",
+		stype:   settingChoice,
+		choices: []string{"", "all", "off"},
+		choiceLabels: map[string]string{
+			"":    "safe",
+			"all": "all",
+			"off": "off",
+		},
+		choiceHints: map[string]string{
+			"":    "Scan the safe set and any GPU vendor caches present.",
+			"all": "Scan every present target — slower, but fully populated.",
+			"off": "Never auto-scan. Press s to size focused row, r to rescan.",
+		},
+	},
 }
 
 // getValue returns the current value for a setting key.
@@ -635,6 +716,8 @@ func (s Settings) getValue(key string) string {
 		return boolStr(s.AutoSelfUpdate)
 	case "toast_notifications":
 		return boolStr(s.ToastNotifications)
+	case "cleanup_auto_scan":
+		return string(normalizeCleanupAutoScan(s.CleanupAutoScan))
 	}
 	return ""
 }
@@ -666,6 +749,8 @@ func (s *Settings) setValue(key, val string) {
 		s.AutoSelfUpdate = val == "true"
 	case "toast_notifications":
 		s.ToastNotifications = val == "true"
+	case "cleanup_auto_scan":
+		s.CleanupAutoScan = normalizeCleanupAutoScan(CleanupAutoScan(val))
 	}
 }
 
@@ -682,7 +767,28 @@ func settingsEqual(a, b Settings) bool {
 		a.AutoElevate == b.AutoElevate &&
 		a.AutoSelfUpdate == b.AutoSelfUpdate &&
 		a.ToastNotifications == b.ToastNotifications &&
+		normalizeCleanupAutoScan(a.CleanupAutoScan) == normalizeCleanupAutoScan(b.CleanupAutoScan) &&
+		stringSetsEqual(a.CleanupEnabledTargets, b.CleanupEnabledTargets) &&
 		packagesEqual(a.Packages, b.Packages)
+}
+
+// stringSetsEqual reports whether two string slices represent the same set.
+// Order is not significant; duplicates are treated as one occurrence.
+func stringSetsEqual(a, b []string) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	seen := make(map[string]struct{}, len(a))
+	for _, s := range a {
+		seen[s] = struct{}{}
+	}
+	for _, s := range b {
+		if _, ok := seen[s]; !ok {
+			return false
+		}
+		delete(seen, s)
+	}
+	return len(seen) == 0
 }
 
 func packagesEqual(a, b map[string]PackageOverride) bool {

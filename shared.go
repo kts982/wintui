@@ -52,6 +52,38 @@ func batchResultCounts(errs []error) (successCount, failCount int) {
 	return successCount, failCount
 }
 
+// pluralize returns "1 thing" or "N things" without forcing the caller into
+// awkward "thing(s)" copy. Pass the singular form; the plural is appended
+// with "s" unless an explicit override is provided.
+func pluralize(n int, singular string, plural ...string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, singular)
+	}
+	if len(plural) > 0 {
+		return fmt.Sprintf("%d %s", n, plural[0])
+	}
+	return fmt.Sprintf("%d %ss", n, singular)
+}
+
+// formatBytes renders a byte count with one decimal for sub-10 values and
+// no decimal otherwise: 0 B, 512 B, 1.5 KB, 12 KB, 5.0 MB, 3.0 GB.
+func formatBytes(bytes int64) string {
+	if bytes <= 0 {
+		return "0 B"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	value := float64(bytes)
+	unit := 0
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+	if unit == 0 || value >= 10 {
+		return fmt.Sprintf("%.0f %s", value, units[unit])
+	}
+	return fmt.Sprintf("%.1f %s", value, units[unit])
+}
+
 // humanDuration formats a duration as a short human-readable string.
 func humanDuration(d time.Duration) string {
 	switch {

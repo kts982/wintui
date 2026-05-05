@@ -19,12 +19,24 @@ var pipeName string
 
 type helperRequest struct {
 	Action string   `json:"action"`
-	Args   []string `json:"args"`
-	NonInt bool     `json:"non_interactive"`
+	Args   []string `json:"args,omitempty"`
+	NonInt bool     `json:"non_interactive,omitempty"`
+	// TargetID identifies a registry entry for action="cleanup_delete".
+	// The helper resolves the path from the registry on its side; the TUI
+	// never sends raw filesystem paths to the privileged process.
+	TargetID string `json:"target_id,omitempty"`
 }
 
+// helperResponse encodes one message on the pipe. Types:
+//
+//	line   - streaming output from a long-running action (winget)
+//	done   - terminal success; data is empty for streaming actions
+//	error  - terminal failure; data is the error message
+//	result - structured payload that an action wants to return verbatim
+//	         (currently used by cleanup_delete to ship a result struct).
+//	         Always followed by a "done" or "error".
 type helperResponse struct {
-	Type string `json:"type"` // "line", "done", "error"
+	Type string `json:"type"`
 	Data string `json:"data"`
 }
 
@@ -78,16 +90,49 @@ func handleHelperConnection(conn net.Conn) error {
 			continue
 		}
 
-		// Execute the winget command
-		err = executeWingetForHelper(conn, req)
+		var execErr error
+		switch req.Action {
+		case "cleanup_delete":
+			execErr = executeCleanupDeleteForHelper(conn, req)
+		default:
+			// Empty action falls through to winget for backward compat
+			// with older requests on the wire.
+			execErr = executeWingetForHelper(conn, req)
+		}
 
-		// Send final status
-		if err != nil {
-			sendHelperResponse(conn, "error", err.Error())
+		if execErr != nil {
+			sendHelperResponse(conn, "error", execErr.Error())
 		} else {
 			sendHelperResponse(conn, "done", "")
 		}
 	}
+}
+
+// executeCleanupDeleteForHelper performs an admin-only cleanup target delete
+// inside the elevated process. The helper resolves the target path itself
+// from the registry — the TUI only sends an ID — and refuses targets the
+// registry doesn't actually mark as requiring admin (defense-in-depth: a
+// bug elsewhere can't route per-user paths through this elevated channel).
+func executeCleanupDeleteForHelper(conn net.Conn, req helperRequest) error {
+	if req.TargetID == "" {
+		return fmt.Errorf("cleanup_delete requires target_id")
+	}
+	def, ok := cleanupTargetByID(req.TargetID)
+	if !ok {
+		return fmt.Errorf("unknown cleanup target id: %q", req.TargetID)
+	}
+	if !def.requiresAdmin {
+		return fmt.Errorf("cleanup target %q does not require admin", req.TargetID)
+	}
+
+	res := cleanupDelete(context.Background(), def)
+	wire := cleanupResultToWire(res)
+	b, err := json.Marshal(wire)
+	if err != nil {
+		return fmt.Errorf("encode cleanup result: %w", err)
+	}
+	sendHelperResponse(conn, "result", string(b))
+	return nil
 }
 
 func executeWingetForHelper(conn net.Conn, req helperRequest) error {

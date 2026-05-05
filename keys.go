@@ -81,4 +81,16 @@ var (
 		key.WithKeys("i"),
 		key.WithHelp("i", "ignore"),
 	)
+	keyScanFocused = key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "scan focused"),
+	)
+	keySelectGroup = key.NewBinding(
+		key.WithKeys("a"),
+		key.WithHelp("a", "select group"),
+	)
+	keySelectRow = key.NewBinding(
+		key.WithKeys("space"),
+		key.WithHelp("space", "select"),
+	)
 )

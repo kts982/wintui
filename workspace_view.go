@@ -14,6 +14,10 @@ import (
 // ── View ──────────────────────────────────────────────────────────
 
 func (s workspaceScreen) view(width, height int) string {
+	// Import overlay takes over the entire content area while active.
+	if s.importer.active {
+		return s.importer.view(width, height)
+	}
 	// Detail overlay takes over the full content area.
 	if s.detail.visible() {
 		return "  " + sectionTitleStyle.Render("Package Details") + "\n\n" +
@@ -67,21 +71,26 @@ func (s workspaceScreen) upgradeCount() int {
 }
 
 func (s workspaceScreen) viewReady(width, height int) string {
+	// Reserve a single line at the top for the transient export status when
+	// present (cleared after a few seconds via clearExportMsg).
+	statusLine := ""
+	if s.exportingMsg != "" {
+		statusLine = "  " + s.exportingMsg + "\n"
+		height = max(height-1, 1)
+	}
+
 	l := computeLayout(width, height)
 
 	// Render list panel using all sections.
 	listView := s.renderSections(l)
 
-	if !l.hasDetail {
-		return listView
+	body := listView
+	if l.hasDetail {
+		sp := s.summary
+		sp.setSize(l.detail.W, l.detail.H)
+		body = lipgloss.JoinHorizontal(lipgloss.Top, listView, " ", sp.view())
 	}
-
-	// Render detail panel.
-	sp := s.summary
-	sp.setSize(l.detail.W, l.detail.H)
-	detailView := sp.view()
-
-	return lipgloss.JoinHorizontal(lipgloss.Top, listView, " ", detailView)
+	return statusLine + body
 }
 
 // sectionDef describes one panel section for rendering.
@@ -540,6 +549,8 @@ func (s workspaceScreen) fullHelpKeys() [][]key.Binding {
 		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "uninstall selected/focused")),
 		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "stage all updates")),
 		key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "cycle update policy")),
+		key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "export package list to Desktop")),
+		key.NewBinding(key.WithKeys("I"), key.WithHelp("shift+i", "import packages from a file")),
 	}
 	search := []key.Binding{
 		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "search for apps")),
@@ -558,7 +569,8 @@ func (s workspaceScreen) fullHelpKeys() [][]key.Binding {
 
 func (s workspaceScreen) blocksGlobalShortcuts() bool {
 	return s.modal != nil || s.detail.visible() || s.filter.active ||
-		s.searchActive || s.state == workspaceExecuting || s.state == workspaceConfirm
+		s.searchActive || s.importer.active ||
+		s.state == workspaceExecuting || s.state == workspaceConfirm
 }
 
 // ── Filter support ────────────────────────────────────────────────

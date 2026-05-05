@@ -13,3 +13,7 @@ rsrc_windows*.syso
 /.winget-pkgs-submission/
 .npm-cache/
 demo.mp4
+
+# `wintui export` artifacts — defaults to %USERPROFILE%\Desktop, but a
+# user passing `--output ./packages.json` in the repo dir would land here
+wintui-packages-*.json

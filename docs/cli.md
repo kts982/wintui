@@ -15,6 +15,8 @@ run headlessly and exit.
 | `wintui upgrade --auto` | Upgrade only packages marked Auto |
 | `wintui upgrade --id <pkg>` | Upgrade one or more named packages (repeatable) |
 | `wintui doctor [--verbose] [--full] [--dev-tools] [--json]` | Verdict-first readiness check: `OK` / `WARN: N issues` / `FAIL: N issues` and exit 0/1/2 |
+| `wintui export [--output PATH] [--with-versions]` | Write the installed package list to a portable JSON file (stdout by default) |
+| `wintui import <path> [--dry-run] [--all] [--json]` | Install packages from a `wintui export` file (with optional preflight) |
 
 `wintui` (no subcommand) launches the TUI.
 
@@ -79,6 +81,55 @@ upgrade WinTUI itself, run `wintui`; the default-on WinTUI Auto Update
 setting checks before the TUI starts and exits to let winget replace the
 released binary when an update is available.
 
+### `export`
+
+`wintui export` writes the current installed package list as a versioned
+JSON envelope you can move to another machine and feed to `wintui import`.
+
+By default the JSON is printed to stdout (so it pipes cleanly to anything
+expecting JSON on a stream). Pass `--output PATH` to write to a file with
+a status summary on stdout instead.
+
+Versions are excluded by default — restoring exact versions on a fresh
+machine is a footgun (the registered version may have aged out of winget).
+Pass `--with-versions` if you genuinely need the snapshot pinned.
+
+WinTUI itself is included in the export. On import it gets marked
+already-installed automatically, since by definition you must have WinTUI
+to run import in the first place.
+
+### `import`
+
+`wintui import <path>` reads an export file and installs its packages
+headlessly. Default behavior installs the **safe subset**:
+
+- packages that aren't already installed,
+- packages that aren't raw / non-canonical identifiers (MSIX hashes, GUIDs),
+- packages that don't share a name with a different installed package
+  (e.g. exporting `Git.Git` when `Microsoft.Git` is installed locally —
+  this is flagged as a possible duplicate and skipped by default).
+
+Flags:
+
+| Flag | Behavior |
+|---|---|
+| `--dry-run` | Print the install plan (will-install / already-installed / review-needed / non-restorable) without touching anything |
+| `--all` | Also install entries flagged as possible name matches |
+| `--json` | Print the plan as JSON; implies `--dry-run` |
+
+`wintui import` accepts both the new envelope format (top-level JSON
+object) and the legacy flat-array form (top-level JSON array) for
+backward compatibility.
+
+For row-level toggling of the install set, use the TUI:
+press `I` (capital) on the Packages tab to open the import overlay,
+which scans your Desktop, home, and current directory for `*.json` files.
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Plan shown (dry-run) or every selected install succeeded |
+| `1` | At least one install failed |
+
 ## Examples
 
 ```powershell
@@ -109,6 +160,12 @@ wintui upgrade --id Mozilla.Firefox --id Microsoft.VisualStudioCode
 
 # Pipe from check (PowerShell):
 wintui check --json | ConvertFrom-Json | ForEach-Object { wintui upgrade --id $_.id }
+
+# Export and re-import on a new machine
+wintui export --output \\share\backup\packages.json
+wintui import \\share\backup\packages.json --dry-run     # preview
+wintui import \\share\backup\packages.json               # install safe subset
+wintui import \\share\backup\packages.json --all         # also install name-collision rows
 
 # Pipe from check (bash, e.g. Git Bash):
 wintui check --json | jq -r '.[].id' | xargs -r -n1 wintui upgrade --id
@@ -181,18 +238,6 @@ trigger:
 ```powershell
 wintui check --json | ConvertFrom-Json |
     ForEach-Object { wintui show $_.id }
-```
-
-### Save an installed-package snapshot
-
-Until `wintui export` / `wintui import` lands, JSON snapshots make a fine
-manual baseline. Re-apply on a fresh machine via `winget install` per ID:
-
-```powershell
-wintui list --json | Out-File -Encoding utf8 packages.json
-# On the new machine:
-Get-Content packages.json | ConvertFrom-Json |
-    ForEach-Object { winget install --id $_.id --exact --accept-package-agreements }
 ```
 
 ## Human-Readable Output

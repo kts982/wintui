@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -36,8 +37,9 @@ type importPkg struct {
 	Version string `json:"version"`
 	Source  string `json:"source"`
 
-	Installed    bool `json:"-"`
-	NonCanonical bool `json:"-"`
+	Installed    bool     `json:"-"`
+	NonCanonical bool     `json:"-"`
+	Collisions   []string `json:"-"` // installed-pkg IDs whose names match this entry's
 }
 
 // ── Messages ───────────────────────────────────────────────────────
@@ -74,16 +76,17 @@ type importModel struct {
 	err        error
 
 	// Batch install
-	ctx          context.Context
-	cancel       context.CancelFunc
-	batchCurrent int
-	batchTotal   int
-	batchName    string
-	batchIDs     []string
-	batchSources []string
-	batchOutputs []string
-	batchErrs    []error
-	batchErr     error
+	ctx           context.Context
+	cancel        context.CancelFunc
+	batchCurrent  int
+	batchTotal    int
+	batchName     string
+	batchIDs      []string
+	batchSources  []string
+	batchVersions []string // parallel to batchIDs; "" means "install latest"
+	batchOutputs  []string
+	batchErrs     []error
+	batchErr      error
 
 	statusMsg string
 }
@@ -99,6 +102,38 @@ func newImportModel() importModel {
 	}
 }
 
+// activate puts the importer into its initial scanning state and returns
+// the cmd batch the host screen should run. Callers (workspace) embed an
+// importModel as a field, call activate when the user invokes import,
+// then pipe further tea messages through update until !active.
+func (m importModel) activate() (importModel, tea.Cmd) {
+	m.active = true
+	m.state = importScanning
+	m.files = nil
+	m.fileCursor = 0
+	m.packages = nil
+	m.selected = make(map[int]bool)
+	m.cursor = 0
+	m.showAll = false
+	m.err = nil
+	m.statusMsg = ""
+	m.batchOutputs = nil
+	m.batchErrs = nil
+	m.batchErr = nil
+	m.batchTotal = 0
+	m.batchCurrent = 0
+	m.progress, _ = m.progress.start()
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+	return m, tea.Batch(m.spinner.Tick, tickProgress(), scanImportFilesCmd())
+}
+
+// blocksGlobalShortcuts returns true while the importer is active so the
+// app router stops sending tab/q/etc. through and the import overlay owns
+// the foreground (matches the cleanup-tab executing-state contract).
+func (m importModel) blocksGlobalShortcuts() bool {
+	return m.active
+}
+
 // ── File scanning & loading ────────────────────────────────────────
 
 func loadImportFile(path string, installed []Package) ([]importPkg, error) {
@@ -106,15 +141,104 @@ func loadImportFile(path string, installed []Package) ([]importPkg, error) {
 	if err != nil {
 		return nil, err
 	}
-	var pkgs []importPkg
-	if err := json.Unmarshal(data, &pkgs); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+	pkgs, err := parseImportData(data)
+	if err != nil {
+		return nil, err
 	}
 	for i := range pkgs {
 		pkgs[i].NonCanonical = isNonCanonical(pkgs[i].ID)
 		pkgs[i].Installed = importPackageInstalled(pkgs[i], installed)
+		if !pkgs[i].Installed {
+			pkgs[i].Collisions = findNameCollisions(pkgs[i], installed)
+		}
 	}
 	return pkgs, nil
+}
+
+// parseImportData decodes either the v1 envelope (top-level JSON object)
+// or the legacy flat-array form (top-level JSON array). Dispatch is on
+// the first non-whitespace byte so a malformed file gets a clearer error
+// than "unknown shape".
+func parseImportData(data []byte) ([]importPkg, error) {
+	trimmed := bytes.TrimLeft(data, " \t\r\n")
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("empty file")
+	}
+	switch trimmed[0] {
+	case '{':
+		var env exportEnvelope
+		if err := json.Unmarshal(data, &env); err != nil {
+			return nil, fmt.Errorf("invalid envelope JSON: %w", err)
+		}
+		if env.Version != exportEnvelopeVersion {
+			return nil, fmt.Errorf("unsupported export version %d (this build understands version %d)",
+				env.Version, exportEnvelopeVersion)
+		}
+		pkgs := make([]importPkg, len(env.Packages))
+		for i, p := range env.Packages {
+			pkgs[i] = importPkg{
+				Name:    p.Name,
+				ID:      p.ID,
+				Version: p.Version,
+				Source:  p.Source,
+			}
+		}
+		return pkgs, nil
+	case '[':
+		var pkgs []importPkg
+		if err := json.Unmarshal(data, &pkgs); err != nil {
+			return nil, fmt.Errorf("invalid JSON array: %w", err)
+		}
+		return pkgs, nil
+	default:
+		return nil, fmt.Errorf("expected JSON object or array, got %q", string(trimmed[0]))
+	}
+}
+
+// normalizePackageName collapses whitespace runs to single spaces, lowercases,
+// and trims edges — the comparison key for the conservative name-collision
+// detector. Two packages whose normalized names match but IDs differ are
+// flagged as a possible collision.
+func normalizePackageName(name string) string {
+	var b strings.Builder
+	prevSpace := true
+	for _, r := range strings.ToLower(name) {
+		switch r {
+		case ' ', '\t', '\r', '\n':
+			if !prevSpace {
+				b.WriteByte(' ')
+			}
+			prevSpace = true
+		default:
+			b.WriteRune(r)
+			prevSpace = false
+		}
+	}
+	return strings.TrimRight(b.String(), " ")
+}
+
+// findNameCollisions returns IDs of installed packages whose normalized
+// names exactly match this import entry's name but whose IDs differ. Empty
+// names never collide. Same-ID hits aren't collisions (they're caught by
+// importPackageInstalled and surface as `Installed=true` instead).
+func findNameCollisions(pkg importPkg, installed []Package) []string {
+	if pkg.Name == "" {
+		return nil
+	}
+	want := normalizePackageName(pkg.Name)
+	if want == "" {
+		return nil
+	}
+	var hits []string
+	for _, ex := range installed {
+		if strings.EqualFold(ex.ID, pkg.ID) {
+			continue
+		}
+		if normalizePackageName(ex.Name) == want {
+			hits = append(hits, ex.ID)
+		}
+	}
+	return hits
 }
 
 func importPackageInstalled(pkg importPkg, installed []Package) bool {
@@ -179,6 +303,61 @@ func looksLikeStoreProductID(id string) bool {
 		}
 	}
 	return true
+}
+
+// scanImportFilesCmd looks for likely export JSON files in the user's
+// Desktop and home directory. It surfaces both wintui-prefixed names
+// (what `wintui export` produces) and any plain `*.json` so users who
+// renamed their exports can still find them. Hidden files are skipped.
+func scanImportFilesCmd() tea.Cmd {
+	return func() tea.Msg {
+		files, err := scanImportFiles()
+		return importFilesMsg{files: files, err: err}
+	}
+}
+
+func scanImportFiles() ([]string, error) {
+	var roots []string
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		roots = append(roots, filepath.Join(home, "Desktop"), home)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		roots = append(roots, cwd)
+	}
+
+	seen := make(map[string]bool)
+	var found []string
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			lower := strings.ToLower(e.Name())
+			if !strings.HasSuffix(lower, ".json") {
+				continue
+			}
+			full := filepath.Join(root, e.Name())
+			if seen[full] {
+				continue
+			}
+			seen[full] = true
+			// Lightly bias: wintui-prefixed names sort first via the
+			// returned slice ordering — they're the most likely candidates.
+			if strings.HasPrefix(lower, "wintui") {
+				found = append([]string{full}, found...)
+			} else {
+				found = append(found, full)
+			}
+		}
+	}
+	if len(found) == 0 {
+		return nil, fmt.Errorf("no JSON files found in Desktop, home, or current directory")
+	}
+	return found, nil
 }
 
 // ── Update ─────────────────────────────────────────────────────────
@@ -269,15 +448,21 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 				m.cancel = cancel
 				m.ctx = ctx
 
-				var ids, sources []string
+				var ids, sources, versions []string
 				for i, sel := range m.selected {
 					if sel && i < len(m.packages) {
 						ids = append(ids, m.packages[i].ID)
 						sources = append(sources, resolveImportSource(m.packages[i]))
+						// Empty Version means "install latest" — the
+						// without-versions export path or a legacy raw
+						// array that omitted versions. Pinned versions
+						// are honored verbatim.
+						versions = append(versions, m.packages[i].Version)
 					}
 				}
 				m.batchIDs = ids
 				m.batchSources = sources
+				m.batchVersions = versions
 				m.batchTotal = len(ids)
 				m.batchCurrent = 0
 				m.batchOutputs = nil
@@ -289,7 +474,7 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 				if m.batchTotal > 0 {
 					m.batchName = m.batchIDs[0]
 					return m, tea.Batch(m.spinner.Tick,
-						importInstallSingleCmd(ctx, ids[0], sources[0], 0)), true
+						importInstallSingleCmd(ctx, ids[0], sources[0], versions[0], 0)), true
 				}
 			case "n", "N", "esc":
 				m.state = importReview
@@ -345,7 +530,10 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 		m.packages = msg.packages
 		m.selected = make(map[int]bool)
 		for i, pkg := range m.packages {
-			if !pkg.Installed && !pkg.NonCanonical {
+			// Collision rows are listed but not auto-selected — the user
+			// must intentionally tick them. Prevents accidental duplicates
+			// when the same software is already installed under another ID.
+			if !pkg.Installed && !pkg.NonCanonical && len(pkg.Collisions) == 0 {
 				m.selected[i] = true
 			}
 		}
@@ -371,7 +559,10 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 		if m.batchCurrent < m.batchTotal {
 			m.batchName = m.batchIDs[m.batchCurrent]
 			return m, importInstallSingleCmd(m.ctx,
-				m.batchIDs[m.batchCurrent], m.batchSources[m.batchCurrent], m.batchCurrent), true
+				m.batchIDs[m.batchCurrent],
+				m.batchSources[m.batchCurrent],
+				m.batchVersions[m.batchCurrent],
+				m.batchCurrent), true
 		}
 		m.progress = m.progress.stop()
 		m.state = importDone
@@ -403,11 +594,14 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 	return m, nil, false
 }
 
-func importInstallSingleCmd(ctx context.Context, id, source string, index int) tea.Cmd {
+func importInstallSingleCmd(ctx context.Context, id, source, version string, index int) tea.Cmd {
 	return func() tea.Msg {
-		// Imported IDs come from settings.json — they're complete by
-		// construction, so resolveTruncatedPackage inside the wrapper is a no-op.
-		out, err := installPackageSourceCtx(ctx, Package{ID: id, Source: source}, "")
+		// Imported IDs come from the export envelope or legacy raw array —
+		// they're complete by construction (and exports resolve truncated
+		// IDs upfront), so resolveTruncatedPackage inside the wrapper is
+		// a no-op. Version "" means install latest; a non-empty version
+		// pins to the exported snapshot.
+		out, err := installPackageSourceCtx(ctx, Package{ID: id, Source: source}, version)
 		return singleImportInstallDoneMsg{output: out, err: err, index: index}
 	}
 }
@@ -422,22 +616,24 @@ func (m importModel) selectedCount() int {
 	return count
 }
 
-func (m importModel) reviewCounts() (installable, installed, nonCanonical int) {
+func (m importModel) reviewCounts() (installable, installed, nonCanonical, collisions int) {
 	for _, pkg := range m.packages {
 		switch {
 		case pkg.Installed:
 			installed++
 		case pkg.NonCanonical:
 			nonCanonical++
+		case len(pkg.Collisions) > 0:
+			collisions++
 		default:
 			installable++
 		}
 	}
-	return installable, installed, nonCanonical
+	return installable, installed, nonCanonical, collisions
 }
 
 func (m importModel) skippedCount() int {
-	_, installed, nonCanonical := m.reviewCounts()
+	_, installed, nonCanonical, _ := m.reviewCounts()
 	return installed + nonCanonical
 }
 
@@ -497,8 +693,11 @@ func (m *importModel) toggleCurrentSelection() bool {
 }
 
 func (m *importModel) toggleAllSelectable() {
-	installable, _, _ := m.reviewCounts()
-	if installable == 0 {
+	installable, _, _, collisions := m.reviewCounts()
+	// "All selectable" deliberately includes collision rows — pressing `a`
+	// is a permissive bulk action; the user accepts the duplicates risk.
+	totalSelectable := installable + collisions
+	if totalSelectable == 0 {
 		return
 	}
 
@@ -518,7 +717,7 @@ func (m *importModel) toggleAllSelectable() {
 		return
 	}
 
-	selected := make(map[int]bool, installable)
+	selected := make(map[int]bool, totalSelectable)
 	for i, pkg := range m.packages {
 		if !pkg.Installed && !pkg.NonCanonical {
 			selected[i] = true
@@ -539,7 +738,7 @@ func (m importModel) view(width, height int) string {
 		b.WriteString("  " + m.progress.view() + "\n")
 
 	case importFileSelect:
-		b.WriteString("  " + infoStyle.Render("Select an export file:") + "\n\n")
+		var lines []string
 		for i, f := range m.files {
 			cursor := cursorBlankStr
 			style := itemStyle
@@ -548,11 +747,16 @@ func (m importModel) view(width, height int) string {
 				style = itemActiveStyle
 			}
 			name := filepath.Base(f)
-			fmt.Fprintf(&b, "  %s%s\n", cursor, style.Render(name))
+			parent := helpStyle.Render("  " + filepath.Dir(f))
+			lines = append(lines, cursor+style.Render(name)+parent)
 		}
+		title := fmt.Sprintf("Select an export file (%s found)", pluralize(len(m.files), "file"))
+		panelW := min(width-4, 100)
+		b.WriteString(renderTitledPanel(title, strings.Join(lines, "\n"), panelW, len(lines), accent) + "\n")
+		b.WriteString("  " + helpStyle.Render("↑↓ move · enter open · esc cancel") + "\n")
 
 	case importReview:
-		installable, installed, nonCanonical := m.reviewCounts()
+		installable, installed, nonCanonical, collisions := m.reviewCounts()
 		skipped := installed + nonCanonical
 		visible := m.visiblePackageIndices()
 
@@ -573,6 +777,10 @@ func (m importModel) view(width, height int) string {
 		if nonCanonical > 0 {
 			b.WriteString(fmt.Sprintf("  %s\n",
 				warnStyle.Render(fmt.Sprintf("%d non-restorable raw identity (flagged)", nonCanonical))))
+		}
+		if collisions > 0 {
+			b.WriteString(fmt.Sprintf("  %s\n",
+				warnStyle.Render(fmt.Sprintf("%d possible name match — review before checking", collisions))))
 		}
 		selCount := m.selectedCount()
 		if selCount > 0 {
@@ -601,11 +809,10 @@ func (m importModel) view(width, height int) string {
 			break
 		}
 
-		maxVisible := height - 12
-		if maxVisible < 5 {
-			maxVisible = 5
-		}
+		maxVisible := max(height-12, 5)
 		start, end := scrollWindow(m.cursor, len(visible), maxVisible)
+
+		var rows []string
 		for i := start; i < end; i++ {
 			index := visible[i]
 			pkg := m.packages[index]
@@ -618,23 +825,55 @@ func (m importModel) view(width, height int) string {
 			var status string
 			switch {
 			case pkg.Installed:
-				status = helpStyle.Render("[installed]")
+				status = chipStyle.Render("[installed]")
 			case pkg.NonCanonical:
 				status = warnStyle.Render("[raw]      ")
 			default:
 				status = checkbox(m.selected[index])
 			}
-			label := fmt.Sprintf("%s  (%s)  %s", pkg.Name, pkg.ID, pkg.Version)
-			if source := importSourceLabel(pkg); source != "" {
-				label += fmt.Sprintf("  [%s]", source)
+			label := pkg.Name + "  " + chipStyle.Render("("+pkg.ID+")")
+			if pkg.Version != "" {
+				label += "  " + stateStyle.Render(pkg.Version)
 			}
-			fmt.Fprintf(&b, "  %s%s %s\n", cursor, status, style.Render(label))
+			if source := importSourceLabel(pkg); source != "" {
+				label += "  " + chipStyle.Render("["+source+"]")
+			}
+			line := cursor + status + " " + style.Render(label)
+			if len(pkg.Collisions) > 0 {
+				// Warn-styled outside the row's cursor highlight so the
+				// chip stays the same color whether or not the row is focused.
+				line += "  " + warnStyle.Render("[name match: "+strings.Join(pkg.Collisions, ", ")+"]")
+			}
+			rows = append(rows, line)
 		}
+
+		title := fmt.Sprintf("Import (%s)", pluralize(len(visible), "package", "packages"))
+		panelW := min(width-4, 110)
+		b.WriteString(renderTitledPanel(title, strings.Join(rows, "\n"), panelW, len(rows), accent) + "\n")
+		b.WriteString("  " + helpStyle.Render("space toggle · a select all · v "+
+			func() string {
+				if m.showAll {
+					return "focus actionable"
+				}
+				return "show skipped"
+			}()+" · enter install · esc cancel") + "\n")
 
 	case importConfirm:
 		count := m.selectedCount()
-		fmt.Fprintf(&b, "  Install %d package(s)?\n\n", count)
-		b.WriteString("  " + warnStyle.Render("Press y to confirm, n to cancel"))
+		var modal strings.Builder
+		modal.WriteString(sectionTitleStyle.Render("Confirm Import") + "\n")
+		modal.WriteString(helpStyle.Render(strings.Repeat("─", 40)) + "\n")
+		fmt.Fprintf(&modal, "Install %s from this export?\n\n", pluralize(count, "package"))
+		modal.WriteString(helpStyle.Render(
+			"winget will run for each package; pre-existing software may be overwritten if it shares an ID.") + "\n\n")
+		modal.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accent).Render("y") + " confirm  ·  " +
+			lipgloss.NewStyle().Bold(true).Foreground(accent).Render("n") + " cancel")
+		style := lipgloss.NewStyle().
+			Width(min(width-8, 60)).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Padding(1, 2)
+		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, style.Render(modal.String()))
 
 	case importInstalling:
 		if m.batchTotal > 0 {

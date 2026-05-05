@@ -58,10 +58,11 @@ type packageDataChangedMsg struct {
 	origin screenID
 }
 
-type filesScannedMsg struct {
-	targets []cleanupTarget
-	err     error
-}
+// screenBlurMsg is dispatched to a screen when the user switches away from
+// its tab. Screens use it to cancel transient work (in-flight scans, async
+// fetches) without losing accumulated state. The new active screen is not
+// notified — its existing init/update path handles "becoming active".
+type screenBlurMsg struct{}
 
 type screenCmdMsg struct {
 	target screenID
@@ -276,6 +277,17 @@ func (a app) switchTab(idx int) (app, tea.Cmd) {
 	if idx == a.activeTab {
 		return a, nil
 	}
+	// Notify the outgoing screen so it can cancel transient work (e.g. the
+	// cleanup tab cancels in-flight scans on blur). The blur cmd is batched
+	// with the new screen's setup so both run on the same tick.
+	var blurCmd tea.Cmd
+	prevID := tabs[a.activeTab].id
+	if prevS, ok := a.screens[prevID]; ok {
+		var s screen
+		s, blurCmd = prevS.update(screenBlurMsg{})
+		a.screens[prevID] = s
+		blurCmd = a.wrapScreenCmd(prevID, blurCmd)
+	}
 	a.activeTab = idx
 	a.showFullHelp = false
 	id := tabs[idx].id
@@ -283,13 +295,13 @@ func (a app) switchTab(idx int) (app, tea.Cmd) {
 		var sizeCmd tea.Cmd
 		s, sizeCmd = a.applyCurrentSize(id, s)
 		a.screens[id] = s
-		return a, sizeCmd
+		return a, tea.Batch(blurCmd, sizeCmd)
 	}
 	s := createScreen(id)
 	var sizeCmd tea.Cmd
 	s, sizeCmd = a.applyCurrentSize(id, s)
 	a.screens[id] = s
-	return a, tea.Batch(sizeCmd, a.wrapScreenCmd(id, s.init()))
+	return a, tea.Batch(blurCmd, sizeCmd, a.wrapScreenCmd(id, s.init()))
 }
 
 func (a app) View() tea.View {
