@@ -292,7 +292,7 @@ func notifyBatchFinish(items []batchItem) {
 		return
 	}
 	total := done + failed + pending
-	body := fmt.Sprintf("%d of %d upgraded", done, total)
+	body := fmt.Sprintf("%d of %d %s", done, total, batchActionVerb(items))
 	if failed > 0 {
 		body += fmt.Sprintf(" · %d failed", failed)
 	}
@@ -300,6 +300,42 @@ func notifyBatchFinish(items []batchItem) {
 		body += fmt.Sprintf(" · %d awaiting restart", pending)
 	}
 	sendToast(toastDisplayName, body)
+}
+
+// batchActionVerb picks the past-tense verb for the toast body based on
+// what the batch actually did. A homogeneous install/uninstall/upgrade run
+// reports its specific verb; mixed-action batches fall back to "completed"
+// so we don't lie to the user (the v2.6.x bug was always saying "upgraded"
+// regardless of what ran).
+func batchActionVerb(items []batchItem) string {
+	var seen retryOp
+	mixed := false
+	for _, bi := range items {
+		if bi.status != batchDone && bi.status != batchPendingRestart {
+			continue
+		}
+		if seen == "" {
+			seen = bi.action
+			continue
+		}
+		if seen != bi.action {
+			mixed = true
+			break
+		}
+	}
+	if mixed || seen == "" {
+		return "completed"
+	}
+	switch seen {
+	case retryOpInstall, retryOpApply:
+		return "installed"
+	case retryOpUninstall:
+		return "uninstalled"
+	case retryOpUpgrade:
+		return "upgraded"
+	default:
+		return "completed"
+	}
 }
 
 // notifyCLIUpgradeFinish is the same summary for the headless

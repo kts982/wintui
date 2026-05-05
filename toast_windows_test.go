@@ -139,38 +139,86 @@ func TestNotifyBatchFinishBodyShape(t *testing.T) {
 	}{
 		{
 			"all succeeded",
-			[]batchItem{{status: batchDone}, {status: batchDone}, {status: batchDone}},
+			[]batchItem{
+				{status: batchDone, action: retryOpUpgrade},
+				{status: batchDone, action: retryOpUpgrade},
+				{status: batchDone, action: retryOpUpgrade},
+			},
 			"3 of 3 upgraded",
 			true,
 		},
 		{
-			"mixed",
-			[]batchItem{{status: batchDone}, {status: batchFailed}, {status: batchDone}},
+			"mixed pass/fail",
+			[]batchItem{
+				{status: batchDone, action: retryOpUpgrade},
+				{status: batchFailed, action: retryOpUpgrade},
+				{status: batchDone, action: retryOpUpgrade},
+			},
 			"2 of 3 upgraded · 1 failed",
 			true,
 		},
 		{
 			"all failed",
-			[]batchItem{{status: batchFailed}, {status: batchFailed}},
-			"0 of 2 upgraded · 2 failed",
+			[]batchItem{
+				{status: batchFailed, action: retryOpUpgrade},
+				{status: batchFailed, action: retryOpUpgrade},
+			},
+			// All items failed — verb falls back to "completed" because there's
+			// no successful op to attribute to.
+			"0 of 2 completed · 2 failed",
 			true,
 		},
 		{
 			"done + pending-restart (mixed) surfaces both",
-			[]batchItem{{status: batchDone}, {status: batchPendingRestart}},
+			[]batchItem{
+				{status: batchDone, action: retryOpUpgrade},
+				{status: batchPendingRestart, action: retryOpUpgrade},
+			},
 			"1 of 2 upgraded · 1 awaiting restart",
 			true,
 		},
 		{
 			"pending-restart only still surfaces — user needs to know",
-			[]batchItem{{status: batchPendingRestart}},
+			[]batchItem{{status: batchPendingRestart, action: retryOpUpgrade}},
 			"0 of 1 upgraded · 1 awaiting restart",
 			true,
 		},
 		{
 			"failed + pending mix",
-			[]batchItem{{status: batchFailed}, {status: batchPendingRestart}, {status: batchDone}},
+			[]batchItem{
+				{status: batchFailed, action: retryOpUpgrade},
+				{status: batchPendingRestart, action: retryOpUpgrade},
+				{status: batchDone, action: retryOpUpgrade},
+			},
 			"1 of 3 upgraded · 1 failed · 1 awaiting restart",
+			true,
+		},
+		{
+			// Regression for the v2.6.x bug where uninstall batches always
+			// said "upgraded" in the toast body (project_v2_6_known_bugs.md).
+			"uninstall batch reports 'uninstalled'",
+			[]batchItem{
+				{status: batchDone, action: retryOpUninstall},
+				{status: batchDone, action: retryOpUninstall},
+			},
+			"2 of 2 uninstalled",
+			true,
+		},
+		{
+			"install batch reports 'installed'",
+			[]batchItem{
+				{status: batchDone, action: retryOpInstall},
+			},
+			"1 of 1 installed",
+			true,
+		},
+		{
+			"heterogeneous batch falls back to 'completed' rather than lying",
+			[]batchItem{
+				{status: batchDone, action: retryOpUpgrade},
+				{status: batchDone, action: retryOpUninstall},
+			},
+			"2 of 2 completed",
 			true,
 		},
 	}
