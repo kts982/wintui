@@ -179,3 +179,30 @@ in `settings.json`.
 - **WinTUI itself is included in `wintui export`.** On import it gets
   marked already-installed automatically — by definition you must
   have WinTUI installed to run import in the first place.
+
+## Verification
+
+VirusTotal scans of the published artifacts for v2.7.0 (run 2026-05-06):
+
+| Asset | SHA256 | Detections | Report |
+|---|---|---|---|
+| `wintui_2.7.0_windows_amd64.exe` (6.8 MB) | `f20a5ba9e699…` | 2/71 | [VT report](https://www.virustotal.com/gui/file/f20a5ba9e699f111867f7d3e6f531bbde2d31c7f64aa6775a01bf808aaa1e5c6) |
+| `wintui_2.7.0_windows_amd64.zip` (2.4 MB) | `5b4bce8ee534…` | 0/68 | [VT report](https://www.virustotal.com/gui/file/5b4bce8ee534b024b5cb27597f6f91dd9301b6e31508e6d7cd6cac679ab50e2f) |
+| `wintui_2.7.0_windows_arm64.exe` (6.3 MB) | `17728100a1ed…` | 1/69 | [VT report](https://www.virustotal.com/gui/file/17728100a1ed4042a3f0f5dd469408b1296515866b33fb03a86a8c9ea1add886) |
+| `wintui_2.7.0_windows_arm64.zip` (2.2 MB) | `868836d13a89…` | 0/67 | [VT report](https://www.virustotal.com/gui/file/868836d13a89df918ace21ac88691bc3fb2e55df04da4b41f26f286087c35b58) |
+
+**Microsoft Defender returns clean** across all artifacts (engine
+`1.1.26030.3008`, definitions `20260506`). The Bkav and Trapmine entries
+on `amd64.exe` are single-vendor low-signal ML noise — generic
+novel-binary scoring rather than a named threat family. The McAfeeD
+`ti!<hash>` flag on `arm64.exe` is a reputation-hash signal, the same
+kind that appeared on prior cleared releases. No flag is reproducible on
+live deployed Defender.
+
+Full SHA256 hashes:
+
+- `wintui_2.7.0_windows_amd64.exe`: `f20a5ba9e699f111867f7d3e6f531bbde2d31c7f64aa6775a01bf808aaa1e5c6`
+- `wintui_2.7.0_windows_amd64.zip`: `5b4bce8ee534b024b5cb27597f6f91dd9301b6e31508e6d7cd6cac679ab50e2f`
+- `wintui_2.7.0_windows_arm64.exe`: `17728100a1ed4042a3f0f5dd469408b1296515866b33fb03a86a8c9ea1add886`
+- `wintui_2.7.0_windows_arm64.zip`: `868836d13a89df918ace21ac88691bc3fb2e55df04da4b41f26f286087c35b58`
+

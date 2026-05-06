@@ -43,7 +43,11 @@ param(
     [string]$ReleaseTag,
 
     [int]$PollSeconds = 15,
-    [int]$PollMaxTries = 20,
+
+    # 40 polls × 15s = 10-minute ceiling per asset. Free-tier queue
+    # times spike under load and we'd rather wait a bit than throw on
+    # a still-queued analysis.
+    [int]$PollMaxTries = 40,
 
     # Allow flagged scans to exit zero — useful when investigating a known
     # FP without breaking a chained pipeline. Off by default.
@@ -72,6 +76,12 @@ function Get-FileHashSha256 {
     (Get-FileHash -Algorithm SHA256 -Path $FilePath).Hash.ToLower()
 }
 
+# TODO(future): GET /api/v3/files/{sha256} before uploading. If VT already
+# has the hash with `last_analysis_results`, skip the upload+poll round-trip
+# and reuse the cached analysis. Saves API calls on re-runs and on assets
+# that other VT users have already submitted (very likely for our published
+# releases, which get scanned by curious users). Adds one cheap GET per
+# asset but eliminates the upload + multi-poll wait when cached.
 function Submit-File {
     param([string]$FilePath)
 
@@ -202,9 +212,28 @@ function Scan-ReleaseAssets {
         throw "No .exe or .zip assets found in release $Tag"
     }
 
+    # Per-asset try/catch: a timeout on one asset (VT free-tier queue
+    # spikes happen) shouldn't lose results for the others. Failed
+    # assets are recorded as a record with Flagged = -1 so the markdown
+    # report can flag them for manual re-check.
     $records = @()
     foreach ($asset in $assets) {
-        $records += Scan-LocalFile -FilePath $asset.FullName
+        try {
+            $records += Scan-LocalFile -FilePath $asset.FullName
+        } catch {
+            Write-Host ""
+            Write-Host "!! Scan failed for $($asset.Name): $_" -ForegroundColor Red
+            $records += [PSCustomObject]@{
+                Label            = $asset.FullName
+                AssetName        = $asset.Name
+                Sha256           = (Get-FileHashSha256 -FilePath $asset.FullName)
+                SizeBytes        = $asset.Length
+                Total            = 0
+                Flagged          = -1
+                MicrosoftFlagged = $false
+                FlaggedEngines   = @()
+            }
+        }
     }
     return $records
 }
@@ -230,15 +259,19 @@ function Format-MarkdownReport {
     foreach ($r in $Records) {
         $shortSha = $r.Sha256.Substring(0, 12) + "…"
         $sizeMB = [math]::Round($r.SizeBytes / 1MB, 1)
-        $lines += "| ``$($r.AssetName)`` ($sizeMB MB) | ``$shortSha`` | $($r.Flagged)/$($r.Total) | [VT report](https://www.virustotal.com/gui/file/$($r.Sha256)) |"
+        $detections = if ($r.Flagged -lt 0) { "(scan timed out — re-check)" } else { "$($r.Flagged)/$($r.Total)" }
+        $lines += "| ``$($r.AssetName)`` ($sizeMB MB) | ``$shortSha`` | $detections | [VT report](https://www.virustotal.com/gui/file/$($r.Sha256)) |"
     }
 
     $lines += ""
 
-    $totalFlagged = ($Records | Measure-Object -Property Flagged -Sum).Sum
+    # Failed scans (Flagged = -1) are excluded from the detection sum so
+    # they don't poison the editorial summary line.
+    $completedRecords = @($Records | Where-Object { $_.Flagged -ge 0 })
+    $totalFlagged = ($completedRecords | Measure-Object -Property Flagged -Sum).Sum
     $microsoftHits = @($Records | Where-Object MicrosoftFlagged)
 
-    if ($totalFlagged -eq 0) {
+    if ($totalFlagged -eq 0 -and $completedRecords.Count -gt 0) {
         $lines += "All engines clean across submitted artifacts."
     } elseif ($microsoftHits.Count -eq 0) {
         $lines += "Detections at scan time were single-vendor low-signal ML/reputation noise. " + `
@@ -265,7 +298,11 @@ $records = switch ($PSCmdlet.ParameterSetName) {
     "Tag"  { Scan-ReleaseAssets -Tag $ReleaseTag }
 }
 
-$flaggedCount = ($records | Measure-Object -Property Flagged -Sum).Sum
+# Failed scans (Flagged = -1) shouldn't add to the detection count;
+# they show up as scan-timeout entries in the report and are surfaced
+# separately at exit.
+$failedScans = @($records | Where-Object { $_.Flagged -lt 0 }).Count
+$flaggedCount = ($records | Where-Object { $_.Flagged -ge 0 } | Measure-Object -Property Flagged -Sum).Sum
 
 if ($AppendTo) {
     if (-not (Test-Path -LiteralPath $AppendTo)) {
@@ -279,6 +316,10 @@ if ($AppendTo) {
 }
 
 Write-Host ""
+if ($failedScans -gt 0) {
+    Write-Host "Done — $flaggedCount detection(s); $failedScans scan(s) timed out and need manual re-check." -ForegroundColor Yellow
+    exit 1
+}
 if ($flaggedCount -gt 0) {
     Write-Host "Done — $flaggedCount detection(s) across submitted files." -ForegroundColor Yellow
     if (-not $AllowFlagged) {

@@ -457,6 +457,15 @@ func TestCleanupPartialFailureMentionsAdminRetry(t *testing.T) {
 }
 
 func TestCleanupConfirmViewMentionsAVNoticeWhenAdminTargetIncluded(t *testing.T) {
+	// The AV-FP notice in viewConfirm only renders when admin targets are
+	// queued AND the current process isn't already elevated. GitHub
+	// Actions Windows runners run as Administrator by default, so we pin
+	// isElevated to false to exercise the non-elevated render path
+	// regardless of where the test runs.
+	origIsElevated := isElevated
+	t.Cleanup(func() { isElevated = origIsElevated })
+	isElevated = func() bool { return false }
+
 	withAppSettings(t, DefaultSettings(), func() {
 		s := newCleanupScreen()
 		s.state = cleanupConfirming
