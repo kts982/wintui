@@ -179,12 +179,17 @@ func main() {
 	fmt.Fprintf(&b, "// header dictionary was generated from. Surfaced via wintui doctor.\n")
 	fmt.Fprintf(&b, "const wingetLocaleSourceSHA = %q\n\n", sha)
 
-	// Build flat lookup: header text → columnKind. We also build a per-locale
-	// map so the parser can identify which locale matched (useful diagnostic).
+	// Build flat lookup: header text → columnKind. The locale field on each
+	// entry is purely a comment hint in the generated file ("first locale we
+	// saw this header in"); it is NOT a reliable locale identifier because
+	// many headers are shared across locales (e.g. "Id" appears in en-US,
+	// it-IT, fr-FR, …) and only the first observation wins. A future
+	// per-locale diagnostic would need a richer schema:
+	// header → {kind, locales[]}, or a separate locale → headers map.
 	type lookupEntry struct {
 		text   string
 		kind   string
-		locale string
+		locale string // first-seen locale, comment-only
 	}
 	var entries []lookupEntry
 	seenPerKind := map[string]map[string]struct{}{}
