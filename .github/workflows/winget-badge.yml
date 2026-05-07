@@ -1,0 +1,110 @@
+# Publishes a shields.io endpoint JSON describing whether the latest
+# WinTUI GitHub release has been merged into microsoft/winget-pkgs yet.
+#
+# Output: winget.json on the `badges` branch (orphan, badge-only).
+# Consumed by the README via:
+#   https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kts982/wintui/badges/winget.json
+#
+# State machine:
+#   GitHub == winget-pkgs HEAD         → green   "v<ver>"
+#   GitHub > winget-pkgs HEAD          → yellow  "v<merged> (v<latest> pending)"
+#   anything else (including unknown)  → grey    "unknown"
+#
+# Runs:
+#   - on every published GitHub release (instant flip to "pending" when we tag)
+#   - every 6h (catches the wingetbot merge that closes the pending state)
+#   - manually via workflow_dispatch
+
+name: winget-badge
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: winget-badge
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute badge JSON
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          latest=$(gh release view --repo "${{ github.repository }}" \
+            --json tagName --jq .tagName | sed 's/^v//')
+
+          merged=$(gh api repos/microsoft/winget-pkgs/contents/manifests/k/kts982/WinTUI \
+            --jq '[.[] | select(.type == "dir") | .name] | .[]' \
+            | sort -V | tail -n 1)
+
+          echo "latest GitHub release: ${latest:-<empty>}"
+          echo "latest merged in winget-pkgs: ${merged:-<empty>}"
+
+          if [ -z "$latest" ] || [ -z "$merged" ]; then
+            color=lightgrey
+            message="unknown"
+          elif [ "$latest" = "$merged" ]; then
+            color=brightgreen
+            message="v${merged}"
+          else
+            higher=$(printf '%s\n%s\n' "$latest" "$merged" | sort -V | tail -n 1)
+            if [ "$higher" = "$latest" ]; then
+              color=yellow
+              message="v${merged} (v${latest} pending)"
+            else
+              # winget-pkgs ahead of GitHub — shouldn't happen in practice
+              color=lightgrey
+              message="v${merged}"
+            fi
+          fi
+
+          jq -n --arg msg "$message" --arg col "$color" \
+            '{schemaVersion: 1, label: "winget", message: $msg, color: $col}' \
+            > /tmp/winget.json
+
+          echo "computed badge:"
+          cat /tmp/winget.json
+
+      - name: Publish to badges branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          workdir=$(mktemp -d)
+          cd "$workdir"
+          git init -q
+          git remote add origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          if git fetch --depth=1 origin badges 2>/dev/null; then
+            git checkout -q badges
+          else
+            git checkout -q --orphan badges
+          fi
+
+          cp /tmp/winget.json winget.json
+
+          if git diff --quiet -- winget.json 2>/dev/null; then
+            echo "Badge unchanged; nothing to push."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add winget.json
+          git commit -q -m "ci: update winget badge
+
+          $(cat winget.json)"
+          git push origin badges
