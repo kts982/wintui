@@ -95,15 +95,18 @@ jobs:
           fi
 
           cp /tmp/winget.json winget.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add winget.json
 
-          if git diff --quiet -- winget.json 2>/dev/null; then
+          # `git diff --quiet` is unreliable on a fresh orphan checkout
+          # (no HEAD to diff against → returns "no diff" even when the file
+          # is newly added). git status --porcelain works in both cases.
+          if [ -z "$(git status --porcelain)" ]; then
             echo "Badge unchanged; nothing to push."
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add winget.json
           git commit -q -m "ci: update winget badge
 
           $(cat winget.json)"
