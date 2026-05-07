@@ -176,6 +176,58 @@ func TestIsTableTrailerLocalized(t *testing.T) {
 	}
 }
 
+// Even when the dictionary resolves three or more headers, if the resolved
+// set does not include every column the table kind requires AND the schema
+// fallback can't recover the gap (because the column count is not a known
+// shape), the parser must surface an error rather than letting rows fall
+// through with empty Id (and be silently dropped by the pkg.ID != "" guard).
+// Without this check, a future winget version that adds a sixth column in
+// an unfamiliar locale would recreate the issue-#44 zero-packages mask one
+// layer deeper.
+func TestParseWingetTableErrorsWhenRequiredColumnMissing(t *testing.T) {
+	// 6-column table: Name, ?, ?, Version, ?, Source. The dictionary resolves
+	// only 3 of them (Name/Version/Source via en-US). schemaFor(list, 6)
+	// returns nil, so the post-fill loop is a no-op and Id stays unresolved.
+	// The required-column check is the only thing standing between us and
+	// silent zero-packages.
+	output := strings.Join([]string{
+		"Name      Foo       Bar       Version   Baz       Source",
+		"--------------------------------------------------------",
+		"Sample    a         b         1.0       c         winget",
+		"",
+	}, "\n")
+	_, err := parseWingetTable(output, tableList)
+	if err == nil {
+		t.Fatal("expected error when required column is unresolvable, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing required column") {
+		t.Errorf("error message %q should call out the missing required column", err.Error())
+	}
+}
+
+// A package whose Name happens to contain a localised footer keyword must
+// still be parsed as a package row. The tightened trailer filter requires a
+// leading digit so it cannot mis-classify a real row.
+func TestParseWingetTableKeywordInPackageNameNotMistakenForTrailer(t *testing.T) {
+	output := strings.Join([]string{
+		"Nome                                              Id                                              Versione           Disponibile        Origine",
+		"-----------------------------------------------------------------------------------------------------------------------------------------------",
+		"Aggiornamenti disponibili Helper                  Contoso.Aggiornamenti                           1.0.0              1.1.0              winget",
+		"1 aggiornamenti disponibili.",
+		"",
+	}, "\n")
+	got, err := parseWingetTable(output, tableUpgrade)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 package (the helper), got %d: %#v", len(got), got)
+	}
+	if got[0].ID != "Contoso.Aggiornamenti" {
+		t.Errorf("expected package row to survive trailer filter, got %#v", got[0])
+	}
+}
+
 // The vendored locale dictionary should always cover at least the canonical
 // 11 winget locales and have a non-empty source SHA so wintui doctor can
 // report which winget-cli revision the headers came from.
