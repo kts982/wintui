@@ -21,9 +21,18 @@ func loadWingetFixture(t *testing.T, name string) string {
 	return string(data)
 }
 
+func mustParseWingetTable(t *testing.T, output string, kind tableKind) []Package {
+	t.Helper()
+	pkgs, err := parseWingetTable(output, kind)
+	if err != nil {
+		t.Fatalf("parseWingetTable(%s) error: %v", tableKindName(kind), err)
+	}
+	return pkgs
+}
+
 func TestParseWingetTableFixtures(t *testing.T) {
 	t.Run("search with match and source columns", func(t *testing.T) {
-		got := parseWingetTable(strings.ReplaceAll(loadWingetFixture(t, "search_match_source.txt"), "\n", "\r\n"))
+		got := mustParseWingetTable(t, strings.ReplaceAll(loadWingetFixture(t, "search_match_source.txt"), "\n", "\r\n"), tableSearch)
 		want := []Package{
 			{Name: "Firefox Developer Edition", ID: "Mozilla.Firefox.DeveloperEdition", Version: "138.0b3", Source: "winget"},
 			{Name: "Firefox Beta", ID: "Mozilla.Firefox.Beta", Version: "137.0b9", Source: "winget"},
@@ -35,7 +44,7 @@ func TestParseWingetTableFixtures(t *testing.T) {
 	})
 
 	t.Run("installed list with mixed sources and raw identities", func(t *testing.T) {
-		got := parseWingetTable(loadWingetFixture(t, "installed_mixed_sources.txt"))
+		got := mustParseWingetTable(t, loadWingetFixture(t, "installed_mixed_sources.txt"), tableList)
 		want := []Package{
 			{Name: "Notepad++", ID: "Notepad++.Notepad++", Version: "8.6.4", Source: "winget"},
 			{Name: "Notepad++", ID: "MSIX\\NotepadPlusPlus_1.0.0.0_neutral__gabc1234", Version: "1.0.0.0", idTruncated: true},
@@ -48,7 +57,7 @@ func TestParseWingetTableFixtures(t *testing.T) {
 	})
 
 	t.Run("installed list without source column", func(t *testing.T) {
-		got := parseWingetTable(loadWingetFixture(t, "installed_no_source.txt"))
+		got := mustParseWingetTable(t, loadWingetFixture(t, "installed_no_source.txt"), tableList)
 		want := []Package{
 			{Name: "Legacy Control Panel", ID: "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}", Version: "10.0"},
 			{Name: "Notepad++", ID: "MSIX\\NotepadPlusPlus_1.0.0.0_neutral__gabc1234", Version: "1.0.0.0", idTruncated: true},
@@ -59,7 +68,7 @@ func TestParseWingetTableFixtures(t *testing.T) {
 	})
 
 	t.Run("upgrade list with available versions", func(t *testing.T) {
-		got := parseWingetTable(loadWingetFixture(t, "upgrade_available_source.txt"))
+		got := mustParseWingetTable(t, loadWingetFixture(t, "upgrade_available_source.txt"), tableUpgrade)
 		want := []Package{
 			{Name: "Microsoft PowerToys", ID: "Microsoft.PowerToys", Version: "0.77.1", Available: "0.78.0", Source: "winget"},
 			{Name: "Claude", ID: "Anthropic.Claude", Version: "0.8.2", Available: "0.8.3", Source: "winget"},
@@ -77,7 +86,7 @@ func TestParseWingetTableFixtures(t *testing.T) {
 	// must strip the ellipsis and set idTruncated so the resolver substitutes
 	// the full ID before any --exact call goes out.
 	t.Run("upgrade list with ellipsis-truncated id", func(t *testing.T) {
-		got := parseWingetTable(loadWingetFixture(t, "upgrade_truncated_id.txt"))
+		got := mustParseWingetTable(t, loadWingetFixture(t, "upgrade_truncated_id.txt"), tableUpgrade)
 		want := []Package{
 			{Name: "Visual Studio Build Tools 2022", ID: "Microsoft.VisualStudio.2022.BuildTo", Version: "17.14.30", Available: "17.14.31", Source: "winget", idTruncated: true},
 			{Name: "Microsoft Edge", ID: "Microsoft.Edge", Version: "140.0.1", Available: "141.0.0", Source: "winget"},
