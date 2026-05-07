@@ -25,7 +25,11 @@ import (
 // Pin generation to a specific upstream commit so regeneration is deterministic
 // and the generated file records exactly which winget-cli revision the headers
 // came from. Bump this when you regenerate.
-const wingetCliRef = "master"
+//
+// To bump: pick a recent SHA from https://github.com/microsoft/winget-cli, set
+// it here, run `go run genlocales.go`, and commit the regenerated
+// winget_locales_gen.go alongside this change.
+const wingetCliRef = "5c03e8b3eda726ef8eb70c7df861110c5e1061a8"
 
 // Resource keys winget uses for column headers in `winget list`,
 // `winget upgrade`, and `winget search`. Verified against the en-US source of

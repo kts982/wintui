@@ -147,7 +147,9 @@ func findTableSeparator(lines []string) int {
 // of 2+ spaces (winget always pads columns by ≥2 spaces, even in CJK locales).
 // Each detected cell is then resolved through the vendored locale dictionary;
 // when fewer than 3 cells resolve, we fall back to the positional schema for
-// `kind`. Returns an error only when both the dictionary and the schema fail.
+// `kind`. Returns an error when neither lookup recovers the columns required
+// by `kind` — silently dropping rows because Id never resolved would just
+// recreate the issue-#44 zero-packages mask one level deeper.
 func detectHeaderCells(header string, kind tableKind) ([]headerCell, error) {
 	cells := splitHeaderCells(header)
 	if len(cells) == 0 {
@@ -175,11 +177,9 @@ func detectHeaderCells(header string, kind tableKind) ([]headerCell, error) {
 				cells[i].kind = schema[i]
 			}
 		}
-	}
-
-	// Fill any gaps left by partial dictionary coverage using the schema as a
-	// best-effort backup.
-	if resolved >= 3 {
+	} else {
+		// Fill any gaps left by partial dictionary coverage using the schema
+		// as a best-effort backup.
 		schema := schemaFor(kind, len(cells))
 		for i := range cells {
 			if cells[i].kind == colUnknown && i < len(schema) {
@@ -188,7 +188,33 @@ func detectHeaderCells(header string, kind tableKind) ([]headerCell, error) {
 		}
 	}
 
+	if missing := missingRequiredColumns(cells, kind); len(missing) > 0 {
+		return nil, fmt.Errorf("winget output: %s table missing required column(s) %v after dictionary+schema mapping; locale possibly not yet vendored (first header %q)", tableKindName(kind), missing, cells[0].text)
+	}
 	return cells, nil
+}
+
+// missingRequiredColumns returns the column kinds that `kind` requires but
+// `cells` did not assign. Without this guard, a partial-locale match where
+// (say) Id never resolves would leave every row with pkg.ID == "", which
+// downstream filtering treats as "not a package" — recreating the silent
+// "0 packages" bug behind issue #44 one layer deeper.
+func missingRequiredColumns(cells []headerCell, kind tableKind) []columnKind {
+	required := []columnKind{colName, colID, colVersion}
+	if kind == tableUpgrade {
+		required = append(required, colAvailable)
+	}
+	have := make(map[columnKind]bool, len(cells))
+	for _, c := range cells {
+		have[c.kind] = true
+	}
+	var missing []columnKind
+	for _, r := range required {
+		if !have[r] {
+			missing = append(missing, r)
+		}
+	}
+	return missing
 }
 
 // splitHeaderCells walks `header` by display cells and returns one entry per
@@ -328,16 +354,48 @@ func sliceDisplayRange(line string, startCol, endCol int) (string, bool) {
 
 // isTableTrailer reports whether `line` is a localised table-footer message
 // (e.g. "5 aggiornamenti disponibili.", "5 upgrades available.",
-// "5 package(s) installed.") that should not be parsed as a package row.
+// "3 個のパッケージが見つかりました。") that should not be parsed as a package
+// row.
 //
-// The data-row guard (`pkg.ID != ""`) usually catches these because trailers
-// don't have an Id column at the right display position — but matching by
-// sentinel keywords up front keeps the code's intent obvious and avoids
-// relying on alignment quirks.
+// The data-row guard (`pkg.ID != ""`) handles most cases because trailers
+// don't span to the Id column — but in CJK locales the trailer can be wide
+// enough that a trailing punctuation glyph (e.g. "。") lands inside the Id
+// column and produces a non-empty Id value. So we still need an explicit
+// trailer filter.
+//
+// Tightened from a pure substring match: we require both a leading digit
+// (real winget trailers always begin with a count: "5 aggiornamenti…",
+// "3 個のパッケージ…") and a localised footer keyword. That avoids dropping
+// real package rows whose Name happens to contain a keyword like
+// "アップグレード" or "aggiornamenti". The "no installed" no-result message
+// is matched as an explicit phrase separately because it does not start
+// with a digit.
 func isTableTrailer(line string) bool {
-	lower := strings.ToLower(strings.TrimSpace(line))
+	trimmed := strings.TrimSpace(line)
+	lower := strings.ToLower(trimmed)
+
+	// No-result phrases never start with a digit. They normally appear
+	// instead of a table (handled by findTableSeparator), but we keep the
+	// safety net here too.
+	for _, phrase := range []string{
+		"no installed package found",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
+	// Real trailers start with a digit count. The leading-digit guard
+	// protects against false positives on package rows whose Name happens
+	// to contain a footer keyword (e.g. an installer literally named
+	// "Aggiornamenti Disponibili" or a Japanese app with アップグレード
+	// in its name).
+	if !startsWithDigit(trimmed) {
+		return false
+	}
 	for _, marker := range []string{
-		"upgrades available", "package(s)", "no installed",
+		"upgrades available",        // en-US
+		"package(s)",                // en-US
 		"aggiornamenti disponibili", // it-IT
 		"actualizaciones disponibles",
 		"actualizações disponíveis",
@@ -345,8 +403,7 @@ func isTableTrailer(line string) bool {
 		"verfügbare upgrades",
 		"доступно обновлен",
 		"个升级可用", "個升級可用",
-		"アップグレード", "업그레이드",
-		"個のパッケージ",   // ja-JP "X package(s)..."
+		"個のパッケージ",   // ja-JP "X package(s)..." / "X 個のパッケージが…"
 		"個のアップグレード", // ja-JP upgrade footer variant
 		"개의 패키지",    // ko-KR "X package(s)"
 	} {
@@ -355,6 +412,14 @@ func isTableTrailer(line string) bool {
 		}
 	}
 	return false
+}
+
+func startsWithDigit(s string) bool {
+	if s == "" {
+		return false
+	}
+	r := []rune(s)[0]
+	return r >= '0' && r <= '9'
 }
 
 func tableKindName(kind tableKind) string {
