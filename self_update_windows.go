@@ -112,7 +112,14 @@ func startupSelfUpdateAvailable() (Package, bool) {
 		return Package{}, false
 	}
 
-	for _, pkg := range parseWingetTable(out) {
+	// `winget list --upgrade-available` returns the same Available column as
+	// `winget upgrade`, so parse it as an upgrade table.
+	pkgs, parseErr := parseWingetTable(out, tableUpgrade)
+	if parseErr != nil {
+		appendSelfUpdateLogf("startup self-update parse skipped: %v", parseErr)
+		return Package{}, false
+	}
+	for _, pkg := range pkgs {
 		if isSelfPackageID(pkg.ID) && strings.TrimSpace(pkg.Available) != "" {
 			return pkg, true
 		}

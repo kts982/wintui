@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -96,7 +95,7 @@ func getUpgradeableCtx(ctx context.Context) ([]Package, error) {
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return parseWingetTable(out), nil
+	return parseWingetTable(out, tableUpgrade)
 }
 
 func getInstalledCtx(ctx context.Context) ([]Package, error) {
@@ -108,7 +107,7 @@ func getInstalledCtx(ctx context.Context) ([]Package, error) {
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return parseWingetTable(out), nil
+	return parseWingetTable(out, tableList)
 }
 
 func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
@@ -118,7 +117,7 @@ func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return parseWingetTable(out), nil
+	return parseWingetTable(out, tableSearch)
 }
 
 // lookupSinglePackageCtx fetches the installed state of a single package by ID.
@@ -136,7 +135,7 @@ func lookupSinglePackageCtx(ctx context.Context, pkg Package) ([]Package, error)
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
-	return parseWingetTable(out), nil
+	return parseWingetTable(out, tableList)
 }
 
 // ── High-level action operations (mutating, need package agreements) ─
@@ -738,123 +737,12 @@ func parseWingetVersions(output string) []string {
 	return versions
 }
 
-// ── winget table parser ────────────────────────────────────────────
-
-type colPos struct {
-	name  string
-	start int
-}
-
-// parseWingetTable parses the fixed-width table output from winget.
-func parseWingetTable(output string) []Package {
-	output = strings.ReplaceAll(output, "\r\n", "\n")
-	raw := strings.FieldsFunc(output, func(r rune) bool { return r == '\r' || r == '\n' })
-	var lines []string
-	for _, l := range raw {
-		if strings.TrimSpace(l) != "" {
-			lines = append(lines, l)
-		}
-	}
-
-	// Find the separator line (all dashes).
-	sepIdx := -1
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if len(trimmed) > 10 && strings.Trim(trimmed, "-\u2500") == "" {
-			sepIdx = i
-			break
-		}
-	}
-	if sepIdx < 1 || sepIdx >= len(lines)-1 {
-		return nil
-	}
-
-	// Detect column start positions from the header.
-	header := lines[sepIdx-1]
-	colNames := []string{"Name", "Id", "Moniker", "Version", "Available", "Match", "Source"}
-	var cols []colPos
-	for _, name := range colNames {
-		idx := strings.Index(header, name)
-		if idx >= 0 {
-			cols = append(cols, colPos{name, idx})
-		}
-	}
-	sort.Slice(cols, func(i, j int) bool {
-		return cols[i].start < cols[j].start
-	})
-	if len(cols) < 3 {
-		return nil
-	}
-
-	// Parse data rows.
-	var pkgs []Package
-	for _, line := range lines[sepIdx+1:] {
-		lower := strings.ToLower(strings.TrimSpace(line))
-		if strings.Contains(lower, "upgrades available") ||
-			strings.Contains(lower, "package(s)") ||
-			strings.Contains(lower, "no installed") {
-			continue
-		}
-
-		pkg := extractPackage(line, cols)
-		if pkg.ID != "" {
-			pkgs = append(pkgs, pkg)
-		}
-	}
-	return pkgs
-}
-
-// truncSentinel replaces the multi-byte ellipsis (…, 3 bytes) with a single
-// byte during column slicing so byte-indexed positions from the header stay
-// aligned. A trailing sentinel on a field signals that winget truncated the
-// value to fit the console width.
-const truncSentinel = "\x01"
-
-func extractPackage(line string, cols []colPos) Package {
-	line = strings.ReplaceAll(line, "\u2026", truncSentinel)
-
-	field := func(c int) (string, bool) {
-		start := cols[c].start
-		if start >= len(line) {
-			return "", false
-		}
-		end := len(line)
-		if c+1 < len(cols) {
-			end = cols[c+1].start
-		}
-		if end > len(line) {
-			end = len(line)
-		}
-		val := strings.TrimSpace(line[start:end])
-		if trimmed, ok := strings.CutSuffix(val, truncSentinel); ok {
-			return trimmed, true
-		}
-		return val, false
-	}
-
-	pkg := Package{}
-	for i, c := range cols {
-		val, truncated := field(i)
-		switch c.name {
-		case "Name":
-			pkg.Name = val
-			pkg.nameTruncated = truncated
-		case "Id":
-			pkg.ID = val
-			pkg.idTruncated = truncated
-		case "Version":
-			pkg.Version = val
-		case "Available":
-			pkg.Available = val
-		case "Source":
-			// Only accept known source values; garbage from misaligned rows is ignored.
-			if val == "winget" || val == "msstore" {
-				pkg.Source = val
-			}
-		}
-	}
-	return pkg
-}
+// ── winget table parser ───────────────────────────────────────────────────────────────
+//
+// parseWingetTable lives in winget_table.go. It is schema-aware
+// (list/upgrade/search), display-cell aware (handles CJK headers), and
+// matches localised column headers via a vendored dictionary in
+// winget_locales_gen.go.
 
 // resolveTruncatedPackage substitutes the full ID for a package whose Id
 // column was truncated by winget at the console width. winget renders the
@@ -902,7 +790,15 @@ func resolvePackageID(ctx context.Context, pkg Package, resolverCmd string) (Pac
 	if err != nil && len(out) == 0 {
 		return pkg, false
 	}
-	return pickResolvedID(pkg, parseWingetTable(out))
+	kind := tableList
+	if resolverCmd == "search" {
+		kind = tableSearch
+	}
+	candidates, parseErr := parseWingetTable(out, kind)
+	if parseErr != nil {
+		return pkg, false
+	}
+	return pickResolvedID(pkg, candidates)
 }
 
 // pickResolvedID selects the candidate whose full ID should replace the

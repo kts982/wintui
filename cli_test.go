@@ -61,9 +61,9 @@ func TestCLIContract(t *testing.T) {
 	}
 
 	t.Run("list", func(t *testing.T) {
-		output := "Name       Id         Version Available Source\n" +
-			"----------------------------------------------\n" +
-			"Test App1  App1.ID    1.0               winget\n"
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n" +
+			"Test App1  App1.ID    1.0                 winget\n"
 		out, code := runWintui(output, "list")
 		if code != 0 {
 			t.Errorf("Expected exit code 0, got %d", code)
@@ -80,9 +80,9 @@ func TestCLIContract(t *testing.T) {
 	})
 
 	t.Run("check_updates_exist", func(t *testing.T) {
-		output := "Name       Id         Version Available Source\n" +
-			"----------------------------------------------\n" +
-			"Test App1  App1.ID    1.0     2.0       winget\n"
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n" +
+			"Test App1  App1.ID    1.0      2.0        winget\n"
 		out, code := runWintui(output, "check")
 		if code != 1 {
 			t.Errorf("Expected exit code 1 when updates exist, got %d", code)
@@ -99,8 +99,8 @@ func TestCLIContract(t *testing.T) {
 	})
 
 	t.Run("check_no_updates", func(t *testing.T) {
-		output := "Name       Id         Version Available Source\n" +
-			"----------------------------------------------\n"
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n"
 		out, code := runWintui(output, "check")
 		if code != 0 {
 			t.Errorf("Expected exit code 0 when no updates exist, got %d", code)
@@ -121,9 +121,9 @@ func TestCLIContract(t *testing.T) {
 	})
 
 	t.Run("json_output", func(t *testing.T) {
-		output := "Name       Id         Version Available Source\n" +
-			"----------------------------------------------\n" +
-			"Test App1  App1.ID    1.0     2.0       winget\n"
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n" +
+			"Test App1  App1.ID    1.0      2.0        winget\n"
 		out, code := runWintui(output, "check", "--json")
 		if code != 1 {
 			t.Errorf("Expected exit code 1, got %d", code)
@@ -134,9 +134,9 @@ func TestCLIContract(t *testing.T) {
 	})
 
 	t.Run("check_subcommand_exits_one_when_updates_exist", func(t *testing.T) {
-		output := "Name       Id         Version Available Source\n" +
-			"----------------------------------------------\n" +
-			"Test App1  App1.ID    1.0     2.0       winget\n"
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n" +
+			"Test App1  App1.ID    1.0      2.0        winget\n"
 		out, code := runWintui(output, "check")
 		if code != 1 {
 			t.Errorf("Expected exit code 1, got %d", code)
@@ -147,8 +147,8 @@ func TestCLIContract(t *testing.T) {
 	})
 
 	t.Run("check_subcommand_exits_zero_when_up_to_date", func(t *testing.T) {
-		output := "Name       Id         Version Available Source\n" +
-			"----------------------------------------------\n"
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n"
 		out, code := runWintui(output, "check")
 		if code != 0 {
 			t.Errorf("Expected exit code 0, got %d", code)
@@ -159,9 +159,9 @@ func TestCLIContract(t *testing.T) {
 	})
 
 	t.Run("list_subcommand", func(t *testing.T) {
-		output := "Name       Id         Version Available Source\n" +
-			"----------------------------------------------\n" +
-			"Test App1  App1.ID    1.0               winget\n"
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n" +
+			"Test App1  App1.ID    1.0                 winget\n"
 		out, code := runWintui(output, "list")
 		if code != 0 {
 			t.Errorf("Expected exit code 0, got %d", code)
@@ -172,9 +172,9 @@ func TestCLIContract(t *testing.T) {
 	})
 
 	t.Run("check_subcommand_json", func(t *testing.T) {
-		output := "Name       Id         Version Available Source\n" +
-			"----------------------------------------------\n" +
-			"Test App1  App1.ID    1.0     2.0       winget\n"
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n" +
+			"Test App1  App1.ID    1.0      2.0        winget\n"
 		out, code := runWintui(output, "check", "--json")
 		if code != 1 {
 			t.Errorf("Expected exit code 1, got %d", code)
@@ -301,8 +301,8 @@ func TestCLIContract(t *testing.T) {
 
 	t.Run("upgrade_all_with_no_updates", func(t *testing.T) {
 		// Empty winget upgrade list → nothing to do, exit 0.
-		output := "Name       Id         Version Available Source\n" +
-			"----------------------------------------------\n"
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n"
 		out, code := runWintui(output, "upgrade", "--all")
 		if code != 0 {
 			t.Errorf("Expected exit code 0, got %d", code)

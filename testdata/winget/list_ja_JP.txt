@@ -1,0 +1,6 @@
+名前                            Id                                  バージョン        ソース  
+----------------------------------------------------------------------------------------------
+Visual Studio Code              Microsoft.VisualStudioCode          1.119.0           winget
+Windows Terminal                Microsoft.WindowsTerminal           1.24.10921.0      winget
+Greenshot                       Greenshot.Greenshot                 1.3.315           winget
+3 個のパッケージが見つかりました。
