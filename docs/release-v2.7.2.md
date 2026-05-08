@@ -64,3 +64,24 @@ unaffected because the disk cache covers them for 24h.
 - Regression coverage:
   `testdata/winget/upgrade_narrow_columns.txt` exercises the
   WireGuard-shaped header that triggered the bug end-to-end.
+
+## Verification
+
+VirusTotal scans of the published artifacts for v2.7.2 (run 2026-05-08):
+
+| Asset | SHA256 | Detections | Report |
+|---|---|---|---|
+| `wintui_2.7.2_windows_amd64.exe` (6.8 MB) | `ae1e0601cea1…` | 1/71 | [VT report](https://www.virustotal.com/gui/file/ae1e0601cea12a389cac5f4720bbf280f50a2f89151af6fd2f45fbe12b8c82bd) |
+| `wintui_2.7.2_windows_amd64.zip` (2.4 MB) | `32000162a2b2…` | 0/68 | [VT report](https://www.virustotal.com/gui/file/32000162a2b2f988960490ad7df9965b8a06be8a42a135f34f0f1db89ac351c6) |
+| `wintui_2.7.2_windows_arm64.exe` (6.3 MB) | `3d1663a19ffb…` | 1/69 | [VT report](https://www.virustotal.com/gui/file/3d1663a19ffbb1681d7af9021810722045b50ab2d0b3f3a0dde9b6daafe7ab4b) |
+| `wintui_2.7.2_windows_arm64.zip` (2.2 MB) | `ce29e78f7fbb…` | 0/67 | [VT report](https://www.virustotal.com/gui/file/ce29e78f7fbb9df937d16807c8cc62eded44afe3172a001e619502c2bebfb04f) |
+
+Detections at scan time were single-vendor low-signal ML/reputation noise. Microsoft Defender returned clean across all artifacts.
+
+Full SHA256 hashes:
+
+- `wintui_2.7.2_windows_amd64.exe`: `ae1e0601cea12a389cac5f4720bbf280f50a2f89151af6fd2f45fbe12b8c82bd`
+- `wintui_2.7.2_windows_amd64.zip`: `32000162a2b2f988960490ad7df9965b8a06be8a42a135f34f0f1db89ac351c6`
+- `wintui_2.7.2_windows_arm64.exe`: `3d1663a19ffbb1681d7af9021810722045b50ab2d0b3f3a0dde9b6daafe7ab4b`
+- `wintui_2.7.2_windows_arm64.zip`: `ce29e78f7fbb9df937d16807c8cc62eded44afe3172a001e619502c2bebfb04f`
+
