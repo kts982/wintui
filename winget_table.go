@@ -156,6 +156,14 @@ func detectHeaderCells(header string, kind tableKind) ([]headerCell, error) {
 		return nil, fmt.Errorf("winget output: header row has no detectable columns")
 	}
 
+	// When narrow data values let winget pad a row with single-space gaps
+	// between adjacent headers (e.g. "Version Available Source" in a one-row
+	// upgrade table), splitHeaderCells folds those headers into a single cell
+	// because its boundary rule is ≥2 spaces. Subdivide such cells when each
+	// whitespace-separated token is itself in the locale dictionary, so the
+	// downstream resolution sees the real column count.
+	cells = subdivideHeaderCells(cells)
+
 	resolved := 0
 	for i := range cells {
 		if k, ok := wingetHeaderLookup[cells[i].text]; ok {
@@ -288,6 +296,85 @@ func splitHeaderCells(header string) []headerCell {
 		}
 	}
 	return cells
+}
+
+// subdivideHeaderCells splits any cell whose text is a sequence of
+// dictionary-known header tokens separated by single spaces — winget produces
+// such cells when narrow data values shrink the inter-column gap to one space
+// and splitHeaderCells (which only closes a cell on ≥2 spaces) folds the
+// neighbours together. The startCol of each sub-cell is the display position
+// of its token inside the original cell; the endCol is rewritten by the
+// caller to abut the following cell.
+func subdivideHeaderCells(cells []headerCell) []headerCell {
+	out := make([]headerCell, 0, len(cells))
+	for _, c := range cells {
+		if !strings.Contains(c.text, " ") {
+			out = append(out, c)
+			continue
+		}
+		// Only split when every whitespace-separated token resolves through
+		// the dictionary. A cell whose text is itself a localized header with
+		// an internal space (e.g. Korean "장치 ID") has no such per-token
+		// resolution and must stay as one cell.
+		tokens := strings.Fields(c.text)
+		if len(tokens) < 2 {
+			out = append(out, c)
+			continue
+		}
+		allResolve := true
+		for _, tok := range tokens {
+			if _, ok := wingetHeaderLookup[tok]; !ok {
+				allResolve = false
+				break
+			}
+		}
+		if !allResolve {
+			out = append(out, c)
+			continue
+		}
+		// Walk the original cell text by display cells to recover the start
+		// column of each token relative to the cell's startCol.
+		col := c.startCol
+		i := 0
+		for i < len(c.text) {
+			// Skip leading spaces.
+			for i < len(c.text) && c.text[i] == ' ' {
+				col++
+				i++
+			}
+			if i >= len(c.text) {
+				break
+			}
+			tokenStart := col
+			tokenBytes := []rune{}
+			for i < len(c.text) && c.text[i] != ' ' {
+				r := []rune(c.text[i:])[0]
+				w := runewidth.RuneWidth(r)
+				if w == 0 {
+					w = 0
+				}
+				tokenBytes = append(tokenBytes, r)
+				col += w
+				i += len(string(r))
+			}
+			out = append(out, headerCell{
+				text:     string(tokenBytes),
+				startCol: tokenStart,
+				endCol:   col,
+			})
+		}
+	}
+	// Re-extend endCol so each cell abuts the next (the original logic in
+	// splitHeaderCells assumed contiguous cells; once we insert sub-cells the
+	// boundaries shift).
+	for i := range out {
+		if i+1 < len(out) {
+			out[i].endCol = out[i+1].startCol
+		} else {
+			out[i].endCol = -1
+		}
+	}
+	return out
 }
 
 // extractPackageFromCells slices a data row by display-cell ranges (not byte

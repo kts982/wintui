@@ -95,6 +95,22 @@ func TestParseWingetTableFixtures(t *testing.T) {
 			t.Fatalf("parseWingetTable(truncated) = %#v, want %#v", got, want)
 		}
 	})
+
+	// When narrow data values let winget pad the table with single-space
+	// gaps between Version/Available/Source, the splitHeaderCells 2+ space
+	// rule used to merge those three headers into one cell ("Version
+	// Available Source") and the parser surfaced a "3-column upgrade table
+	// is not a known shape" error. The dictionary now subdivides such cells
+	// when each whitespace-separated token is itself a known header.
+	t.Run("upgrade list with narrow columns", func(t *testing.T) {
+		got := mustParseWingetTable(t, loadWingetFixture(t, "upgrade_narrow_columns.txt"), tableUpgrade)
+		want := []Package{
+			{Name: "WireGuard", ID: "WireGuard.WireGuard", Version: "1.0.1", Available: "1.1", Source: "winget"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parseWingetTable(narrow) = %#v, want %#v", got, want)
+		}
+	})
 }
 
 func TestPickResolvedID(t *testing.T) {

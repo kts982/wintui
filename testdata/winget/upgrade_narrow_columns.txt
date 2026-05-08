@@ -1,0 +1,4 @@
+Name      Id                  Version Available Source
+------------------------------------------------------
+WireGuard WireGuard.WireGuard 1.0.1   1.1       winget
+1 upgrades available.

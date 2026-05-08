@@ -43,51 +43,29 @@ func (s workspaceScreen) init() tea.Cmd {
 	return tea.Batch(s.spinner.Tick, s.fetchPackages())
 }
 
-// fetchPackages runs parallel winget list + upgrade with sequential fallback.
+// fetchPackages runs winget list then winget upgrade sequentially. Concurrent
+// invocations of those subcommands race on a winget-internal lock and one of
+// them returns 0x8a150001 with empty output ~50% of the time, which masked the
+// real upgrade results and blocked the disk cache from saving (saveToDiskLocked
+// requires both lists populated). Sequential is ~1s slower on cold start but
+// reliable — and after the first scan the disk cache covers restart latency
+// for 24h.
 func (s workspaceScreen) fetchPackages() tea.Cmd {
 	return func() tea.Msg {
-		type result struct {
-			pkgs []Package
-			err  error
+		instPkgs, instErr := getInstalledCtx(s.ctx)
+		if instErr != nil {
+			return workspaceDataMsg{err: instErr}
 		}
-		instCh := make(chan result, 1)
-		upgrCh := make(chan result, 1)
+		upgrPkgs, upgrErr := getUpgradeableCtx(s.ctx)
 
-		go func() {
-			pkgs, err := getInstalledCtx(s.ctx)
-			instCh <- result{pkgs, err}
-		}()
-		go func() {
-			pkgs, err := getUpgradeableCtx(s.ctx)
-			upgrCh <- result{pkgs, err}
-		}()
-
-		instResult := <-instCh
-		upgrResult := <-upgrCh
-
-		// If parallel calls failed, retry sequentially.
-		if instResult.err != nil {
-			pkgs, err := getInstalledCtx(s.ctx)
-			if err != nil {
-				return workspaceDataMsg{err: err}
-			}
-			instResult = result{pkgs, nil}
-		}
-		if upgrResult.err != nil {
-			pkgs, err := getUpgradeableCtx(s.ctx)
-			if err == nil {
-				upgrResult = result{pkgs, nil}
-			}
-		}
-
-		cache.setInstalled(instResult.pkgs)
-		if upgrResult.err == nil {
-			cache.setUpgradeable(upgrResult.pkgs)
+		cache.setInstalled(instPkgs)
+		if upgrErr == nil {
+			cache.setUpgradeable(upgrPkgs)
 		}
 		return workspaceDataMsg{
-			installed:   instResult.pkgs,
-			upgradeable: upgrResult.pkgs,
-			err:         upgrResult.err,
+			installed:   instPkgs,
+			upgradeable: upgrPkgs,
+			err:         upgrErr,
 		}
 	}
 }
@@ -96,47 +74,20 @@ func (s workspaceScreen) fetchPackages() tea.Cmd {
 func (s workspaceScreen) startBackgroundRefresh() tea.Cmd {
 	ctx := s.refreshCtx
 	return func() tea.Msg {
-		type result struct {
-			pkgs []Package
-			err  error
+		instPkgs, instErr := getInstalledCtx(ctx)
+		if instErr != nil {
+			return backgroundRefreshMsg{err: instErr}
 		}
-		instCh := make(chan result, 1)
-		upgrCh := make(chan result, 1)
+		upgrPkgs, upgrErr := getUpgradeableCtx(ctx)
 
-		go func() {
-			pkgs, err := getInstalledCtx(ctx)
-			instCh <- result{pkgs, err}
-		}()
-		go func() {
-			pkgs, err := getUpgradeableCtx(ctx)
-			upgrCh <- result{pkgs, err}
-		}()
-
-		instResult := <-instCh
-		upgrResult := <-upgrCh
-
-		if instResult.err != nil {
-			pkgs, err := getInstalledCtx(ctx)
-			if err != nil {
-				return backgroundRefreshMsg{err: err}
-			}
-			instResult = result{pkgs, nil}
-		}
-		if upgrResult.err != nil {
-			pkgs, err := getUpgradeableCtx(ctx)
-			if err == nil {
-				upgrResult = result{pkgs, nil}
-			}
-		}
-
-		cache.setInstalled(instResult.pkgs)
-		if upgrResult.err == nil {
-			cache.setUpgradeable(upgrResult.pkgs)
+		cache.setInstalled(instPkgs)
+		if upgrErr == nil {
+			cache.setUpgradeable(upgrPkgs)
 		}
 		return backgroundRefreshMsg{
-			installed:   instResult.pkgs,
-			upgradeable: upgrResult.pkgs,
-			err:         upgrResult.err,
+			installed:   instPkgs,
+			upgradeable: upgrPkgs,
+			err:         upgrErr,
 		}
 	}
 }
