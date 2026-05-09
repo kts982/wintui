@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "winget",
-  "message": "v2.7.1 (v2.7.2 pending)",
-  "color": "yellow"
+  "message": "v2.7.2",
+  "color": "brightgreen"
 }
