@@ -17,7 +17,13 @@ const (
 	cleanupGroupCaches    cleanupGroup = "caches"
 	cleanupGroupDeveloper cleanupGroup = "developer"
 	cleanupGroupGPU       cleanupGroup = "gpu"
+	cleanupGroupWinTUI    cleanupGroup = "wintui"
 )
+
+// cleanupSelfUpdateHandoffMinAge keeps a self-update kicked off mid-cleanup
+// safe: a handoff script generated in the last 24 hours might still be the
+// one running. Anything older has either finished or been abandoned.
+const cleanupSelfUpdateHandoffMinAge = 24 * time.Hour
 
 // cleanupMode controls how the engine processes a target's resolved path.
 type cleanupMode int
@@ -235,6 +241,34 @@ func cleanupTargetRegistry() []cleanupTargetDef {
 			mode:            cleanupModePurgeContents,
 			detectIfPresent: true,
 			warning:         "Affected games may stutter once while the cache rebuilds.",
+		},
+
+		// ── WinTUI's own scratch (default unchecked) ────────────────────
+		// Both targets glob inside %LOCALAPPDATA%\wintui\self-update\ — the
+		// only WinTUI-owned location that accumulates files over time.
+		// settings.json, cache.json, the toast Start-Menu shortcut and its
+		// .aumid marker are deliberately out of scope: they are user state
+		// or durable infra, not scratch.
+		{
+			id:    "wintui_self_update_log",
+			label: "WinTUI self-update log",
+			description: "Append-only log of WinTUI self-update probes and handoffs. " +
+				"Grows by a few lines on every launch; safe to truncate.",
+			group:  cleanupGroupWinTUI,
+			pathFn: selfUpdateStateDir,
+			mode:   cleanupModeGlob,
+			globs:  []string{selfUpdateLogName},
+		},
+		{
+			id:    "wintui_self_update_handoffs",
+			label: "WinTUI self-update handoff scripts",
+			description: "Leftover PowerShell handoff scripts under %LOCALAPPDATA%\\wintui\\self-update. " +
+				"Stale scripts older than 24 hours; in-flight handoffs are kept.",
+			group:  cleanupGroupWinTUI,
+			pathFn: selfUpdateStateDir,
+			mode:   cleanupModeGlob,
+			globs:  []string{selfUpdateScriptPrefix + "*.ps1"},
+			minAge: cleanupSelfUpdateHandoffMinAge,
 		},
 	}
 }

@@ -26,6 +26,7 @@ func TestCleanupRegistryEntriesWellFormed(t *testing.T) {
 		cleanupGroupCaches:    true,
 		cleanupGroupDeveloper: true,
 		cleanupGroupGPU:       true,
+		cleanupGroupWinTUI:    true,
 	}
 
 	for _, def := range cleanupTargetRegistry() {
@@ -68,6 +69,15 @@ func TestCleanupRegistryDefaultCheckedFollowsGroup(t *testing.T) {
 			}
 			if !def.detectIfPresent {
 				t.Errorf("%s: group %q members must be detect-if-present", def.id, def.group)
+			}
+		case cleanupGroupWinTUI:
+			if def.defaultChecked {
+				t.Errorf("%s: group %q members must default-uncheck (user opts in)", def.id, def.group)
+			}
+			// selfUpdateStateDir() is mkdir'd unconditionally during startup,
+			// so detectIfPresent would always be true and just adds noise.
+			if def.detectIfPresent {
+				t.Errorf("%s: group %q owns its directory, detect-if-present is redundant", def.id, def.group)
 			}
 		}
 	}
@@ -183,6 +193,17 @@ func TestCleanupRegistryMinAgePolicy(t *testing.T) {
 			if def.minAge != 0 {
 				t.Errorf("%s: %q targets should not age-filter (got %s)", def.id, def.group, def.minAge)
 			}
+		case cleanupGroupWinTUI:
+			switch def.id {
+			case "wintui_self_update_handoffs":
+				if def.minAge != cleanupSelfUpdateHandoffMinAge {
+					t.Errorf("%s: must use the handoff min-age (got %s)", def.id, def.minAge)
+				}
+			default:
+				if def.minAge != 0 {
+					t.Errorf("%s: unexpected min-age %s on wintui target", def.id, def.minAge)
+				}
+			}
 		}
 	}
 
@@ -201,6 +222,7 @@ func TestCleanupRegistryHasKnownIDs(t *testing.T) {
 		"d3dscache", "thumbcache",
 		"npm_cache", "go_build", "pip_cache", "yarn_cache",
 		"nvidia_dx_cache", "amd_dx_cache", "intel_shader_cache",
+		"wintui_self_update_log", "wintui_self_update_handoffs",
 	} {
 		if _, ok := cleanupTargetByID(want); !ok {
 			t.Errorf("registry is missing expected id %q", want)

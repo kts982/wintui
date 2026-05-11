@@ -34,6 +34,7 @@ var cleanupGroupOrder = []cleanupGroup{
 	cleanupGroupCaches,
 	cleanupGroupDeveloper,
 	cleanupGroupGPU,
+	cleanupGroupWinTUI,
 }
 
 var cleanupGroupLabels = map[cleanupGroup]string{
@@ -41,6 +42,7 @@ var cleanupGroupLabels = map[cleanupGroup]string{
 	cleanupGroupCaches:    "Caches",
 	cleanupGroupDeveloper: "Developer",
 	cleanupGroupGPU:       "GPU",
+	cleanupGroupWinTUI:    "WinTUI",
 }
 
 // ── Messages ──────────────────────────────────────────────────────────
