@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // withAppSettings runs body with appSettings replaced and restored on exit.
@@ -476,4 +479,126 @@ func TestCleanupConfirmViewMentionsAVNoticeWhenAdminTargetIncluded(t *testing.T)
 			t.Errorf("confirm view with admin target should include AV-FP notice, got:\n%s", out)
 		}
 	})
+}
+
+// ── Left-column viewport ─────────────────────────────────────────────
+//
+// Synthetic screens with hand-picked targets so the test doesn't depend
+// on which detect-if-present groups are visible on the host machine.
+// Mirrors the production five-group layout — Core Temp / Caches /
+// Developer / GPU / WinTUI — at row counts that match the screenshot.
+
+func newCleanupScreenForViewportTest() cleanupScreen {
+	stub := func() string { return "" }
+	targets := []cleanupTargetDef{
+		{id: "ct1", label: "Core 1", group: cleanupGroupCoreTemp, pathFn: stub},
+		{id: "ct2", label: "Core 2", group: cleanupGroupCoreTemp, pathFn: stub},
+		{id: "ct3", label: "Core 3", group: cleanupGroupCoreTemp, pathFn: stub},
+		{id: "ct4", label: "Core 4", group: cleanupGroupCoreTemp, pathFn: stub},
+		{id: "ct5", label: "Core 5", group: cleanupGroupCoreTemp, pathFn: stub},
+		{id: "ca1", label: "Cache 1", group: cleanupGroupCaches, pathFn: stub},
+		{id: "ca2", label: "Cache 2", group: cleanupGroupCaches, pathFn: stub},
+		{id: "dv1", label: "Dev 1", group: cleanupGroupDeveloper, pathFn: stub},
+		{id: "dv2", label: "Dev 2", group: cleanupGroupDeveloper, pathFn: stub},
+		{id: "dv3", label: "Dev 3", group: cleanupGroupDeveloper, pathFn: stub},
+		{id: "gp1", label: "GPU 1", group: cleanupGroupGPU, pathFn: stub},
+		{id: "gp2", label: "GPU 2", group: cleanupGroupGPU, pathFn: stub},
+		{id: "wt1", label: "WinTUI 1", group: cleanupGroupWinTUI, pathFn: stub},
+		{id: "wt2", label: "WinTUI 2", group: cleanupGroupWinTUI, pathFn: stub},
+	}
+	visible := make([]int, len(targets))
+	for i := range targets {
+		visible[i] = i
+	}
+	return cleanupScreen{
+		state:    cleanupReady,
+		targets:  targets,
+		visible:  visible,
+		checked:  map[string]bool{},
+		results:  map[string]cleanupTargetResult{},
+		inflight: map[string]context.CancelFunc{},
+		spinner:  spinner.New(),
+	}
+}
+
+func TestCleanupRenderGroupPanelsFillsAssignedHeight(t *testing.T) {
+	s := newCleanupScreenForViewportTest()
+	const width = 80
+	cases := []struct {
+		name string
+		h    int
+	}{
+		{"generous", 40},
+		{"tight", 26},
+		{"short", 20},
+		{"ultraShort", 12},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := lipgloss.Height(s.renderGroupPanels(width, tc.h))
+			if got != tc.h {
+				t.Errorf("rendered height = %d, want %d", got, tc.h)
+			}
+		})
+	}
+}
+
+func TestCleanupShortViewportDoesNotRenderEveryGroup(t *testing.T) {
+	s := newCleanupScreenForViewportTest()
+	s.cursor = 0
+
+	out := stripANSI(s.renderGroupPanels(80, 12))
+	if !strings.Contains(out, "Core 1") {
+		t.Fatalf("focused top row must remain visible, got:\n%s", out)
+	}
+	if strings.Contains(out, "WinTUI 1") || strings.Contains(out, "WinTUI 2") {
+		t.Fatalf("short viewport should not render every group at once, got:\n%s", out)
+	}
+}
+
+func TestCleanupCursorVisibleInBottomGroupAtShortHeight(t *testing.T) {
+	s := newCleanupScreenForViewportTest()
+	// Cursor on the last row of the last group (WinTUI 2). The bottom group
+	// is the scenario from the screenshot — must remain visible even when
+	// the terminal is short enough to force scrolling somewhere.
+	s.cursor = len(s.visible) - 1
+
+	out := s.renderGroupPanels(80, 20)
+	if !strings.Contains(out, "WinTUI 2") {
+		t.Fatalf("focused row 'WinTUI 2' must remain visible at height=20, got:\n%s", out)
+	}
+	if strings.Contains(stripANSI(out), "Core 1") {
+		t.Fatalf("short viewport should scroll as one list instead of rendering every group, got:\n%s", out)
+	}
+}
+
+func TestCleanupCursorVisibleInMiddleGroupAfterViewportScroll(t *testing.T) {
+	s := newCleanupScreenForViewportTest()
+	// Cursor on Core 5 — the last row of the first group. At a height that
+	// forces the combined cleanup list to scroll, the focused row must still render.
+	s.cursor = 4 // index of "Core 5" in s.visible
+
+	out := s.renderGroupPanels(80, 20)
+	if !strings.Contains(out, "Core 5") {
+		t.Fatalf("focused row 'Core 5' must remain visible after viewport scroll, got:\n%s", out)
+	}
+}
+
+func TestCleanupCursorVisibleAtUltraShortHeight(t *testing.T) {
+	s := newCleanupScreenForViewportTest()
+	// Cursor on WinTUI 2 at a height where the full grouped list cannot fit.
+	// The single viewport must scroll to the focused row without rendering
+	// every group at once.
+	s.cursor = len(s.visible) - 1
+
+	out := s.renderGroupPanels(80, 12)
+	if !strings.Contains(out, "WinTUI 2") {
+		t.Fatalf("focused row 'WinTUI 2' must remain visible at height=12, got:\n%s", out)
+	}
+	if lipgloss.Height(out) != 12 {
+		t.Fatalf("ultra-short render exceeded budget: got height %d, want 12", lipgloss.Height(out))
+	}
+	if strings.Contains(stripANSI(out), "Core 1") {
+		t.Fatalf("ultra-short viewport should not keep the top group visible at bottom cursor, got:\n%s", out)
+	}
 }

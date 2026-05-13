@@ -7,9 +7,9 @@ import (
 )
 
 func TestAllocateSectionHeightsKeepsInstalledUsableWithManyUpdates(t *testing.T) {
-	sections := []sectionDef{
-		{title: "Updates", desiredH: 16, minH: minScrollableSectionHeight},
-		{title: "Installed", desiredH: 212, minH: minScrollableSectionHeight},
+	sections := []sectionSizing{
+		{desiredH: 16, minH: minScrollableSectionHeight},
+		{desiredH: 212, minH: minScrollableSectionHeight},
 	}
 
 	got := allocateSectionHeights(sections, 19)
@@ -26,9 +26,9 @@ func TestAllocateSectionHeightsKeepsInstalledUsableWithManyUpdates(t *testing.T)
 }
 
 func TestAllocateSectionHeightsGivesRemainderToInstalledPanel(t *testing.T) {
-	sections := []sectionDef{
-		{title: "Updates", desiredH: 4, minH: minScrollableSectionHeight},
-		{title: "Installed", desiredH: 212, minH: minScrollableSectionHeight},
+	sections := []sectionSizing{
+		{desiredH: 4, minH: minScrollableSectionHeight},
+		{desiredH: 212, minH: minScrollableSectionHeight},
 	}
 
 	got := allocateSectionHeights(sections, 19)
@@ -45,10 +45,10 @@ func TestAllocateSectionHeightsGivesRemainderToInstalledPanel(t *testing.T) {
 }
 
 func TestAllocateSectionHeightsPreservesExactQueueSection(t *testing.T) {
-	sections := []sectionDef{
-		{title: "Queue", desiredH: 3, minH: 3, exact: true},
-		{title: "Updates", desiredH: 12, minH: minScrollableSectionHeight},
-		{title: "Installed", desiredH: 40, minH: minScrollableSectionHeight},
+	sections := []sectionSizing{
+		{desiredH: 3, minH: 3, exact: true},
+		{desiredH: 12, minH: minScrollableSectionHeight},
+		{desiredH: 40, minH: minScrollableSectionHeight},
 	}
 
 	got := allocateSectionHeights(sections, 22)

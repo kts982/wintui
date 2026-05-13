@@ -533,17 +533,21 @@ func (s cleanupScreen) helpKeys() []key.Binding {
 
 // ── Selection summary ────────────────────────────────────────────────
 
+// selectedSummary returns how many rows the user has checked (regardless
+// of scan state) and the total bytes those rows would free based on the
+// scans that have come back so far. The count tracks the user's action;
+// the byte total tracks the consequence — they're allowed to disagree
+// (e.g. "5 selected, 0 B" when every checked row scanned empty, or
+// "5 selected, 1.2 GB" while scans are still landing).
 func (s cleanupScreen) selectedSummary() (count int, freed int64) {
 	for _, idx := range s.visible {
 		def := s.targets[idx]
 		if !s.checked[def.id] {
 			continue
 		}
+		count++
 		if r, ok := s.results[def.id]; ok {
 			freed += r.sizeBytes
-			if r.sizeBytes > 0 {
-				count++
-			}
 		}
 	}
 	return count, freed
@@ -600,37 +604,91 @@ func (s cleanupScreen) renderSummaryLine() string {
 	return b.String()
 }
 
-func (s cleanupScreen) renderGroupPanels(width, _ int) string {
+func (s cleanupScreen) renderGroupPanels(width, height int) string {
+	if height <= 0 {
+		return ""
+	}
 	if len(s.visible) == 0 {
-		return helpStyle.Render("  (no cleanup targets present on this machine)")
+		return lipgloss.NewStyle().
+			Height(height).
+			Render(helpStyle.Render("  (no cleanup targets present on this machine)"))
 	}
 	panelWidth := max(width-4, 20)
 
-	// Bucket visible[] indices by group, preserving registry order.
+	// Bucket visible[] indices by group, preserving registry order, and
+	// record each group's cursor offset into s.visible so we can map the
+	// global cursor to a row within one specific group.
+	type groupView struct {
+		group  cleanupGroup
+		rows   []int // indices into s.targets
+		offset int   // cursor offset into s.visible
+	}
 	byGroup := map[cleanupGroup][]int{}
 	for _, idx := range s.visible {
 		g := s.targets[idx].group
 		byGroup[g] = append(byGroup[g], idx)
 	}
-
-	var panels []string
-	viCursor := 0 // running index into s.visible to compare with s.cursor
+	var groups []groupView
+	viOffset := 0
 	for _, group := range cleanupGroupOrder {
 		rows := byGroup[group]
 		if len(rows) == 0 {
 			continue
 		}
-		var lines []string
-		for _, regIdx := range rows {
-			def := s.targets[regIdx]
-			lines = append(lines, s.renderRow(def, viCursor == s.cursor, panelWidth-4))
-			viCursor++
-		}
-		title := cleanupGroupLabels[group]
-		panel := renderTitledPanel(title, strings.Join(lines, "\n"), panelWidth, len(lines), accent)
-		panels = append(panels, panel)
+		groups = append(groups, groupView{group: group, rows: rows, offset: viOffset})
+		viOffset += len(rows)
 	}
-	return strings.Join(panels, "\n")
+
+	// Find which group contains the cursor so we can border it with accent
+	// and later keep that row inside the single left-column viewport.
+	cursorGroup := -1
+	for i, gv := range groups {
+		if s.cursor >= gv.offset && s.cursor < gv.offset+len(gv.rows) {
+			cursorGroup = i
+			break
+		}
+	}
+
+	var lines []string
+	cursorLine := 0
+	for i, gv := range groups {
+		groupLineOffset := len(lines)
+		rowLines := make([]string, 0, len(gv.rows))
+		for j, regIdx := range gv.rows {
+			def := s.targets[regIdx]
+			isFocused := (gv.offset + j) == s.cursor
+			if isFocused {
+				cursorLine = groupLineOffset + 1 + j // top border + row offset
+			}
+			rowLines = append(rowLines, s.renderRow(def, isFocused, panelWidth-4))
+		}
+
+		borderColor := dim
+		if i == cursorGroup {
+			borderColor = accent
+		}
+		title := cleanupGroupLabels[gv.group]
+		panel := renderTitledPanel(title, strings.Join(rowLines, "\n"), panelWidth, len(rowLines), borderColor)
+		lines = append(lines, strings.Split(panel, "\n")...)
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+	if cursorLine < 0 {
+		cursorLine = 0
+	}
+	if cursorLine >= len(lines) {
+		cursorLine = len(lines) - 1
+	}
+
+	start, end := scrollWindow(cursorLine, len(lines), height)
+	visible := append([]string(nil), lines[start:end]...)
+	blankLine := strings.Repeat(" ", panelWidth)
+	for len(visible) < height {
+		visible = append(visible, blankLine)
+	}
+	return strings.Join(visible, "\n")
 }
 
 func (s cleanupScreen) renderRow(def cleanupTargetDef, focused bool, innerW int) string {

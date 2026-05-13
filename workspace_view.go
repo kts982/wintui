@@ -103,6 +103,19 @@ type sectionDef struct {
 	exact    bool
 }
 
+// sectionSizing is the rendering-agnostic input to allocateSectionHeights.
+// Callers build a slice of these when they want to share the same height
+// budgeting without coupling allocation to a specific item type.
+type sectionSizing struct {
+	desiredH int // preferred panel height including borders
+	minH     int // minimum usable panel height including borders
+	exact    bool
+}
+
+func (s sectionDef) sizing() sectionSizing {
+	return sectionSizing{desiredH: s.desiredH, minH: s.minH, exact: s.exact}
+}
+
 const minScrollableSectionHeight = 6 // border(2) + at least 4 visible rows
 
 func (s workspaceScreen) renderSections(l layout) string {
@@ -224,7 +237,11 @@ func (s workspaceScreen) renderSections(l layout) string {
 		return b.String()
 	}
 
-	sectionHeights := allocateSectionHeights(sections, availableH)
+	sizings := make([]sectionSizing, len(sections))
+	for i, sec := range sections {
+		sizings[i] = sec.sizing()
+	}
+	sectionHeights := allocateSectionHeights(sizings, availableH)
 
 	// Determine which section has the cursor.
 	cursorSection := -1
@@ -255,7 +272,7 @@ func (s workspaceScreen) renderSections(l layout) string {
 	return b.String()
 }
 
-func allocateSectionHeights(sections []sectionDef, availableH int) []int {
+func allocateSectionHeights(sections []sectionSizing, availableH int) []int {
 	if len(sections) == 0 {
 		return nil
 	}
