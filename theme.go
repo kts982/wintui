@@ -18,7 +18,8 @@ var (
 	accent    = lipgloss.Color("212") // pink
 	secondary = lipgloss.Color("99")  // lavender
 	state     = lipgloss.Color("86")  // mint-cyan — "your intent / current state"
-	dim       = lipgloss.Color("240") // grey
+	dim       = lipgloss.Color("240") // grey — chrome (help bar, descriptions)
+	subtle    = lipgloss.Color("247") // readable gray — meaningful but secondary data
 	bright    = lipgloss.Color("252") // near-white
 	success   = lipgloss.Color("78")  // green
 	danger    = lipgloss.Color("196") // red
@@ -66,6 +67,9 @@ var (
 	urlStyle = lipgloss.NewStyle().Foreground(secondary).Underline(true)
 	// chipStyle is the dim brackets used for identity-only chips like source.
 	chipStyle = lipgloss.NewStyle().Foreground(dim)
+	// subtleStyle is meaningful-but-secondary data: inactive choice values,
+	// Health hint columns. Sits between bright (primary) and dim (chrome).
+	subtleStyle = lipgloss.NewStyle().Foreground(subtle)
 )
 
 // ── Helpers ────────────────────────────────────────────────────────

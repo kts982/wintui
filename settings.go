@@ -190,15 +190,21 @@ func renderSettingValue(def settingDef, val string) string {
 		return lipgloss.NewStyle().Foreground(dim).Render("○ OFF")
 
 	case settingChoice:
+		// Active value uses the data accent (cyan) so it slots into the
+		// same "this is the value" role as Cleanup's size column and
+		// Packages' version delta. Pink is reserved for structural focus
+		// (the row cursor + label), leaving the chips to do one job.
+		// Inactive alternatives use subtle (not dim) so they're readable
+		// — they're options the user *could* pick, not chrome.
 		matched := false
 		var parts []string
 		for _, c := range def.choices {
 			display := def.choiceLabel(c)
 			if c == val {
 				matched = true
-				parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("["+display+"]"))
+				parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(state).Render("["+display+"]"))
 			} else {
-				parts = append(parts, helpStyle.Render(" "+display+" "))
+				parts = append(parts, subtleStyle.Render(" "+display+" "))
 			}
 		}
 		if !matched && val != "" {

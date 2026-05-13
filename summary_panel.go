@@ -173,9 +173,10 @@ func (p summaryPanel) view() string {
 
 	var lines []string
 
-	// Package name + ID (always shown).
+	// Package name + ID (always shown). ID gets subtle — it's a meaningful
+	// identifier users often copy, not chrome.
 	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render(p.pkg.Name))
-	lines = append(lines, helpStyle.Render(p.pkg.ID))
+	lines = append(lines, subtleStyle.Render(p.pkg.ID))
 
 	// Chips: source (identity, dim), upgrade-available (state, cyan),
 	// override gear (warm yellow). Skipped when none apply.

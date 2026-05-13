@@ -713,7 +713,9 @@ func renderCheckLine(c healthCheck, width int) string {
 	status := statusStyle(c.Status).Render(fmt.Sprintf("%-4s", c.Status))
 	name := lipgloss.NewStyle().Bold(true).Width(12).Render(c.Check)
 	maxDetail := max(width-26, 20)
-	detail := helpStyle.Render(truncate(c.Details, maxDetail))
+	// The detail column carries real values (version, free GB, last scan
+	// timestamp) — readable subtle, not chrome-dim.
+	detail := subtleStyle.Render(truncate(c.Details, maxDetail))
 	return fmt.Sprintf("  %s  %s  %s", status, name, detail)
 }
 

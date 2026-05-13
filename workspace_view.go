@@ -437,12 +437,14 @@ func (s workspaceScreen) renderItemText(item workspaceItem, _ int, isCursor bool
 	// Check for a custom selected version.
 	customVer := s.selectedVersions[item.key()]
 
+	// Version columns use subtle, not dim: the version (or the upgrade
+	// delta) is the value the user is here to scan, not chrome.
 	if item.upgradeable {
 		ver := item.installed + " → " + item.available
 		if customVer != "" && customVer != item.available {
 			ver = item.installed + " → " + customVer
 		}
-		return name + "  " + helpStyle.Render(ver) + policyBadge + gear
+		return name + "  " + subtleStyle.Render(ver) + policyBadge + gear
 	}
 
 	// Install queue or search result: show version (custom or available).
@@ -452,13 +454,13 @@ func (s workspaceScreen) renderItemText(item workspaceItem, _ int, isCursor bool
 			ver = customVer
 		}
 		if ver != "" {
-			return name + "  " + helpStyle.Render(ver) + policyBadge + gear
+			return name + "  " + subtleStyle.Render(ver) + policyBadge + gear
 		}
 		return name + policyBadge + gear
 	}
 
 	// Regular installed package.
-	return name + "  " + helpStyle.Render(item.installed) + policyBadge + gear
+	return name + "  " + subtleStyle.Render(item.installed) + policyBadge + gear
 }
 
 func renderUpdatePolicyBadge(pkgID, source string) string {
