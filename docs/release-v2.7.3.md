@@ -95,3 +95,24 @@ were already using the two-axis system correctly.
 Static-surface check vs the pre-bump tree (`go tool nm | grep
 syscall/windows/__imp_`): zero new symbols, four removed.
 AV-FP risk unchanged-to-lower.
+
+## Verification
+
+VirusTotal scans of the published artifacts for v2.7.3 (run 2026-05-14):
+
+| Asset | SHA256 | Detections | Report |
+|---|---|---|---|
+| `wintui_2.7.3_windows_amd64.exe` (6.8 MB) | `4e007ec2fc6c…` | 1/71 | [VT report](https://www.virustotal.com/gui/file/4e007ec2fc6c97f7281702a29b99b99eb7559ded27b690b1e7b79250a33ef3cb) |
+| `wintui_2.7.3_windows_amd64.zip` (2.5 MB) | `b0ed07198f3f…` | 0/68 | [VT report](https://www.virustotal.com/gui/file/b0ed07198f3f6fb70c47641ad002199659abc3851794192330b3bc527d377b5a) |
+| `wintui_2.7.3_windows_arm64.exe` (6.3 MB) | `ff6d2bbdbf62…` | 1/69 | [VT report](https://www.virustotal.com/gui/file/ff6d2bbdbf6294a371bfa0322378dbb7aa7497b2dc9ad6af202cc545af4f697e) |
+| `wintui_2.7.3_windows_arm64.zip` (2.2 MB) | `8df87a46c94e…` | 0/67 | [VT report](https://www.virustotal.com/gui/file/8df87a46c94e4443b3c655513acd0a8afb7ba6cd7f5807b0b7f824b83eca7e3f) |
+
+Detections at scan time were single-vendor low-signal ML/reputation noise. Microsoft Defender returned clean across all artifacts.
+
+Full SHA256 hashes:
+
+- `wintui_2.7.3_windows_amd64.exe`: `4e007ec2fc6c97f7281702a29b99b99eb7559ded27b690b1e7b79250a33ef3cb`
+- `wintui_2.7.3_windows_amd64.zip`: `b0ed07198f3f6fb70c47641ad002199659abc3851794192330b3bc527d377b5a`
+- `wintui_2.7.3_windows_arm64.exe`: `ff6d2bbdbf6294a371bfa0322378dbb7aa7497b2dc9ad6af202cc545af4f697e`
+- `wintui_2.7.3_windows_arm64.zip`: `8df87a46c94e4443b3c655513acd0a8afb7ba6cd7f5807b0b7f824b83eca7e3f`
+
