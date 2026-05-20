@@ -1,11 +1,11 @@
 package main
 
 import (
+	"image/color"
 	"time"
 
 	"charm.land/bubbles/v2/progress"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 // progressBar wraps the bubbles progress component with auto-tick for
@@ -20,12 +20,35 @@ type progressTickMsg time.Time
 
 func newProgressBar(width int) progressBar {
 	p := progress.New(
-		progress.WithColors(lipgloss.Color("#FF6BD6"), lipgloss.Color("#6BFFC8")), // pink → mint gradient
+		progress.WithColors(progressColors()...),
 		progress.WithWidth(width),
 	)
 	// Start active by default — screens that start in loading state need this
 	// because init() is a value receiver and can't persist state changes.
 	return progressBar{bar: p, active: true}
+}
+
+// progressColors returns the two endpoint colors the progress bar
+// blends between, sourced from the active palette's LogoStops. Kept
+// as a func so newProgressBar and applyTheme stay in sync.
+func progressColors() []color.Color {
+	return []color.Color{
+		activePalette.LogoStops[0],
+		activePalette.LogoStops[1],
+	}
+}
+
+// applyTheme rebuilds the underlying progress.Model with current
+// palette colors while preserving width, percent, and active state.
+// The bubbles progress API has no setter for colors — WithColors is
+// only applied at construction — so we re-construct.
+func (p progressBar) applyTheme() progressBar {
+	w := p.bar.Width()
+	p.bar = progress.New(
+		progress.WithColors(progressColors()...),
+		progress.WithWidth(w),
+	)
+	return p
 }
 
 // start begins the animated progress.

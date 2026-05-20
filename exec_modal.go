@@ -53,6 +53,15 @@ func newExecModal(action retryOp, items []batchItem) execModal {
 	return m
 }
 
+// applyTheme refreshes the spinner style from the active palette.
+// Pointer receiver because workspaceScreen holds *execModal.
+func (m *execModal) applyTheme() {
+	if m == nil {
+		return
+	}
+	m.spinner.Style = lipgloss.NewStyle().Foreground(accent)
+}
+
 func (m execModal) actionTitle() string {
 	if m.action == retryOpApply {
 		return "Apply"

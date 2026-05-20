@@ -26,6 +26,13 @@ func newSettingsScreen() settingsScreen {
 	}
 }
 
+// applyTheme is a no-op for the settings screen — it holds no
+// model-state styles; every render goes through inline
+// lipgloss.NewStyle().Foreground(...) calls that read the package
+// palette on the fly. Still implemented so it satisfies the
+// themeAware contract (asserted by TestAllScreensImplementThemeAware).
+func (s settingsScreen) applyTheme() screen { return s }
+
 func (s settingsScreen) init() tea.Cmd { return nil }
 
 func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {

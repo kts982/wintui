@@ -213,6 +213,13 @@ type Settings struct {
 	// "" (safe, default), "all", or "off". See CleanupAutoScan constants.
 	CleanupAutoScan CleanupAutoScan `json:"cleanup_auto_scan,omitempty"`
 
+	// Theme selects the active color palette. "" or "default" means the
+	// built-in Sweet Pink theme. PR B adds the picker UI plus additional
+	// curated palettes (Catppuccin, Nord, Dracula, Tokyo Night,
+	// Monochrome). Unknown values fall back to default at apply time
+	// via lookupTheme.
+	Theme string `json:"theme,omitempty"`
+
 	// CleanupEnabledTargets is the set of cleanup target IDs the user has
 	// opted into beyond the registry's default-checked safe set. Default-on
 	// targets are not persisted here (that's noise); only positive opt-ins
@@ -769,6 +776,7 @@ func settingsEqual(a, b Settings) bool {
 		a.ToastNotifications == b.ToastNotifications &&
 		normalizeCleanupAutoScan(a.CleanupAutoScan) == normalizeCleanupAutoScan(b.CleanupAutoScan) &&
 		stringSetsEqual(a.CleanupEnabledTargets, b.CleanupEnabledTargets) &&
+		a.Theme == b.Theme &&
 		packagesEqual(a.Packages, b.Packages)
 }
 

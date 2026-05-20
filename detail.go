@@ -108,6 +108,13 @@ func newDetailPanel() detailPanel {
 	return detailPanel{state: detailHidden, spinner: sp, windowWidth: 80, windowHeight: 24}
 }
 
+// applyTheme refreshes the spinner style from the active palette,
+// preserving the spinner's tick state.
+func (p detailPanel) applyTheme() detailPanel {
+	p.spinner.Style = lipgloss.NewStyle().Foreground(accent)
+	return p
+}
+
 func (p detailPanel) showWithVersion(pkg Package, selectedVersion string, allowVersionSelect bool) (detailPanel, tea.Cmd) {
 	samePackage := p.pkgID == pkg.ID && p.source == pkg.Source
 

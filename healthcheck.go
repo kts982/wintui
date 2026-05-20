@@ -549,6 +549,14 @@ func newHealthcheckScreen() healthcheckScreen {
 	return healthcheckScreen{state: hcLoading, spinner: sp, width: 80, height: 24}
 }
 
+// applyTheme refreshes the healthcheck spinner style. Everything else
+// in healthcheck.go uses inline-styled rendering that picks up the
+// global palette on its own.
+func (s healthcheckScreen) applyTheme() screen {
+	s.spinner.Style = lipgloss.NewStyle().Foreground(accent)
+	return s
+}
+
 func (s healthcheckScreen) init() tea.Cmd {
 	return tea.Batch(s.spinner.Tick, func() tea.Msg {
 		report, err := runHealthcheck()

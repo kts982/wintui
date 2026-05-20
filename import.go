@@ -102,6 +102,15 @@ func newImportModel() importModel {
 	}
 }
 
+// applyTheme refreshes the importer's spinner style and cascades into
+// the embedded progressBar. Preserves all transient state — scanning
+// progress, batch counters, the in-flight context.
+func (m importModel) applyTheme() importModel {
+	m.spinner.Style = lipgloss.NewStyle().Foreground(accent)
+	m.progress = m.progress.applyTheme()
+	return m
+}
+
 // activate puts the importer into its initial scanning state and returns
 // the cmd batch the host screen should run. Callers (workspace) embed an
 // importModel as a field, call activate when the user invokes import,

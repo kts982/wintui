@@ -49,3 +49,13 @@ func (f listFilter) apply() listFilter {
 	f.input.Blur()
 	return f
 }
+
+// applyTheme refreshes the textinput's prompt/cursor colors from the
+// active palette. Preserves the input's current value/focus state.
+func (f listFilter) applyTheme() listFilter {
+	styles := f.input.Styles()
+	styles.Focused.Prompt = lipgloss.NewStyle().Foreground(accent)
+	styles.Cursor.Color = accent
+	f.input.SetStyles(styles)
+	return f
+}

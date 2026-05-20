@@ -119,6 +119,28 @@ func newWorkspaceScreen() workspaceScreen {
 	}
 }
 
+// applyTheme returns a workspaceScreen with all model-held styles
+// refreshed from the active palette. Cascades into every sub-model
+// that holds baked-in styles (filter, detail, exec, modal, importer).
+// summaryPanel is omitted on purpose — it has no model-held styles.
+func (s workspaceScreen) applyTheme() screen {
+	s.spinner.Style = lipgloss.NewStyle().Foreground(accent)
+
+	siStyles := s.searchInput.Styles()
+	siStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(accent)
+	siStyles.Cursor.Color = accent
+	s.searchInput.SetStyles(siStyles)
+
+	s.filter = s.filter.applyTheme()
+	s.detail = s.detail.applyTheme()
+	s.exec = s.exec.applyTheme()
+	s.importer = s.importer.applyTheme()
+	if s.modal != nil {
+		s.modal.applyTheme()
+	}
+	return s
+}
+
 // searchResultsMsg carries search results back from the async search.
 type searchResultsMsg struct {
 	query   string

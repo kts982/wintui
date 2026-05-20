@@ -125,3 +125,10 @@ func (l *executionLog) sync() {
 		l.vp.GotoBottom()
 	}
 }
+
+// applyTheme rebuilds the viewport's border style from the active
+// palette. Preserves content, scroll position, and follow state.
+func (l executionLog) applyTheme() executionLog {
+	l.vp.Style = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true).BorderForeground(accent)
+	return l
+}

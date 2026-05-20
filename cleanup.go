@@ -105,6 +105,15 @@ func newCleanupScreen() cleanupScreen {
 	return s
 }
 
+// applyTheme refreshes the cleanup screen's spinner style. All other
+// styles in cleanup.go are inline lipgloss.NewStyle().Foreground(...)
+// calls that re-read the global palette every frame, so no further
+// work is needed here.
+func (s cleanupScreen) applyTheme() screen {
+	s.spinner.Style = lipgloss.NewStyle().Foreground(accent)
+	return s
+}
+
 // computeVisible filters detect-if-present targets whose resolved paths
 // don't exist. Called at construction; not refreshed during a session
 // (a freshly-installed Go toolchain mid-session won't appear until next launch).

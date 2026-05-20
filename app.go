@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"image/color"
 	"math"
 	"strings"
 	"time"
@@ -86,6 +85,26 @@ type fullHelpProvider interface {
 	fullHelpKeys() [][]key.Binding
 }
 
+// themeAware is implemented by screens (and sub-components) that hold
+// styles inside model state — spinners, text inputs, viewport borders,
+// progress bars. setActiveTheme only refreshes package-level state, so
+// these need an explicit retheme pass.
+//
+// applyTheme returns the updated value because screens are stored in
+// app.screens as interface values backed by value receivers; pointer
+// mutation would not survive.
+type themeAware interface {
+	applyTheme() screen
+}
+
+// themeChangedMsg signals that the active theme/palette has changed
+// and every live screen should re-derive its model-held styles.
+// Dispatched by the Settings screen after a theme cycle, and by the
+// app itself after a tea.BackgroundColorMsg flips the light/dark
+// variant. wrapScreenCmd has a passthrough case so it isn't routed
+// back to the originating screen.
+type themeChangedMsg struct{}
+
 // ── ASCII art header ───────────────────────────────────────────────
 
 var asciiLogo = []string{
@@ -95,17 +114,6 @@ var asciiLogo = []string{
 	`██║███╗██║ ██║ ██║╚██╗██║    ██║    ██║   ██║ ██║`,
 	`╚███╔███╔╝ ██║ ██║ ╚████║    ██║    ╚██████╔╝ ██║`,
 	` ╚══╝╚══╝  ╚═╝ ╚═╝  ╚═══╝    ╚═╝     ╚═════╝  ╚═╝`,
-}
-
-var logoGradient = []color.Color{
-	lipgloss.Color("212"), // bright pink
-	lipgloss.Color("211"), // pink
-	lipgloss.Color("206"), // salmon
-	lipgloss.Color("170"), // magenta
-	lipgloss.Color("134"), // purple
-	lipgloss.Color("99"),  // lavender
-	lipgloss.Color("105"), // light purple
-	lipgloss.Color("141"), // periwinkle
 }
 
 // ── App model ──────────────────────────────────────────────────────
@@ -134,13 +142,16 @@ type app struct {
 	logoSpring   harmonica.Spring
 	logoTime     float64 // accumulated time for wave target
 	retryReq     *retryRequest
+	// bgIsDark mirrors the detected terminal background. Default true
+	// because the overwhelming majority of terminals are dark and our
+	// theme assumes dark on first frame. Updated when a
+	// tea.BackgroundColorMsg arrives.
+	bgIsDark bool
 }
 
 func newApp(retryReq *retryRequest) app {
 	h := help.New()
-	h.Styles.ShortKey = lipgloss.NewStyle().Foreground(accent)
-	h.Styles.ShortDesc = lipgloss.NewStyle().Foreground(dim)
-	h.Styles.ShortSeparator = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	restyleHelp(&h)
 
 	rows := make([]logoRow, len(asciiLogo))
 	for i := range rows {
@@ -156,11 +167,43 @@ func newApp(retryReq *retryRequest) app {
 		logoRows:   rows,
 		logoSpring: harmonica.NewSpring(harmonica.FPS(15), 2.0, 0.8),
 		retryReq:   retryReq,
+		bgIsDark:   true,
 	}
 	if retryReq != nil {
 		a.activeTab = tabForRetry(*retryReq)
 	}
 	a.screens[tabs[a.activeTab].id] = createScreen(tabs[a.activeTab].id)
+	return a
+}
+
+// restyleHelp paints all six help slots from the active palette.
+// Earlier versions only set ShortKey/ShortDesc/ShortSeparator and
+// left the full-help slots at bubbles' defaults. Called from newApp
+// and after every theme change.
+func restyleHelp(h *help.Model) {
+	keyStyle := lipgloss.NewStyle().Foreground(accent)
+	descStyle := lipgloss.NewStyle().Foreground(dim)
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+
+	h.Styles.ShortKey = keyStyle
+	h.Styles.ShortDesc = descStyle
+	h.Styles.ShortSeparator = sepStyle
+	h.Styles.FullKey = keyStyle
+	h.Styles.FullDesc = descStyle
+	h.Styles.FullSeparator = sepStyle
+	h.Styles.Ellipsis = sepStyle
+}
+
+// rethemeScreens walks the screens map and lets every screen that
+// implements themeAware swap in a refreshed value. Called after
+// setActiveTheme so model-held styles (spinners, text inputs,
+// viewports, progress bars) follow the package-level rebind.
+func (a app) rethemeScreens() app {
+	for id, s := range a.screens {
+		if ta, ok := s.(themeAware); ok {
+			a.screens[id] = ta.applyTheme()
+		}
+	}
 	return a
 }
 
@@ -171,7 +214,15 @@ func logoTick() tea.Cmd {
 }
 
 func (a app) Init() tea.Cmd {
-	cmds := []tea.Cmd{a.wrapScreenCmd(a.currentScreenID(), a.activeScreen().init()), logoTick()}
+	cmds := []tea.Cmd{
+		a.wrapScreenCmd(a.currentScreenID(), a.activeScreen().init()),
+		logoTick(),
+		// tea.RequestBackgroundColor is itself a tea.Cmd (signature
+		// func() tea.Msg), so reference it without parens. The reply
+		// arrives asynchronously; the first frames render with the
+		// assumed-dark default until it lands.
+		tea.RequestBackgroundColor,
+	}
 	if a.retryReq != nil {
 		req := *a.retryReq
 		cmds = append(cmds, func() tea.Msg { return startRetryMsg{req: req} })
@@ -268,6 +319,21 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case packageDataChangedMsg:
 		return a.handlePackageDataChanged(msg)
+
+	case tea.BackgroundColorMsg:
+		dark := msg.IsDark()
+		if dark == a.bgIsDark {
+			return a, nil
+		}
+		a.bgIsDark = dark
+		setActiveTheme(appSettings.Theme, a.bgIsDark)
+		restyleHelp(&a.help)
+		return a.rethemeScreens(), nil
+
+	case themeChangedMsg:
+		setActiveTheme(appSettings.Theme, a.bgIsDark)
+		restyleHelp(&a.help)
+		return a.rethemeScreens(), nil
 	}
 
 	return a.updateScreen(a.currentScreenID(), msg)
@@ -357,6 +423,7 @@ func (a app) View() tea.View {
 	v := tea.NewView(rendered)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+	v.WindowTitle = "WinTUI"
 	return v
 }
 
@@ -402,20 +469,9 @@ func (a app) renderLogo() string {
 }
 
 // ── Tab bar rendering ──────────────────────────────────────────────
-
-var (
-	tabBoxActive = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(accent).
-			Foreground(accent).
-			Bold(true).
-			Padding(0, 1)
-
-	tabBoxInactive = lipgloss.NewStyle().
-			Border(lipgloss.HiddenBorder()).
-			Foreground(dim).
-			Padding(0, 1)
-)
+//
+// tabBoxActive/tabBoxInactive live in theme.go alongside the rest of
+// the cached styles so the theme rebuild path owns the entire cache.
 
 func (a app) renderTabBar() string {
 	var parts []string
@@ -568,6 +624,11 @@ func (a app) wrapScreenCmd(id screenID, cmd tea.Cmd) tea.Cmd {
 		case switchScreenMsg:
 			return msg
 		case packageDataChangedMsg:
+			return msg
+		case themeChangedMsg:
+			// Theme changes are app-scope; without this passthrough
+			// the Settings screen's emission would get wrapped into a
+			// screenCmdMsg and routed right back to itself.
 			return msg
 		case tea.QuitMsg:
 			return msg
