@@ -42,6 +42,11 @@ var rootCmd = &cobra.Command{
   wintui check --json              machine-readable output (--json works on check, list, show, doctor)`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		appSettings = LoadSettings()
+		// Apply the saved theme before any TUI/CLI rendering starts.
+		// Default assumes a dark terminal — app.Init follows up with
+		// tea.RequestBackgroundColor and flips to the light variant
+		// (when defined) once the terminal replies.
+		setActiveTheme(normalizeTheme(appSettings.Theme), true)
 		cleanupStaleSelfUpdateHelpers()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {

@@ -36,6 +36,7 @@ func (s settingsScreen) applyTheme() screen { return s }
 func (s settingsScreen) init() tea.Cmd { return nil }
 
 func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
@@ -48,9 +49,9 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.cursor++
 			}
 		case "enter", "space", "right", "l":
-			s.cycleForward()
+			cmd = s.cycleForward()
 		case "left", "h":
-			s.cycleBackward()
+			cmd = s.cycleBackward()
 		case "s":
 			if err := SaveSettings(appSettings); err != nil {
 				s.errMsg = "Save failed: " + err.Error()
@@ -65,6 +66,8 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.saved = false
 			s.dirty = !settingsEqual(appSettings, s.diskState)
 			s.errMsg = ""
+			// Reset can change the active theme; always re-broadcast.
+			cmd = emitThemeChanged
 		}
 
 	case tea.MouseClickMsg:
@@ -72,14 +75,33 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			contentY := msg.Y - 9 // header + tab + title offset
 			if contentY >= 0 && contentY < len(settingDefs) {
 				s.cursor = contentY
-				s.cycleForward()
+				cmd = s.cycleForward()
 			}
 		}
 	}
-	return s, nil
+	return s, cmd
 }
 
-func (s *settingsScreen) cycleForward() {
+// themeKeys is the set of setting keys whose changes need to broadcast
+// themeChangedMsg so the app re-applies the palette and reskins every
+// model-held style. Centralized so cycleForward/cycleBackward/reset
+// all stay in sync.
+var themeKeys = map[string]struct{}{
+	"theme":            {},
+	"theme_background": {},
+}
+
+func isThemeKey(key string) bool {
+	_, ok := themeKeys[key]
+	return ok
+}
+
+// emitThemeChanged is a tea.Cmd that produces a themeChangedMsg.
+// Routed through wrapScreenCmd's passthrough case so the app sees it
+// instead of it being returned to the settings screen.
+func emitThemeChanged() tea.Msg { return themeChangedMsg{} }
+
+func (s *settingsScreen) cycleForward() tea.Cmd {
 	def := settingDefs[s.cursor]
 	switch def.stype {
 	case settingToggle:
@@ -104,14 +126,17 @@ func (s *settingsScreen) cycleForward() {
 	s.saved = false
 	s.dirty = !settingsEqual(appSettings, s.diskState)
 	cache.invalidate()
+	if isThemeKey(def.key) {
+		return emitThemeChanged
+	}
+	return nil
 }
 
-func (s *settingsScreen) cycleBackward() {
+func (s *settingsScreen) cycleBackward() tea.Cmd {
 	def := settingDefs[s.cursor]
 	switch def.stype {
 	case settingToggle:
-		s.cycleForward() // toggle is the same either direction
-		return
+		return s.cycleForward() // toggle is the same either direction
 	case settingChoice:
 		cur := appSettings.getValue(def.key)
 		idx := 0
@@ -130,6 +155,10 @@ func (s *settingsScreen) cycleBackward() {
 	s.saved = false
 	s.dirty = !settingsEqual(appSettings, s.diskState)
 	cache.invalidate()
+	if isThemeKey(def.key) {
+		return emitThemeChanged
+	}
+	return nil
 }
 
 func (s settingsScreen) view(width, height int) string {
@@ -197,6 +226,15 @@ func renderSettingValue(def settingDef, val string) string {
 		return lipgloss.NewStyle().Foreground(dim).Render("○ OFF")
 
 	case settingChoice:
+		// The theme picker has long labels — rendering all inline
+		// (the default below) would overflow narrow rows. Show just
+		// the current value framed by arrows, like a stepper.
+		if def.key == "theme" {
+			arrow := lipgloss.NewStyle().Foreground(dim).Render
+			cur := lipgloss.NewStyle().Bold(true).Foreground(state).Render(def.choiceLabel(val))
+			return arrow("◂ ") + cur + arrow(" ▸")
+		}
+
 		// Active value uses the data accent (cyan) so it slots into the
 		// same "this is the value" role as Cleanup's size column and
 		// Packages' version delta. Pink is reserved for structural focus

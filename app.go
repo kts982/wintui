@@ -183,7 +183,7 @@ func newApp(retryReq *retryRequest) app {
 func restyleHelp(h *help.Model) {
 	keyStyle := lipgloss.NewStyle().Foreground(accent)
 	descStyle := lipgloss.NewStyle().Foreground(dim)
-	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	sepStyle := lipgloss.NewStyle().Foreground(dim)
 
 	h.Styles.ShortKey = keyStyle
 	h.Styles.ShortDesc = descStyle
@@ -326,12 +326,12 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.bgIsDark = dark
-		setActiveTheme(appSettings.Theme, a.bgIsDark)
+		setActiveTheme(normalizeTheme(appSettings.Theme), a.bgIsDark)
 		restyleHelp(&a.help)
 		return a.rethemeScreens(), nil
 
 	case themeChangedMsg:
-		setActiveTheme(appSettings.Theme, a.bgIsDark)
+		setActiveTheme(normalizeTheme(appSettings.Theme), a.bgIsDark)
 		restyleHelp(&a.help)
 		return a.rethemeScreens(), nil
 	}
@@ -424,6 +424,20 @@ func (a app) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = "WinTUI"
+
+	// Optional terminal background tinting via OSC 11. Only paint when
+	// the user explicitly opted in AND the active palette ships a
+	// Background. The default theme intentionally doesn't, so toggling
+	// the setting with no theme picked is a graceful no-op.
+	if normalizeThemeBackground(appSettings.ThemeBackground) == ThemeBackgroundTheme {
+		if activePalette.Background != nil {
+			v.BackgroundColor = activePalette.Background
+		}
+		if activePalette.Foreground != nil {
+			v.ForegroundColor = activePalette.Foreground
+		}
+	}
+
 	return v
 }
 

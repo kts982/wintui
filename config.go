@@ -78,6 +78,36 @@ func normalizeCleanupAutoScan(c CleanupAutoScan) CleanupAutoScan {
 	}
 }
 
+// ThemeBackground controls whether WinTUI paints the terminal
+// background from the active palette via tea.View.BackgroundColor
+// (OSC 11). Default is "terminal" — leave the user's terminal alone.
+// "theme" opts into the palette's Background. Unknown values
+// normalize back to "terminal" so a hand-edited settings.json can't
+// silently override the safe default.
+type ThemeBackground string
+
+const (
+	ThemeBackgroundTerminal ThemeBackground = ""      // default: don't touch terminal bg
+	ThemeBackgroundTheme    ThemeBackground = "theme" // paint palette.Background via OSC 11
+)
+
+func normalizeThemeBackground(b ThemeBackground) ThemeBackground {
+	if b == ThemeBackgroundTheme {
+		return ThemeBackgroundTheme
+	}
+	return ThemeBackgroundTerminal
+}
+
+// normalizeTheme returns the theme ID if it's known, else "default".
+// Used at apply time so a hand-edited settings.json with a garbage
+// value can't crash startup.
+func normalizeTheme(id string) string {
+	if _, ok := themes[id]; ok {
+		return id
+	}
+	return "default"
+}
+
 // PackageOverride holds per-package option overrides and ignore rules.
 // Empty/nil fields mean "use the global default".
 type PackageOverride struct {
@@ -214,11 +244,16 @@ type Settings struct {
 	CleanupAutoScan CleanupAutoScan `json:"cleanup_auto_scan,omitempty"`
 
 	// Theme selects the active color palette. "" or "default" means the
-	// built-in Sweet Pink theme. PR B adds the picker UI plus additional
-	// curated palettes (Catppuccin, Nord, Dracula, Tokyo Night,
-	// Monochrome). Unknown values fall back to default at apply time
-	// via lookupTheme.
+	// built-in Sweet Pink theme. Curated set: wintui, catppuccin, nord,
+	// dracula, tokyonight, ember, mono. Unknown values fall back to default at
+	// apply time via lookupTheme.
 	Theme string `json:"theme,omitempty"`
+
+	// ThemeBackground controls whether the active palette tints the
+	// terminal background (via tea.View.BackgroundColor / OSC 11).
+	// Default "" (=terminal) leaves the user's terminal alone. "theme"
+	// opts in. See ThemeBackground constants.
+	ThemeBackground ThemeBackground `json:"theme_background,omitempty"`
 
 	// CleanupEnabledTargets is the set of cleanup target IDs the user has
 	// opted into beyond the registry's default-checked safe set. Default-on
@@ -694,6 +729,58 @@ var settingDefs = []settingDef{
 			"off": "Never auto-scan. Press s to size focused row, r to rescan.",
 		},
 	},
+	themeSettingDef,
+	{
+		key:     "theme_background",
+		label:   "Theme Background",
+		desc:    "Tint the terminal background from the active theme",
+		detail:  "When set to \"theme\", WinTUI tints the terminal background with the active palette's color via OSC 11.\nDefault \"terminal\" leaves your terminal background untouched (recommended on most terminals).\nThe default Sweet Pink theme does not define a background — switch to WinTUI Midnight, Catppuccin, Nord, Dracula, Tokyo Night, Ember, or Monochrome before enabling.\nSupport varies across terminals; if your terminal doesn't honor OSC 11, this setting is a no-op.",
+		stype:   settingChoice,
+		choices: []string{"", "theme"},
+		choiceLabels: map[string]string{
+			"":      "terminal",
+			"theme": "theme",
+		},
+		choiceHints: map[string]string{
+			"":      "Leave the terminal's background unchanged.",
+			"theme": "Paint the active palette's background color via OSC 11.",
+		},
+	},
+}
+
+// themeSettingDef is built lazily so settingDefs can stay a var. The
+// choice list, labels, and hints are derived from the themes map +
+// themeOrder so adding a new palette in theme.go automatically lands
+// in the picker without an entry in two places.
+var themeSettingDef = buildThemeSettingDef()
+
+func buildThemeSettingDef() settingDef {
+	choices := make([]string, 0, len(themeOrder))
+	labels := make(map[string]string, len(themeOrder))
+	hints := make(map[string]string, len(themeOrder))
+	for _, id := range themeOrder {
+		t, ok := themes[id]
+		if !ok {
+			continue
+		}
+		key := id
+		if id == "default" {
+			key = "" // align with normalizeTheme("") → "default"
+		}
+		choices = append(choices, key)
+		labels[key] = t.Label
+		hints[key] = "Use the " + t.Label + " palette."
+	}
+	return settingDef{
+		key:          "theme",
+		label:        "Color Theme",
+		desc:         "Active color palette",
+		detail:       "Cycles through the curated theme set. Each theme includes a light and dark variant; WinTUI switches variants automatically when the terminal reports a light background.",
+		stype:        settingChoice,
+		choices:      choices,
+		choiceLabels: labels,
+		choiceHints:  hints,
+	}
 }
 
 // getValue returns the current value for a setting key.
@@ -725,6 +812,17 @@ func (s Settings) getValue(key string) string {
 		return boolStr(s.ToastNotifications)
 	case "cleanup_auto_scan":
 		return string(normalizeCleanupAutoScan(s.CleanupAutoScan))
+	case "theme":
+		// Normalize "default" back to "" so the picker shows the
+		// canonical default-slot label rather than a literal "default"
+		// entry the user never picked.
+		id := normalizeTheme(s.Theme)
+		if id == "default" {
+			return ""
+		}
+		return id
+	case "theme_background":
+		return string(normalizeThemeBackground(s.ThemeBackground))
 	}
 	return ""
 }
@@ -758,6 +856,13 @@ func (s *Settings) setValue(key, val string) {
 		s.ToastNotifications = val == "true"
 	case "cleanup_auto_scan":
 		s.CleanupAutoScan = normalizeCleanupAutoScan(CleanupAutoScan(val))
+	case "theme":
+		s.Theme = normalizeTheme(val)
+		if s.Theme == "default" {
+			s.Theme = "" // persist the canonical "I haven't picked" value
+		}
+	case "theme_background":
+		s.ThemeBackground = normalizeThemeBackground(ThemeBackground(val))
 	}
 }
 
@@ -776,7 +881,8 @@ func settingsEqual(a, b Settings) bool {
 		a.ToastNotifications == b.ToastNotifications &&
 		normalizeCleanupAutoScan(a.CleanupAutoScan) == normalizeCleanupAutoScan(b.CleanupAutoScan) &&
 		stringSetsEqual(a.CleanupEnabledTargets, b.CleanupEnabledTargets) &&
-		a.Theme == b.Theme &&
+		normalizeTheme(a.Theme) == normalizeTheme(b.Theme) &&
+		normalizeThemeBackground(a.ThemeBackground) == normalizeThemeBackground(b.ThemeBackground) &&
 		packagesEqual(a.Packages, b.Packages)
 }
 

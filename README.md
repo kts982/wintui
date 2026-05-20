@@ -183,10 +183,14 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 | Auto Elevate | automatically request admin rights |
 | WinTUI Auto Update | check for and apply WinTUI's own update before launch |
 | Toast Notifications | Windows toast on TUI batch finish, scheduled `wintui upgrade --auto/--all`, and `wintui check` finding updates (off by default) |
+| Color Theme | Sweet Pink, WinTUI Midnight, Catppuccin, Nord, Dracula, Tokyo Night, Ember, or Monochrome |
+| Theme Background | terminal / theme background tinting |
 
 **Action Mode: Silent + Auto Elevate** runs all install/upgrade/uninstall operations through the elevated helper upfront, avoiding UAC popups from installers that elevate themselves.
 
 **Auto Elevate** (without silent mode) retries automatically on hard permission errors. When a batch finishes with failures, the result modal offers `Ctrl+E` to retry only the failed elevation-candidate packages.
+
+**Theme Background** defaults to `terminal`, which leaves your terminal's own background untouched. Set it to `theme` if you want WinTUI to request the active palette's background color; support varies by terminal, so unsupported terminals simply keep their existing background.
 
 ### Per-Package Rules
 
