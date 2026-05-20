@@ -75,20 +75,24 @@ ANSI codes.
 - Help separator now sources from the palette `dim` slot instead of
   hardcoded ANSI 238, so Monochrome and Ember Dawn read correctly.
 
+
 ## Verification
 
-VirusTotal scans of the published artifacts for v2.8.0 (run 2026-05-DD):
+VirusTotal scans of the published artifacts for v2.8.0 (run 2026-05-20):
 
 | Asset | SHA256 | Detections | Report |
 |---|---|---|---|
-| `wintui_2.8.0_windows_amd64.exe` | `…` | …/… | … |
-| `wintui_2.8.0_windows_amd64.zip` | `…` | …/… | … |
-| `wintui_2.8.0_windows_arm64.exe` | `…` | …/… | … |
-| `wintui_2.8.0_windows_arm64.zip` | `…` | …/… | … |
+| `wintui_2.8.0_windows_amd64.exe` (6.8 MB) | `1d4bf22786a2…` | 2/75 | [VT report](https://www.virustotal.com/gui/file/1d4bf22786a2f6f0261c33509995bbb55933e4ebf93d037181f05798b2a6e2a5) |
+| `wintui_2.8.0_windows_amd64.zip` (2.5 MB) | `cea069630a27…` | 1/75 | [VT report](https://www.virustotal.com/gui/file/cea069630a27510fb848690fb74abc9a13d259f7a847105aa2369dff5d753a39) |
+| `wintui_2.8.0_windows_arm64.exe` (6.3 MB) | `4a9269ff526a…` | 1/75 | [VT report](https://www.virustotal.com/gui/file/4a9269ff526a81674010732918d5f1d4e0d52759b85ed1db94ae8ce2040d01ad) |
+| `wintui_2.8.0_windows_arm64.zip` (2.2 MB) | `1a46e7d201d9…` | 0/75 | [VT report](https://www.virustotal.com/gui/file/1a46e7d201d9aaff34d9344e3eec2a302a746be1e8a7513e350da777f6c2b295) |
+
+Detections at scan time were single-vendor low-signal ML/reputation noise (Bkav, Trapmine, McAfeeD). Microsoft Defender returned clean across all artifacts.
 
 Full SHA256 hashes:
 
-- `wintui_2.8.0_windows_amd64.exe`: `…`
-- `wintui_2.8.0_windows_amd64.zip`: `…`
-- `wintui_2.8.0_windows_arm64.exe`: `…`
-- `wintui_2.8.0_windows_arm64.zip`: `…`
+- `wintui_2.8.0_windows_amd64.exe`: `1d4bf22786a2f6f0261c33509995bbb55933e4ebf93d037181f05798b2a6e2a5`
+- `wintui_2.8.0_windows_amd64.zip`: `cea069630a27510fb848690fb74abc9a13d259f7a847105aa2369dff5d753a39`
+- `wintui_2.8.0_windows_arm64.exe`: `4a9269ff526a81674010732918d5f1d4e0d52759b85ed1db94ae8ce2040d01ad`
+- `wintui_2.8.0_windows_arm64.zip`: `1a46e7d201d9aaff34d9344e3eec2a302a746be1e8a7513e350da777f6c2b295`
+
