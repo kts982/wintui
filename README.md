@@ -77,6 +77,34 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - `Ctrl+E` elevated retry on the result modal when auto-elevate is off
 - Responsive layout — detail panel hides on narrow terminals, compact header on small screens
 
+## Themes
+
+Eight curated palettes ship in the box. Each one has matching Dark
+and Light variants — WinTUI detects your terminal background at
+startup and picks the right one, so themes read correctly on both
+without any configuration.
+
+![WinTUI cycling through every theme](docs/themes/cycle.gif)
+
+Open **Settings** (tab `4`), arrow down to **Color Theme**, then use
+`←` / `→` (or `Space`) to cycle. Changes apply live.
+
+<details>
+<summary><b>Theme gallery</b> — click to expand all eight stills</summary>
+
+| | |
+|---|---|
+| ![Sweet Pink](docs/themes/sweet-pink.png) **Sweet Pink** — the default | ![WinTUI Midnight](docs/themes/wintui-midnight.png) **WinTUI Midnight** |
+| ![Catppuccin](docs/themes/catppuccin.png) **Catppuccin** | ![Nord](docs/themes/nord.png) **Nord** |
+| ![Dracula](docs/themes/dracula.png) **Dracula** | ![Tokyo Night](docs/themes/tokyo-night.png) **Tokyo Night** |
+| ![Ember](docs/themes/ember.png) **Ember** | ![Monochrome](docs/themes/monochrome.png) **Monochrome** |
+
+</details>
+
+See the [theme gallery](docs/themes.md) for full-size screenshots and
+notes on each palette, including the opt-in **Theme Background**
+setting that tints your terminal background via OSC 11.
+
 ## Usage
 
 ```bash
