@@ -9,7 +9,7 @@ run headlessly and exit.
 | Command | Behavior |
 |---|---|
 | `wintui check [--json] [--notes]` | Print upgradeable packages and exit (`--notes` renders each pending update's release notes inline) |
-| `wintui list [--json]` | Print installed packages and exit |
+| `wintui list [query] [--json]` | Print installed packages and exit; with a query, show only packages whose name or id matches (like `winget list`) |
 | `wintui show <id> [--source winget\|msstore] [--json]` | Print effective install/upgrade args and overrides for a single package (read-only; does not call winget) |
 | `wintui upgrade --all` | Upgrade every non-held upgradeable package |
 | `wintui upgrade --auto` | Upgrade only packages marked Auto |
@@ -54,7 +54,24 @@ for the "review what I'm about to install" flow, not scripting. `--notes` and
 
 ### `list`
 
-`list` exits with `0` on success.
+`wintui list` prints every installed package. With a **query** argument it
+shows only packages whose **name or id** contains the query
+(case-insensitive substring, matching `winget list`):
+
+```powershell
+wintui list firefox        # is Firefox installed?
+wintui list Microsoft      # everything from Microsoft
+wintui list git --json     # matches as JSON
+```
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Listed successfully (no query, or the query matched at least one package) |
+| `1` | A query was given and **nothing matched** — so `wintui list firefox` doubles as an "is it installed?" predicate |
+
+A bare `wintui list` (no query) always exits `0`. Short queries match broadly,
+just like winget — e.g. `git` also matches `Logitech` and `Digital` because
+those names contain the substring "git".
 
 ### `show`
 
@@ -192,6 +209,10 @@ wintui check --json
 
 # Export installed packages as JSON
 wintui list --json > packages.json
+
+# Check whether a package is installed (exit 1 if not)
+wintui list firefox
+wintui list firefox ; if ($LASTEXITCODE -eq 0) { "Firefox is installed" }
 
 # Inspect what WinTUI would pass to winget for a given package
 wintui show Mozilla.Firefox

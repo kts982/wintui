@@ -38,6 +38,7 @@ wintui
 # List available upgrades (exit 1 if any) or installed packages
 wintui check
 wintui list
+wintui list firefox              # is a package installed? (exit 1 if not)
 
 # Upgrade packages without the TUI (--self updates WinTUI itself)
 wintui upgrade --all

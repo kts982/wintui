@@ -79,6 +79,32 @@ func TestCLIContract(t *testing.T) {
 		}
 	})
 
+	t.Run("list_query_matches", func(t *testing.T) {
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n" +
+			"Test App1  App1.ID    1.0                 winget\n"
+		out, code := runWintui(output, "list", "app1")
+		if code != 0 {
+			t.Errorf("Expected exit code 0 for a matching query, got %d", code)
+		}
+		if !strings.Contains(out, "App1.ID") || !strings.Contains(out, `matching "app1"`) {
+			t.Errorf("Expected filtered match summary, got: %q", out)
+		}
+	})
+
+	t.Run("list_query_no_match_exits_one", func(t *testing.T) {
+		output := "Name       Id         Version  Available  Source\n" +
+			"--------------------------------------------------\n" +
+			"Test App1  App1.ID    1.0                 winget\n"
+		out, code := runWintui(output, "list", "zzznomatch")
+		if code != 1 {
+			t.Errorf("Expected exit code 1 when nothing matches, got %d", code)
+		}
+		if !strings.Contains(out, "No installed package matching") {
+			t.Errorf("Expected no-match message, got: %q", out)
+		}
+	})
+
 	t.Run("check_updates_exist", func(t *testing.T) {
 		output := "Name       Id         Version  Available  Source\n" +
 			"--------------------------------------------------\n" +

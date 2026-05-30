@@ -55,7 +55,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners and the most recent winget output line, view compact results with `Ctrl+E` retry (elevated when needed, plain retry for process-in-use failures)
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
 - **Self-upgrade handoff** — WinTUI can check for its own winget update before launch and close so a local handoff script can run `winget upgrade kts982.WinTUI` after the current process exits
-- **Headless CLI** — `wintui check`, `wintui list`, `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, `wintui upgrade --id <pkg>`, `wintui upgrade --self`, `wintui notes <id>`, `wintui theme`, and `wintui doctor` (verdict-first readiness check) for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, `show`, `doctor`, and `notes`. Help, usage, errors, and `--version` are styled with [fang](https://github.com/charmbracelet/fang) to match your theme, with shell completions via `wintui completion <shell>` (package IDs complete from the cache on `upgrade --id` and `show`)
+- **Headless CLI** — `wintui check`, `wintui list [query]` (filter installed packages by name/id, like `winget list`), `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, `wintui upgrade --id <pkg>`, `wintui upgrade --self`, `wintui notes <id>`, `wintui theme`, and `wintui doctor` (verdict-first readiness check) for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, `show`, `doctor`, and `notes`. Help, usage, errors, and `--version` are styled with [fang](https://github.com/charmbracelet/fang) to match your theme, with shell completions via `wintui completion <shell>` (package IDs complete from the cache on `upgrade --id` and `show`)
 - **`wintui notes <id>`** — render a package's latest-version release notes (markdown via glamour) when the winget manifest provides them, with a URL fallback otherwise; `wintui check --notes` renders the notes for every pending update inline, so you can review what you're about to install before upgrading
 - **`wintui theme [name] [--list]`** — show, list, or set the color theme from the CLI (also surfaced as an INFO row in `wintui doctor`)
 - **`wintui upgrade --self`** — upgrade WinTUI itself from the CLI via the startup self-update handoff (the other upgrade modes deliberately skip the running binary), so CLI-only users stay current without launching the TUI
@@ -128,6 +128,9 @@ wintui check ; if ($LASTEXITCODE -eq 1) { "Updates available" }
 # Machine-readable output
 wintui check --json
 wintui list --json > packages.json
+
+# Filter installed packages by name/id — "is Firefox installed?" (exit 1 if not)
+wintui list firefox
 
 # Inspect what WinTUI would pass to winget for a given package
 wintui show Mozilla.Firefox --json

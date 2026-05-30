@@ -34,11 +34,19 @@ you can review what you're about to install before upgrading.`,
 }
 
 var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all installed packages",
-	Args:  cobra.NoArgs,
+	Use:   "list [query]",
+	Short: "List installed packages, optionally filtered by name or id",
+	Long: `List installed packages. With a query argument, only packages whose name or
+id contains the query (case-insensitive) are shown — handy for "is X installed?"
+checks, like winget list. Exits 1 when a query is given and nothing matches.`,
+	Args:              cobra.MaximumNArgs(1),
+	ValidArgsFunction: completeInstalledIDs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runList()
+		query := ""
+		if len(args) == 1 {
+			query = args[0]
+		}
+		return runList(query)
 	},
 }
 
@@ -247,14 +255,33 @@ This is read-only and does not query winget; it reflects the local config only.`
 	},
 }
 
-func runList() error {
+func runList(query string) error {
 	pkgs, err := getInstalledCtx(context.Background())
 	if err != nil {
 		return err
 	}
 
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q != "" {
+		pkgs = filterPackagesByQuery(pkgs, q)
+		if len(pkgs) == 0 {
+			// A query with no matches is a "not installed" answer — exit 1 so
+			// `wintui list firefox` works as a predicate (mirrors winget list).
+			cliExitCode = 1
+		}
+	}
+
 	if jsonFlag {
 		return printJSON(pkgs)
+	}
+
+	if len(pkgs) == 0 {
+		if q != "" {
+			fmt.Printf("No installed package matching %q.\n", query)
+		} else {
+			fmt.Println("No packages installed.")
+		}
+		return nil
 	}
 
 	printPackageTable(
@@ -262,8 +289,25 @@ func runList() error {
 		func(p Package) []string { return []string{p.Name, p.ID, p.Version, p.Source} },
 		pkgs,
 	)
-	fmt.Printf("\n%d package(s) installed.\n", len(pkgs))
+	if q != "" {
+		fmt.Printf("\n%d package(s) matching %q.\n", len(pkgs), query)
+	} else {
+		fmt.Printf("\n%d package(s) installed.\n", len(pkgs))
+	}
 	return nil
+}
+
+// filterPackagesByQuery returns packages whose name or id contains qLower
+// (already lowercased), matching winget list's case-insensitive substring style.
+func filterPackagesByQuery(pkgs []Package, qLower string) []Package {
+	out := make([]Package, 0, len(pkgs))
+	for _, p := range pkgs {
+		if strings.Contains(strings.ToLower(p.Name), qLower) ||
+			strings.Contains(strings.ToLower(p.ID), qLower) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func runCheck() error {
