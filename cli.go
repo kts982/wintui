@@ -290,9 +290,9 @@ func runList(query string) error {
 		pkgs,
 	)
 	if q != "" {
-		fmt.Printf("\n%d package(s) matching %q.\n", len(pkgs), query)
+		fmt.Printf("\n%s\n", cliAccent(fmt.Sprintf("%d package(s) matching %q.", len(pkgs), query)))
 	} else {
-		fmt.Printf("\n%d package(s) installed.\n", len(pkgs))
+		fmt.Printf("\n%s\n", cliAccent(fmt.Sprintf("%d package(s) installed.", len(pkgs))))
 	}
 	return nil
 }
@@ -328,14 +328,14 @@ func runCheck() error {
 	case checkNotesFlag:
 		printCheckWithNotes(context.Background(), pkgs, os.Stdout)
 	case len(pkgs) == 0:
-		fmt.Println("All packages are up to date.")
+		fmt.Println(cliSuccess("All packages are up to date."))
 	default:
 		printPackageTable(
 			[]string{"Name", "ID", "Version", "Available"},
 			func(p Package) []string { return []string{p.Name, p.ID, p.Version, p.Available} },
 			pkgs,
 		)
-		fmt.Printf("\n%d package(s) have updates available.\n", len(pkgs))
+		fmt.Printf("\n%s\n", cliAccent(fmt.Sprintf("%d package(s) have updates available.", len(pkgs))))
 	}
 
 	// Exit code 1 if updates exist, 0 if up to date.
@@ -352,10 +352,10 @@ func runCheck() error {
 // than a plain check; it's meant for the "review before upgrading" flow.
 func printCheckWithNotes(ctx context.Context, pkgs []Package, out io.Writer) {
 	if len(pkgs) == 0 {
-		fmt.Fprintln(out, "All packages are up to date.")
+		fmt.Fprintln(out, cliSuccess("All packages are up to date."))
 		return
 	}
-	fmt.Fprintf(out, "%d package(s) have updates available. Fetching release notes…\n", len(pkgs))
+	fmt.Fprintf(out, "%s\n", cliAccent(fmt.Sprintf("%d package(s) have updates available. Fetching release notes…", len(pkgs))))
 	for _, p := range pkgs {
 		name := p.Name
 		if name == "" {
@@ -365,7 +365,7 @@ func printCheckWithNotes(ctx context.Context, pkgs []Package, out io.Writer) {
 		fmt.Fprintf(out, "\n%s\n", styleNotesHeader(header))
 		detail, err := notesFetchFn(ctx, p.ID, p.Source)
 		if err != nil {
-			fmt.Fprintf(out, "  (couldn't load notes: %v)\n", err)
+			fmt.Fprintf(out, "  %s\n", cliDanger(fmt.Sprintf("(couldn't load notes: %v)", err)))
 			continue
 		}
 		renderNotesBody(detail, out)
@@ -520,15 +520,15 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 		key := strings.ToLower(id)
 		pkg, ok := upgradeable[key]
 		if !ok {
-			fmt.Fprintf(out, "\n→ %s\n  • no update available\n", id)
+			fmt.Fprintf(out, "\n%s\n  • no update available\n", cliAccent("→ "+id))
 			notFound = append(notFound, id)
 			continue
 		}
 
-		fmt.Fprintf(out, "\n→ %s (%s) %s → %s\n", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
+		fmt.Fprintf(out, "\n%s\n", cliAccent(fmt.Sprintf("→ %s (%s) %s → %s", pkg.Name, pkg.ID, pkg.Version, pkg.Available)))
 
 		if settings.updatePolicy(pkg.ID, pkg.Source, pkg.Available) == PolicyHold {
-			fmt.Fprintln(out, "  ✗ held by policy. Remove the hold from settings or use the TUI.")
+			fmt.Fprintln(out, "  "+cliDanger("✗ held by policy.")+" Remove the hold from settings or use the TUI.")
 			held = append(held, pkg.ID)
 			continue
 		}
@@ -538,21 +538,21 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 			continue
 		}
 		if err := streamUpgradeFn(ctx, pkg, out); err != nil {
-			fmt.Fprintf(out, "  ✗ failed: %v\n", err)
+			fmt.Fprintf(out, "  %s\n", cliDanger(fmt.Sprintf("✗ failed: %v", err)))
 			failures = append(failures, pkg.ID)
 		} else {
-			fmt.Fprintln(out, "  ✓ upgraded")
+			fmt.Fprintln(out, "  "+cliSuccess("✓ upgraded"))
 			upgraded++
 		}
 	}
 
 	fmt.Fprintf(out, "\n%d/%d succeeded.", upgraded, len(requested))
 	if len(failures) > 0 {
-		fmt.Fprintf(out, " Failed: %s", strings.Join(failures, ", "))
+		fmt.Fprintf(out, " %s", cliDanger("Failed: "+strings.Join(failures, ", ")))
 		cliExitCode = 1
 	}
 	if len(held) > 0 {
-		fmt.Fprintf(out, " Held: %s", strings.Join(held, ", "))
+		fmt.Fprintf(out, " %s", cliDanger("Held: "+strings.Join(held, ", ")))
 		cliExitCode = 1
 	}
 	if len(notFound) > 0 {
@@ -612,17 +612,17 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 	var failures []string
 	var skippedSelf bool
 	for _, pkg := range pkgs {
-		fmt.Fprintf(out, "\n→ %s (%s) %s → %s\n", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
+		fmt.Fprintf(out, "\n%s\n", cliAccent(fmt.Sprintf("→ %s (%s) %s → %s", pkg.Name, pkg.ID, pkg.Version, pkg.Available)))
 		if isSelfPackageID(pkg.ID) && isRunningInstalledWinTUI() {
 			fmt.Fprintln(out, "  • skipped: WinTUI can't upgrade itself in a batch. Run 'wintui upgrade --self' (or launch the TUI) to update WinTUI.")
 			skippedSelf = true
 			continue
 		}
 		if err := streamUpgradeFn(ctx, pkg, out); err != nil {
-			fmt.Fprintf(out, "  ✗ failed: %v\n", err)
+			fmt.Fprintf(out, "  %s\n", cliDanger(fmt.Sprintf("✗ failed: %v", err)))
 			failures = append(failures, pkg.ID)
 		} else {
-			fmt.Fprintln(out, "  ✓ upgraded")
+			fmt.Fprintln(out, "  "+cliSuccess("✓ upgraded"))
 		}
 	}
 
@@ -632,7 +632,7 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 	}
 	fmt.Fprintf(out, "\n%d/%d succeeded.", upgraded, len(pkgs))
 	if len(failures) > 0 {
-		fmt.Fprintf(out, " Failed: %s", strings.Join(failures, ", "))
+		fmt.Fprintf(out, " %s", cliDanger("Failed: "+strings.Join(failures, ", ")))
 		cliExitCode = 1
 	}
 	if skippedSelf {

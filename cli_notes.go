@@ -201,11 +201,11 @@ func glamourStyleForTheme(themeID string) string {
 	}
 }
 
-// styleNotesHeader paints a notes header in the active theme's accent when
-// stdout is a color-capable terminal; otherwise it returns the text unchanged so
-// piped / NO_COLOR output stays clean.
+// styleNotesHeader paints a notes header in the active theme's accent (bold)
+// when stdout is a color-capable terminal; otherwise it returns the text
+// unchanged so piped / NO_COLOR output stays clean.
 func styleNotesHeader(s string) string {
-	if !term.IsTerminal(os.Stdout.Fd()) || os.Getenv("NO_COLOR") != "" {
+	if !cliColorEnabled() {
 		return s
 	}
 	return lipgloss.NewStyle().Foreground(accent).Bold(true).Render(s)
