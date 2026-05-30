@@ -60,3 +60,30 @@ matches — usable as a predicate. A bare `wintui list` still lists everything.
 
 The release-notes renderer is a small in-house markdown formatter, so the
 binary stays lean (close to v2.8.0) with no new Win32 surface.
+
+## Verification
+
+VirusTotal scans of the published artifacts for v2.9.0 (run 2026-05-31):
+
+| Asset | SHA256 | Detections | Report |
+|---|---|---|---|
+| `wintui_2.9.0_windows_amd64.exe` (7.3 MB) | `a4cf712d45cc…` | 3/71 | [VT report](https://www.virustotal.com/gui/file/a4cf712d45ccc5c61e4cf64d8ad02f083228cb69585f06412a1afb1c0c1c8715) |
+| `wintui_2.9.0_windows_amd64.zip` (2.7 MB) | `53317c1689f9…` | 1/68 | [VT report](https://www.virustotal.com/gui/file/53317c1689f9ac8276c32ee6ddafdcd771898b63e4918adf9759e69872d8be44) |
+| `wintui_2.9.0_windows_arm64.exe` (6.8 MB) | `fff900c7d343…` | 1/69 | [VT report](https://www.virustotal.com/gui/file/fff900c7d343d3a834766f5f87b999642a8641f72b55320057b0f1a9eaa4c218) |
+| `wintui_2.9.0_windows_arm64.zip` (2.4 MB) | `2dc0a2ce06b9…` | 0/67 | [VT report](https://www.virustotal.com/gui/file/2dc0a2ce06b92b16f5e0205e68e078a24356e11992ae3f0b82441a85bbdc1406) |
+
+Detections at scan time were low-signal noise on an unsigned Go binary. Bkav,
+Trapmine, and McAfeeD are single-vendor ML/reputation engines that self-resolve
+as the SHA256 gains reputation. The Microsoft `!ml` hit on `amd64.exe` is a
+VirusTotal-engine artifact — VirusTotal discloses that its Microsoft engine
+"may differ from the commercial off-the-shelf product," and the detection name
+was itself unstable across rescans (`Wacapew.C!ml` → `Wacatac.C!ml`, both
+generic machine-learning buckets). Live Windows Defender (the commercial
+product, current signatures) scans the published `amd64.exe` **clean**.
+
+Full SHA256 hashes:
+
+- `wintui_2.9.0_windows_amd64.exe`: `a4cf712d45ccc5c61e4cf64d8ad02f083228cb69585f06412a1afb1c0c1c8715`
+- `wintui_2.9.0_windows_amd64.zip`: `53317c1689f9ac8276c32ee6ddafdcd771898b63e4918adf9759e69872d8be44`
+- `wintui_2.9.0_windows_arm64.exe`: `fff900c7d343d3a834766f5f87b999642a8641f72b55320057b0f1a9eaa4c218`
+- `wintui_2.9.0_windows_arm64.zip`: `2dc0a2ce06b92b16f5e0205e68e078a24356e11992ae3f0b82441a85bbdc1406`
