@@ -3,6 +3,7 @@ wintui.exe~
 *.exe
 rsrc_windows*.syso
 /build/
+/dist/
 /.dev/
 /.agents/
 /.claude/
