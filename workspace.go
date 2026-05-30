@@ -214,6 +214,34 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.detail = s.detail.withWindowSize(msg.Width, msg.Height)
 		return s, nil
 
+	case tea.MouseWheelMsg:
+		// Detail overlay scrolls when visible; otherwise the wheel moves the
+		// list cursor one row per tick (finer than PgUp/PgDn). Modal/search/
+		// filter own the foreground, so don't move the background list there.
+		if s.detail.visible() {
+			var cmd tea.Cmd
+			s.detail, cmd, _ = s.detail.update(msg)
+			return s, cmd
+		}
+		if s.blocksGlobalShortcuts() {
+			return s, nil
+		}
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			if s.cursor > 0 {
+				s.cursor--
+				return s, s.focusSummary()
+			}
+		case tea.MouseWheelDown:
+			q, sr, up, ins := s.displayItems()
+			total := len(q) + len(sr) + len(up) + len(ins)
+			if s.cursor < total-1 {
+				s.cursor++
+				return s, s.focusSummary()
+			}
+		}
+		return s, nil
+
 	case tea.KeyPressMsg:
 		// Detail panel intercepts keys when visible.
 		if s.detail.visible() {

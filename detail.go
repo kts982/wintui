@@ -218,6 +218,20 @@ func (p detailPanel) update(msg tea.Msg) (detailPanel, tea.Cmd, bool) {
 		p = p.withWindowSize(msg.Width, msg.Height)
 		return p, nil, true
 
+	case tea.MouseWheelMsg:
+		// Scroll the detail body one line per wheel tick (matches up/down keys).
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			if p.scroll > 0 {
+				p.scroll--
+			}
+		case tea.MouseWheelDown:
+			if p.scroll < p.maxScroll() {
+				p.scroll++
+			}
+		}
+		return p, nil, true
+
 	case packageDetailMsg:
 		if msg.pkgID != p.pkgID || msg.source != p.source {
 			return p, nil, false

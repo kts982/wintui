@@ -247,6 +247,24 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.spinner, cmd = s.spinner.Update(msg)
 		return s, cmd
 
+	case tea.MouseWheelMsg:
+		// Move the target cursor one row per wheel tick, mirroring up/down.
+		// The confirm/execute modals own the foreground, so leave them alone.
+		if s.state == cleanupConfirming || s.state == cleanupExecuting {
+			return s, nil
+		}
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			if s.cursor > 0 {
+				s.cursor--
+			}
+		case tea.MouseWheelDown:
+			if s.cursor < len(s.visible)-1 {
+				s.cursor++
+			}
+		}
+		return s, nil
+
 	case tea.KeyPressMsg:
 		return s.handleKey(msg)
 	}
