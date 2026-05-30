@@ -44,8 +44,9 @@ wintui upgrade --all
 wintui upgrade --auto
 wintui upgrade --id Mozilla.Firefox
 
-# Inspect a package's effective install/upgrade args
+# Inspect a package's effective install args, or read its release notes
 wintui show Mozilla.Firefox
+wintui notes Mozilla.Firefox
 
 # One-line readiness verdict (exit 0/1/2)
 wintui doctor --verbose
@@ -54,7 +55,7 @@ wintui doctor --verbose
 wintui theme --list
 wintui theme nord
 
-# Machine-readable output (--json works on check, list, show, doctor)
+# Machine-readable output (--json works on check, list, show, doctor, notes)
 wintui check --json`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		appSettings = LoadSettings()
@@ -142,12 +143,15 @@ func init() {
 	importCmd.Flags().BoolVar(&importAllFlag, "all", false, "Also install packages flagged as possible name matches")
 	importCmd.Flags().BoolVar(&jsonFlag, "json", false, "Print the plan as JSON (implies --dry-run)")
 	themeCmd.Flags().BoolVar(&themeListFlag, "list", false, "List all available themes")
+	notesCmd.Flags().StringVar(&notesSourceFlag, "source", "", "Package source (winget|msstore); defaults to winget")
+	notesCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 
 	// Dynamic completion of package IDs from the on-disk cache (no winget call).
+	// notesCmd sets its own ValidArgsFunction in the command literal.
 	showCmd.ValidArgsFunction = completeInstalledIDs
 	_ = upgradeCmd.RegisterFlagCompletionFunc("id", completeUpgradeableIDs)
 
-	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd, exportCmd, importCmd, themeCmd)
+	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd, exportCmd, importCmd, themeCmd, notesCmd)
 }
 
 func main() {
