@@ -80,10 +80,10 @@ func TestRunNotesUsesFetchSeam(t *testing.T) {
 	saved := notesFetchFn
 	defer func() { notesFetchFn = saved }()
 
-	var gotPkg Package
-	notesFetchFn = func(_ context.Context, pkg Package, _ string) (PackageDetail, error) {
-		gotPkg = pkg
-		return PackageDetail{ID: pkg.ID, Source: pkg.Source, Name: "Stub", Version: "9.9", ReleaseNotes: "- Synthetic note"}, nil
+	var gotID, gotSource string
+	notesFetchFn = func(_ context.Context, id, source string) (PackageDetail, error) {
+		gotID, gotSource = id, source
+		return PackageDetail{ID: id, Source: source, Name: "Stub", Version: "9.9", ReleaseNotes: "- Synthetic note"}, nil
 	}
 
 	var buf bytes.Buffer
@@ -91,10 +91,31 @@ func TestRunNotesUsesFetchSeam(t *testing.T) {
 		t.Fatalf("runNotes: %v", err)
 	}
 	// Empty --source defaults to winget before the fetch.
-	if gotPkg.ID != "Test.Pkg" || gotPkg.Source != "winget" {
-		t.Errorf("fetch got %+v, want ID=Test.Pkg Source=winget", gotPkg)
+	if gotID != "Test.Pkg" || gotSource != "winget" {
+		t.Errorf("fetch got id=%q source=%q, want Test.Pkg / winget", gotID, gotSource)
 	}
 	if !strings.Contains(buf.String(), "Stub 9.9") || !strings.Contains(buf.String(), "Synthetic note") {
 		t.Errorf("expected stubbed detail in output, got:\n%s", buf.String())
+	}
+}
+
+func TestRunNotesNotFoundSurfacesClearError(t *testing.T) {
+	saved := notesFetchFn
+	defer func() { notesFetchFn = saved }()
+	notesFetchFn = func(_ context.Context, _, _ string) (PackageDetail, error) {
+		return PackageDetail{}, errNotesPackageNotFound
+	}
+
+	var buf bytes.Buffer
+	err := runNotes("No.Such.Pkg", "", false, &buf)
+	if err == nil {
+		t.Fatal("expected an error for an unknown package, got nil")
+	}
+	if !strings.Contains(err.Error(), "no package found") {
+		t.Errorf("expected a not-found error, got: %v", err)
+	}
+	// Must NOT claim the package simply has no notes.
+	if strings.Contains(buf.String(), "No release notes") {
+		t.Errorf("not-found must not be reported as 'no release notes', got:\n%s", buf.String())
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,9 +16,47 @@ import (
 
 var notesSourceFlag string
 
+// errNotesPackageNotFound is returned when winget can't resolve the id to a
+// single package (unknown id, or a partial id that matches several).
+var errNotesPackageNotFound = errors.New("package not found")
+
 // notesFetchFn is the winget-show fetcher behind `wintui notes`. It is a var so
 // tests can stub it with a synthetic PackageDetail instead of calling winget.
-var notesFetchFn = showPackageCtx
+var notesFetchFn = fetchPackageNotes
+
+// fetchPackageNotes runs `winget show` for a single package and parses its
+// detail. Unlike the TUI detail fetch (showPackageCtx), it does NOT pass
+// --exact: winget treats --exact as case-sensitive, but CLI users type ids by
+// hand (e.g. `git.git`), and a non-exact `--id` match is case-insensitive. When
+// the id resolves to no package — or to several (a partial id) — winget prints
+// "No package found" or a disambiguation list with no Version line to parse, so
+// we surface errNotesPackageNotFound rather than a misleading "no notes".
+func fetchPackageNotes(ctx context.Context, id, source string) (PackageDetail, error) {
+	args := []string{"show", "--id", id}
+	if source == "winget" || source == "msstore" {
+		args = append(args, "--source", source)
+	}
+	out, err := runWingetCtx(ctx, args...)
+	if err != nil && strings.TrimSpace(out) == "" {
+		return PackageDetail{}, err
+	}
+
+	detail := parseWingetShow(out)
+	// A found package always has a Version line; "No package found" / list
+	// output has none. Notes/URL presence is an additional positive signal.
+	if strings.TrimSpace(detail.Version) == "" &&
+		strings.TrimSpace(detail.ReleaseNotes) == "" &&
+		strings.TrimSpace(detail.ReleaseNotesURL) == "" {
+		return PackageDetail{}, errNotesPackageNotFound
+	}
+	if detail.ID == "" {
+		detail.ID = id
+	}
+	if detail.Source == "" {
+		detail.Source = source
+	}
+	return detail, nil
+}
 
 var notesCmd = &cobra.Command{
 	Use:   "notes <id>",
@@ -58,8 +97,11 @@ func runNotes(id, source string, jsonOut bool, out io.Writer) error {
 		return fmt.Errorf("invalid --source %q: must be 'winget' or 'msstore'", source)
 	}
 
-	detail, err := notesFetchFn(context.Background(), Package{ID: id, Source: source}, "")
+	detail, err := notesFetchFn(context.Background(), id, source)
 	if err != nil {
+		if errors.Is(err, errNotesPackageNotFound) {
+			return fmt.Errorf("no package found matching id %q (check the spelling; ids are matched case-insensitively)", id)
+		}
 		return err
 	}
 	return renderNotes(detail, jsonOut, out)
