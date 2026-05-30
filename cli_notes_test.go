@@ -6,24 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"charm.land/glamour/v2"
 )
-
-func TestMappedGlamourStylesAreValid(t *testing.T) {
-	// Every style our theme mapping can emit must be a real glamour style;
-	// otherwise renderReleaseNotesMarkdown silently falls back to raw text.
-	seen := map[string]bool{}
-	for _, id := range append([]string{"default", "dracula", "tokyonight", "mono"}, themeOrder...) {
-		seen[glamourStyleForTheme(id)] = true
-	}
-	seen["notty"] = true // piped fallback
-	for style := range seen {
-		if _, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style)); err != nil {
-			t.Errorf("glamour style %q is not valid: %v", style, err)
-		}
-	}
-}
 
 func TestRenderNotesWithMarkdownText(t *testing.T) {
 	var buf bytes.Buffer
@@ -40,7 +23,7 @@ func TestRenderNotesWithMarkdownText(t *testing.T) {
 	if !strings.Contains(out, "Test Pkg 2.0") {
 		t.Errorf("expected header with name+version, got:\n%s", out)
 	}
-	// glamour (notty style in tests) preserves the note text.
+	// The lean renderer preserves the note text.
 	if !strings.Contains(out, "Faster startup") || !strings.Contains(out, "Fixed crash") {
 		t.Errorf("expected rendered note body, got:\n%s", out)
 	}
@@ -180,20 +163,43 @@ func TestPrintCheckWithNotesContinuesPastFetchError(t *testing.T) {
 	}
 }
 
-func TestGlamourStyleForTheme(t *testing.T) {
-	cases := map[string]string{
-		"default":    "pink",
-		"dracula":    "dracula",
-		"tokyonight": "tokyo-night",
-		"mono":       "ascii",
-		"nord":       "dark",
-		"wintui":     "dark",
-		"catppuccin": "dark",
-		"ember":      "dark",
+func TestRenderReleaseNotesMarkdownLean(t *testing.T) {
+	md := "## What's New\n\n" +
+		"- Faster startup and [the changelog](https://example.invalid/notes)\n" +
+		"- Fixed `a crash` with **bold** removed\n" +
+		"1. First\n" +
+		"\n" +
+		"A plain paragraph.\n"
+	out := renderReleaseNotesMarkdown(md)
+
+	for _, want := range []string{
+		"What's New",       // heading text kept (markers stripped)
+		"• Faster startup", // bullet normalized to •
+		"the changelog (https://example.invalid/notes)", // [text](url) -> text (url)
+		"Fixed a crash with bold removed",               // backticks + ** stripped
+		"1. First",                                      // numbered list kept
+		"A plain paragraph.",                            // paragraph kept
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("lean render missing %q\n%s", want, out)
+		}
 	}
-	for theme, want := range cases {
-		if got := glamourStyleForTheme(theme); got != want {
-			t.Errorf("glamourStyleForTheme(%q) = %q, want %q", theme, got, want)
+	// Off-TTY (test harness): no ANSI escapes leak into the rendered output.
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("lean render leaked ANSI off-TTY:\n%q", out)
+	}
+	// No leftover markdown markers.
+	if strings.Contains(out, "**") || strings.Contains(out, "`") || strings.Contains(out, "](") {
+		t.Errorf("lean render left raw markdown markers:\n%s", out)
+	}
+}
+
+func TestRenderReleaseNotesMarkdownWraps(t *testing.T) {
+	long := strings.Repeat("word ", 60)
+	out := renderReleaseNotesMarkdown("- " + long)
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if len(line) > 120 { // notesWidth caps at 100; generous slack for multibyte
+			t.Errorf("wrapped line too long (%d): %q", len(line), line)
 		}
 	}
 }

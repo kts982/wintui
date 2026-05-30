@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 
-	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
@@ -151,53 +150,6 @@ func renderNotesBody(d PackageDetail, out io.Writer) {
 		fmt.Fprintf(out, "No release notes in the winget manifest. See %s\n", d.ReleaseNotesURL)
 	default:
 		fmt.Fprintln(out, "No release notes available for this package.")
-	}
-}
-
-// renderReleaseNotesMarkdown renders markdown notes via glamour. On any glamour
-// error it falls back to the raw text so the user still sees the content.
-func renderReleaseNotesMarkdown(notes string) string {
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle(notesGlamourStyle()),
-		glamour.WithWordWrap(notesWidth()),
-	)
-	if err != nil {
-		return notes + "\n"
-	}
-	rendered, err := r.Render(notes)
-	if err != nil {
-		return notes + "\n"
-	}
-	return rendered
-}
-
-// notesGlamourStyle picks a glamour style. When stdout is not a color terminal
-// (piped/redirected, or NO_COLOR) it uses the plain "notty" style so the output
-// stays clean. Otherwise it matches the active WinTUI theme where glamour ships
-// an equivalent palette, falling back to the rich "dark" style. CLI always
-// assumes a dark terminal (no async background probe like the TUI).
-func notesGlamourStyle() string {
-	if !term.IsTerminal(os.Stdout.Fd()) || os.Getenv("NO_COLOR") != "" {
-		return "notty"
-	}
-	return glamourStyleForTheme(normalizeTheme(appSettings.Theme))
-}
-
-// glamourStyleForTheme maps a WinTUI theme id onto a glamour built-in style.
-// glamour ships dracula / tokyo-night / pink / ascii that line up with our
-// palettes; the rest use glamour's generic "dark".
-func glamourStyleForTheme(themeID string) string {
-	switch themeID {
-	case "dracula":
-		return "dracula"
-	case "tokyonight":
-		return "tokyo-night"
-	case "default": // Sweet Pink
-		return "pink"
-	case "mono":
-		return "ascii"
-	default: // wintui, catppuccin, nord, ember
-		return "dark"
 	}
 }
 
