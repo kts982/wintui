@@ -361,7 +361,8 @@ func printCheckWithNotes(ctx context.Context, pkgs []Package, out io.Writer) {
 		if name == "" {
 			name = p.ID
 		}
-		fmt.Fprintf(out, "\n══ %s (%s)  %s → %s ══\n", name, p.ID, p.Version, p.Available)
+		header := fmt.Sprintf("══ %s (%s)  %s → %s ══", name, p.ID, p.Version, p.Available)
+		fmt.Fprintf(out, "\n%s\n", styleNotesHeader(header))
 		detail, err := notesFetchFn(ctx, p.ID, p.Source)
 		if err != nil {
 			fmt.Fprintf(out, "  (couldn't load notes: %v)\n", err)

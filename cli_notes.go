@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 )
@@ -130,7 +131,7 @@ func renderNotes(d PackageDetail, jsonOut bool, out io.Writer) error {
 	if d.Version != "" {
 		header += " " + d.Version
 	}
-	fmt.Fprintln(out, header)
+	fmt.Fprintln(out, styleNotesHeader(header))
 	renderNotesBody(d, out)
 	return nil
 }
@@ -170,15 +171,44 @@ func renderReleaseNotesMarkdown(notes string) string {
 	return rendered
 }
 
-// notesGlamourStyle picks a glamour style. When stdout is not a terminal
-// (piped/redirected) it uses the plain "notty" style so the output stays clean.
-// Otherwise it assumes a dark terminal — matching WinTUI's theme default, since
-// a one-shot CLI can't do the TUI's async background probe.
+// notesGlamourStyle picks a glamour style. When stdout is not a color terminal
+// (piped/redirected, or NO_COLOR) it uses the plain "notty" style so the output
+// stays clean. Otherwise it matches the active WinTUI theme where glamour ships
+// an equivalent palette, falling back to the rich "dark" style. CLI always
+// assumes a dark terminal (no async background probe like the TUI).
 func notesGlamourStyle() string {
-	if !term.IsTerminal(os.Stdout.Fd()) {
+	if !term.IsTerminal(os.Stdout.Fd()) || os.Getenv("NO_COLOR") != "" {
 		return "notty"
 	}
-	return "dark"
+	return glamourStyleForTheme(normalizeTheme(appSettings.Theme))
+}
+
+// glamourStyleForTheme maps a WinTUI theme id onto a glamour built-in style.
+// glamour ships dracula / tokyo-night / pink / ascii that line up with our
+// palettes; the rest use glamour's generic "dark".
+func glamourStyleForTheme(themeID string) string {
+	switch themeID {
+	case "dracula":
+		return "dracula"
+	case "tokyonight":
+		return "tokyo-night"
+	case "default": // Sweet Pink
+		return "pink"
+	case "mono":
+		return "ascii"
+	default: // wintui, catppuccin, nord, ember
+		return "dark"
+	}
+}
+
+// styleNotesHeader paints a notes header in the active theme's accent when
+// stdout is a color-capable terminal; otherwise it returns the text unchanged so
+// piped / NO_COLOR output stays clean.
+func styleNotesHeader(s string) string {
+	if !term.IsTerminal(os.Stdout.Fd()) || os.Getenv("NO_COLOR") != "" {
+		return s
+	}
+	return lipgloss.NewStyle().Foreground(accent).Bold(true).Render(s)
 }
 
 // notesWidth returns a readable word-wrap width based on the terminal size,

@@ -6,7 +6,24 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"charm.land/glamour/v2"
 )
+
+func TestMappedGlamourStylesAreValid(t *testing.T) {
+	// Every style our theme mapping can emit must be a real glamour style;
+	// otherwise renderReleaseNotesMarkdown silently falls back to raw text.
+	seen := map[string]bool{}
+	for _, id := range append([]string{"default", "dracula", "tokyonight", "mono"}, themeOrder...) {
+		seen[glamourStyleForTheme(id)] = true
+	}
+	seen["notty"] = true // piped fallback
+	for style := range seen {
+		if _, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style)); err != nil {
+			t.Errorf("glamour style %q is not valid: %v", style, err)
+		}
+	}
+}
 
 func TestRenderNotesWithMarkdownText(t *testing.T) {
 	var buf bytes.Buffer
@@ -160,6 +177,33 @@ func TestPrintCheckWithNotesContinuesPastFetchError(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Errorf("expected both packages attempted, got %d calls", calls)
+	}
+}
+
+func TestGlamourStyleForTheme(t *testing.T) {
+	cases := map[string]string{
+		"default":    "pink",
+		"dracula":    "dracula",
+		"tokyonight": "tokyo-night",
+		"mono":       "ascii",
+		"nord":       "dark",
+		"wintui":     "dark",
+		"catppuccin": "dark",
+		"ember":      "dark",
+	}
+	for theme, want := range cases {
+		if got := glamourStyleForTheme(theme); got != want {
+			t.Errorf("glamourStyleForTheme(%q) = %q, want %q", theme, got, want)
+		}
+	}
+}
+
+func TestStyleNotesHeaderPlainWhenNotTTY(t *testing.T) {
+	// Tests don't run on a terminal, so the header must come back unstyled —
+	// guaranteeing piped output carries no ANSI escapes.
+	const h = "══ X ══"
+	if got := styleNotesHeader(h); got != h {
+		t.Errorf("expected plain header off-TTY, got %q", got)
 	}
 }
 
