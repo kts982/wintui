@@ -4,7 +4,9 @@
 styled help and errors, shell completions, a themed release-notes viewer,
 CLI theme switching, self-upgrade, and package filtering.
 
-No breaking changes — `settings.json` and `cache.json` formats are unchanged.
+No breaking changes — `settings.json` is unchanged, and `cache.json` stays
+backward-compatible (it gains optional `id_truncated` / `name_truncated`
+metadata so truncated package IDs survive the cache round-trip).
 
 ## Styled CLI (fang)
 

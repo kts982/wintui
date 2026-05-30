@@ -43,7 +43,7 @@ ReleaseNotes: |-
   - Themed CLI output. Release notes match your theme palette; upgrade success/failure markers, per-package headers, and check/list summaries are accent-colored. All color is gated on an interactive terminal and respects NO_COLOR — piped output and --json stay plain.
   - Scroll-wheel support in the package list, detail panel, and cleanup tab.
 
-  No breaking changes; settings.json and cache.json formats are unchanged.
+  No breaking changes; settings.json is unchanged and cache.json remains backward-compatible (it gains optional truncation metadata).
 ReleaseNotesUrl: https://github.com/kts982/wintui/releases/tag/v2.9.0
 ManifestType: defaultLocale
 ManifestVersion: 1.12.0
