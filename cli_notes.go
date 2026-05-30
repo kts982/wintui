@@ -131,7 +131,14 @@ func renderNotes(d PackageDetail, jsonOut bool, out io.Writer) error {
 		header += " " + d.Version
 	}
 	fmt.Fprintln(out, header)
+	renderNotesBody(d, out)
+	return nil
+}
 
+// renderNotesBody renders the notes/URL/none portion of a package detail
+// (everything below the header). Shared by `wintui notes` and the per-package
+// blocks of `wintui check --notes`.
+func renderNotesBody(d PackageDetail, out io.Writer) {
 	notes := strings.TrimSpace(d.ReleaseNotes)
 	switch {
 	case notes != "":
@@ -140,11 +147,10 @@ func renderNotes(d PackageDetail, jsonOut bool, out io.Writer) error {
 			fmt.Fprintf(out, "Full notes: %s\n", d.ReleaseNotesURL)
 		}
 	case d.ReleaseNotesURL != "":
-		fmt.Fprintf(out, "\nNo release notes in the winget manifest. See %s\n", d.ReleaseNotesURL)
+		fmt.Fprintf(out, "No release notes in the winget manifest. See %s\n", d.ReleaseNotesURL)
 	default:
-		fmt.Fprintln(out, "\nNo release notes available for this package.")
+		fmt.Fprintln(out, "No release notes available for this package.")
 	}
-	return nil
 }
 
 // renderReleaseNotesMarkdown renders markdown notes via glamour. On any glamour

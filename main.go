@@ -49,6 +49,9 @@ wintui upgrade --self
 wintui show Mozilla.Firefox
 wintui notes Mozilla.Firefox
 
+# Review the release notes of every pending update before upgrading
+wintui check --notes
+
 # One-line readiness verdict (exit 0/1/2)
 wintui doctor --verbose
 
@@ -128,6 +131,8 @@ func init() {
 	rootCmd.Flags().BoolP("version", "v", false, "show version")
 
 	checkCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
+	checkCmd.Flags().BoolVar(&checkNotesFlag, "notes", false, "Render each pending update's release notes inline")
+	checkCmd.MarkFlagsMutuallyExclusive("json", "notes")
 	listCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	showCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	showCmd.Flags().StringVar(&showSource, "source", "", "Package source (winget|msstore); defaults to winget")

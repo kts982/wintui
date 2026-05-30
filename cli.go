@@ -17,11 +17,16 @@ import (
 // that cobra hooks, deferred work, and tests can run on the normal return path.
 var cliExitCode int
 
+var checkNotesFlag bool
+
 var checkCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check for available upgrades",
 	Long: `Print the list of upgradeable packages, honoring per-package update policy.
-Exits 1 if any updates are available, 0 otherwise.`,
+Exits 1 if any updates are available, 0 otherwise.
+
+--notes renders each pending update's target-version release notes inline, so
+you can review what you're about to install before upgrading.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runCheck()
@@ -271,21 +276,22 @@ func runCheck() error {
 	// policy the TUI does. Held packages must not flip the exit code.
 	pkgs, _ := selectUpgrades(raw, appSettings)
 
-	if jsonFlag {
+	switch {
+	case jsonFlag:
 		if err := printJSON(pkgs); err != nil {
 			return err
 		}
-	} else {
-		if len(pkgs) == 0 {
-			fmt.Println("All packages are up to date.")
-		} else {
-			printPackageTable(
-				[]string{"Name", "ID", "Version", "Available"},
-				func(p Package) []string { return []string{p.Name, p.ID, p.Version, p.Available} },
-				pkgs,
-			)
-			fmt.Printf("\n%d package(s) have updates available.\n", len(pkgs))
-		}
+	case checkNotesFlag:
+		printCheckWithNotes(context.Background(), pkgs, os.Stdout)
+	case len(pkgs) == 0:
+		fmt.Println("All packages are up to date.")
+	default:
+		printPackageTable(
+			[]string{"Name", "ID", "Version", "Available"},
+			func(p Package) []string { return []string{p.Name, p.ID, p.Version, p.Available} },
+			pkgs,
+		)
+		fmt.Printf("\n%d package(s) have updates available.\n", len(pkgs))
 	}
 
 	// Exit code 1 if updates exist, 0 if up to date.
@@ -294,6 +300,31 @@ func runCheck() error {
 	}
 	notifyCheckFoundUpdates(len(pkgs))
 	return nil
+}
+
+// printCheckWithNotes renders each pending update's target-version release notes
+// inline — the built-in form of `wintui check --json | … | wintui notes`. Notes
+// are fetched one package at a time (each is a winget call), so this is heavier
+// than a plain check; it's meant for the "review before upgrading" flow.
+func printCheckWithNotes(ctx context.Context, pkgs []Package, out io.Writer) {
+	if len(pkgs) == 0 {
+		fmt.Fprintln(out, "All packages are up to date.")
+		return
+	}
+	fmt.Fprintf(out, "%d package(s) have updates available. Fetching release notes…\n", len(pkgs))
+	for _, p := range pkgs {
+		name := p.Name
+		if name == "" {
+			name = p.ID
+		}
+		fmt.Fprintf(out, "\n══ %s (%s)  %s → %s ══\n", name, p.ID, p.Version, p.Available)
+		detail, err := notesFetchFn(ctx, p.ID, p.Source)
+		if err != nil {
+			fmt.Fprintf(out, "  (couldn't load notes: %v)\n", err)
+			continue
+		}
+		renderNotesBody(detail, out)
+	}
 }
 
 // showOutput is the structured payload for `wintui show <id> --json`.

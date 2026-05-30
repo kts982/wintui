@@ -56,7 +56,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
 - **Self-upgrade handoff** — WinTUI can check for its own winget update before launch and close so a local handoff script can run `winget upgrade kts982.WinTUI` after the current process exits
 - **Headless CLI** — `wintui check`, `wintui list`, `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, `wintui upgrade --id <pkg>`, `wintui upgrade --self`, `wintui notes <id>`, `wintui theme`, and `wintui doctor` (verdict-first readiness check) for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, `show`, `doctor`, and `notes`. Help, usage, errors, and `--version` are styled with [fang](https://github.com/charmbracelet/fang) to match your theme, with shell completions via `wintui completion <shell>` (package IDs complete from the cache on `upgrade --id` and `show`)
-- **`wintui notes <id>`** — render a package's latest-version release notes (markdown via glamour) when the winget manifest provides them, with a URL fallback otherwise
+- **`wintui notes <id>`** — render a package's latest-version release notes (markdown via glamour) when the winget manifest provides them, with a URL fallback otherwise; `wintui check --notes` renders the notes for every pending update inline, so you can review what you're about to install before upgrading
 - **`wintui theme [name] [--list]`** — show, list, or set the color theme from the CLI (also surfaced as an INFO row in `wintui doctor`)
 - **`wintui upgrade --self`** — upgrade WinTUI itself from the CLI via the startup self-update handoff (the other upgrade modes deliberately skip the running binary), so CLI-only users stay current without launching the TUI
 
@@ -144,8 +144,11 @@ wintui upgrade --id Mozilla.Firefox --id Microsoft.VisualStudioCode
 # Upgrade WinTUI itself (the modes above skip the running binary)
 wintui upgrade --self
 
-# Read a package's release notes; show/set the color theme
+# Read release notes — one package, or every pending update before upgrading
 wintui notes Git.Git
+wintui check --notes
+
+# Show/set the color theme
 wintui theme --list
 wintui theme nord
 

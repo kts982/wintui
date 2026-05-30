@@ -99,6 +99,70 @@ func TestRunNotesUsesFetchSeam(t *testing.T) {
 	}
 }
 
+func TestPrintCheckWithNotesRendersEachPackage(t *testing.T) {
+	saved := notesFetchFn
+	defer func() { notesFetchFn = saved }()
+	notesFetchFn = func(_ context.Context, id, _ string) (PackageDetail, error) {
+		return PackageDetail{ID: id, Version: "9", ReleaseNotes: "- note for " + id}, nil
+	}
+
+	pkgs := []Package{
+		{Name: "Firefox", ID: "Mozilla.Firefox", Version: "1.0", Available: "2.0", Source: "winget"},
+		{Name: "Notepad", ID: "Np.Np", Version: "8", Available: "9", Source: "winget"},
+	}
+	var buf bytes.Buffer
+	printCheckWithNotes(context.Background(), pkgs, &buf)
+	out := buf.String()
+
+	for _, want := range []string{
+		"Mozilla.Firefox", "1.0 → 2.0", "note for Mozilla.Firefox",
+		"Np.Np", "8 → 9", "note for Np.Np",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("check --notes output missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintCheckWithNotesEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	printCheckWithNotes(context.Background(), nil, &buf)
+	if !strings.Contains(buf.String(), "up to date") {
+		t.Errorf("expected up-to-date message, got: %q", buf.String())
+	}
+}
+
+func TestPrintCheckWithNotesContinuesPastFetchError(t *testing.T) {
+	saved := notesFetchFn
+	defer func() { notesFetchFn = saved }()
+	calls := 0
+	notesFetchFn = func(_ context.Context, id, _ string) (PackageDetail, error) {
+		calls++
+		if id == "Bad.Pkg" {
+			return PackageDetail{}, errNotesPackageNotFound
+		}
+		return PackageDetail{ID: id, Version: "2", ReleaseNotes: "good notes"}, nil
+	}
+
+	pkgs := []Package{
+		{ID: "Bad.Pkg", Version: "1", Available: "2", Source: "winget"},
+		{ID: "Good.Pkg", Version: "1", Available: "2", Source: "winget"},
+	}
+	var buf bytes.Buffer
+	printCheckWithNotes(context.Background(), pkgs, &buf)
+	out := buf.String()
+
+	if !strings.Contains(out, "couldn't load notes") {
+		t.Errorf("expected a per-package error line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "good notes") {
+		t.Errorf("a fetch error must not stop later packages, got:\n%s", out)
+	}
+	if calls != 2 {
+		t.Errorf("expected both packages attempted, got %d calls", calls)
+	}
+}
+
 func TestRunNotesNotFoundSurfacesClearError(t *testing.T) {
 	saved := notesFetchFn
 	defer func() { notesFetchFn = saved }()

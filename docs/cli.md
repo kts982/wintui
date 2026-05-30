@@ -8,7 +8,7 @@ run headlessly and exit.
 
 | Command | Behavior |
 |---|---|
-| `wintui check [--json]` | Print upgradeable packages and exit |
+| `wintui check [--json] [--notes]` | Print upgradeable packages and exit (`--notes` renders each pending update's release notes inline) |
 | `wintui list [--json]` | Print installed packages and exit |
 | `wintui show <id> [--source winget\|msstore] [--json]` | Print effective install/upgrade args and overrides for a single package (read-only; does not call winget) |
 | `wintui upgrade --all` | Upgrade every non-held upgradeable package |
@@ -44,6 +44,13 @@ See [Enabling shell completions](#enabling-shell-completions) for setup.
 
 `check` honors the same per-package update policy the TUI uses, so a held
 package will not flip the exit code.
+
+`--notes` renders the **target version's** release notes for each pending update
+inline — the built-in form of `wintui check --json | … | wintui notes` (see
+[Inspect-before-upgrade](#inspect-before-upgrade)). It fetches one package at a
+time (each is a winget call), so it's heavier than a plain `check`; it's meant
+for the "review what I'm about to install" flow, not scripting. `--notes` and
+`--json` are mutually exclusive.
 
 ### `list`
 
@@ -325,9 +332,23 @@ if ($LASTEXITCODE -eq 1) {
 
 ### Inspect-before-upgrade
 
-Print the exact `winget` command WinTUI would run for every pending
-update — useful for reviewing per-package overrides before pulling the
-trigger:
+**Read the release notes for everything you're about to install** — the
+built-in form:
+
+```powershell
+wintui check --notes
+```
+
+That's equivalent to fetching each pending update's notes by hand, which still
+works if you want to compose it:
+
+```powershell
+wintui check --json | ConvertFrom-Json |
+    ForEach-Object { "`n=== $($_.id)  $($_.version) -> $($_.available) ==="; wintui notes $_.id }
+```
+
+Or print the exact `winget` command WinTUI would run for every pending update —
+useful for reviewing per-package overrides before pulling the trigger:
 
 ```powershell
 wintui check --json | ConvertFrom-Json |
