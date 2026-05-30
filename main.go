@@ -142,6 +142,11 @@ func init() {
 	importCmd.Flags().BoolVar(&importAllFlag, "all", false, "Also install packages flagged as possible name matches")
 	importCmd.Flags().BoolVar(&jsonFlag, "json", false, "Print the plan as JSON (implies --dry-run)")
 	themeCmd.Flags().BoolVar(&themeListFlag, "list", false, "List all available themes")
+
+	// Dynamic completion of package IDs from the on-disk cache (no winget call).
+	showCmd.ValidArgsFunction = completeInstalledIDs
+	_ = upgradeCmd.RegisterFlagCompletionFunc("id", completeUpgradeableIDs)
+
 	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd, exportCmd, importCmd, themeCmd)
 }
 
