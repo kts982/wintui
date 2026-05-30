@@ -14,7 +14,10 @@ run headlessly and exit.
 | `wintui upgrade --all` | Upgrade every non-held upgradeable package |
 | `wintui upgrade --auto` | Upgrade only packages marked Auto |
 | `wintui upgrade --id <pkg>` | Upgrade one or more named packages (repeatable) |
+| `wintui upgrade --self` | Upgrade WinTUI itself via the startup self-update handoff |
 | `wintui doctor [--verbose] [--full] [--dev-tools] [--json]` | Verdict-first readiness check: `OK` / `WARN: N issues` / `FAIL: N issues` and exit 0/1/2 |
+| `wintui notes <id> [--source winget\|msstore] [--json]` | Show a package's release notes (rendered markdown), when the winget manifest has them |
+| `wintui theme [name] [--list]` | Show, list, or set the color theme |
 | `wintui export [--output PATH] [--with-versions]` | Write the installed package list to a portable JSON file (stdout by default) |
 | `wintui import <path> [--dry-run] [--all] [--json]` | Install packages from a `wintui export` file (with optional preflight) |
 
@@ -22,6 +25,12 @@ run headlessly and exit.
 
 The old root `--check` and `--list` flags have been removed. Use
 `wintui check` and `wintui list`.
+
+The CLI is wrapped with [fang](https://github.com/charmbracelet/fang), so
+`wintui --help`, usage, errors, and `--version` are styled to match your
+active theme. Shell completions are available via `wintui completion
+<bash|zsh|fish|powershell>`; on PowerShell, `wintui upgrade --id <TAB>` and
+`wintui show <TAB>` complete package IDs from the local cache (no winget call).
 
 ## Exit Codes
 
@@ -75,11 +84,16 @@ an error (so the user notices their hold instead of silently skipping).
 
 `--all`, `--auto`, and `--id` are mutually exclusive.
 
-The running WinTUI binary is **not** upgraded by headless upgrade commands; it is
-skipped with a hint pointing at the TUI startup self-update handoff. To
-upgrade WinTUI itself, run `wintui`; the default-on WinTUI Auto Update
-setting checks before the TUI starts and exits to let winget replace the
-released binary when an update is available.
+The running WinTUI binary is **not** upgraded by `--all` / `--auto` / `--id`;
+it is skipped with a hint pointing at `wintui upgrade --self`. `--self` runs
+the same PowerShell handoff the TUI uses at startup: it checks winget for a
+WinTUI update and, if one is available, exits so winget can replace the
+released binary. Unlike the default-on startup check, `--self` ignores the
+WinTUI Auto Update setting (you asked for it explicitly), but it still
+requires the winget-installed build — a dev or portable build prints a hint
+and does nothing. This closes the gap for CLI-only users who rarely launch
+the TUI: `wintui upgrade --all; wintui upgrade --self` keeps everything,
+including WinTUI, current.
 
 ### `export`
 
@@ -130,6 +144,32 @@ which scans your Desktop, home, and current directory for `*.json` files.
 | `0` | Plan shown (dry-run) or every selected install succeeded |
 | `1` | At least one install failed |
 
+### notes
+
+`wintui notes <id>` fetches a package's latest-version release notes via
+`winget show` and renders the markdown for the terminal.
+
+Caveats worth knowing:
+
+- Many winget manifests ship only a release-notes **URL**, or nothing at all.
+  When there is no notes text, `notes` prints the URL (or reports that none
+  are available) instead.
+- The manifest carries only the **latest** version's notes — not a changelog
+  spanning the versions you may have skipped.
+
+`--source` accepts `winget` or `msstore` (defaults to `winget`). `--json`
+emits `{id, source, version, release_notes, release_notes_url}`. When stdout is
+piped, notes render as plain text (no ANSI); on a terminal they render dark.
+
+### theme
+
+`wintui theme` prints the active theme and background mode. `wintui theme
+--list` lists every palette (the active one marked). `wintui theme <name>`
+sets and persists the theme to `settings.json`; the TUI and CLI help pick it
+up on the next run. An unknown name is an error — run `wintui theme --list`
+to see valid IDs. The active theme also appears as an INFO row in
+`wintui doctor`.
+
 ## Examples
 
 ```powershell
@@ -157,6 +197,21 @@ wintui upgrade --auto
 
 # Upgrade one or more specific packages by ID
 wintui upgrade --id Mozilla.Firefox --id Microsoft.VisualStudioCode
+
+# Upgrade WinTUI itself from the CLI (the other modes skip it)
+wintui upgrade --self
+
+# Read a package's release notes (rendered markdown)
+wintui notes Mozilla.Firefox
+wintui notes Git.Git --json
+
+# Show, list, or switch the color theme
+wintui theme
+wintui theme --list
+wintui theme nord
+
+# Install shell completions (PowerShell shown; bash/zsh/fish also supported)
+wintui completion powershell | Out-String | Invoke-Expression
 
 # Pipe from check (PowerShell):
 wintui check --json | ConvertFrom-Json | ForEach-Object { wintui upgrade --id $_.id }
@@ -348,7 +403,7 @@ The `override` field is omitted when no per-package rules exist.
 
 ## Notes
 
-- `--json` is valid with `check`, `list`, `show`, and `doctor`.
+- `--json` is valid with `check`, `list`, `show`, `doctor`, and `notes`.
 - `wintui upgrade --all` and `wintui upgrade --auto` honor per-package update policy from `settings.json`.
 - `wintui upgrade --id` is the user-facing single-package mode. The
   identically-named `--id` on the root command (alongside `--retry-op`,

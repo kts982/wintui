@@ -55,7 +55,10 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners and the most recent winget output line, view compact results with `Ctrl+E` retry (elevated when needed, plain retry for process-in-use failures)
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
 - **Self-upgrade handoff** — WinTUI can check for its own winget update before launch and close so a local handoff script can run `winget upgrade kts982.WinTUI` after the current process exits
-- **Headless CLI** — `wintui check`, `wintui list`, `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, `wintui upgrade --id <pkg>`, and `wintui doctor` (verdict-first readiness check) for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, `show`, and `doctor`
+- **Headless CLI** — `wintui check`, `wintui list`, `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, `wintui upgrade --id <pkg>`, `wintui upgrade --self`, `wintui notes <id>`, `wintui theme`, and `wintui doctor` (verdict-first readiness check) for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, `show`, `doctor`, and `notes`. Help, usage, errors, and `--version` are styled with [fang](https://github.com/charmbracelet/fang) to match your theme, with shell completions via `wintui completion <shell>` (package IDs complete from the cache on `upgrade --id` and `show`)
+- **`wintui notes <id>`** — render a package's latest-version release notes (markdown via glamour) when the winget manifest provides them, with a URL fallback otherwise
+- **`wintui theme [name] [--list]`** — show, list, or set the color theme from the CLI (also surfaced as an INFO row in `wintui doctor`)
+- **`wintui upgrade --self`** — upgrade WinTUI itself from the CLI via the startup self-update handoff (the other upgrade modes deliberately skip the running binary), so CLI-only users stay current without launching the TUI
 
 **System Utilities**
 - **Health Tab** — slim WinTUI / winget readiness panel: WinTUI version + path, winget version, source freshness, cached upgrade counts (visible / auto / held + cache age), privileges + Auto Elevate context, system drive free space, and a neutral Settings summary line. Loads instantly — no fresh winget calls or disk scans
@@ -138,6 +141,14 @@ wintui upgrade --auto
 # Upgrade specific packages by ID (repeatable; pipe-friendly)
 wintui upgrade --id Mozilla.Firefox --id Microsoft.VisualStudioCode
 
+# Upgrade WinTUI itself (the modes above skip the running binary)
+wintui upgrade --self
+
+# Read a package's release notes; show/set the color theme
+wintui notes Git.Git
+wintui theme --list
+wintui theme nord
+
 # Export and re-import package lists across machines
 wintui export --output packages.json
 wintui import packages.json --dry-run     # preview before installing
@@ -145,9 +156,10 @@ wintui import packages.json               # install the safe subset
 ```
 
 The old root flags `--check` and `--list` have been removed; use
-`wintui check` and `wintui list`. WinTUI itself is **not** upgraded by
-headless upgrade commands; the running binary is skipped with a hint
-pointing at the TUI startup self-update handoff.
+`wintui check` and `wintui list`. `--all` / `--auto` / `--id` deliberately
+skip the running WinTUI binary; use `wintui upgrade --self` to update WinTUI
+itself from the CLI (it runs the same startup handoff and ignores the Auto
+Update setting since you asked for it explicitly).
 
 Further documentation:
 - [CLI reference](docs/cli.md)
