@@ -26,9 +26,43 @@ var cache = &packageCache{
 
 // diskCacheData is the on-disk JSON format.
 type diskCacheData struct {
-	Installed   []Package `json:"installed"`
-	Upgradeable []Package `json:"upgradeable"`
-	SavedAt     time.Time `json:"saved_at"`
+	Installed   []cachedPackage `json:"installed"`
+	Upgradeable []cachedPackage `json:"upgradeable"`
+	SavedAt     time.Time       `json:"saved_at"`
+}
+
+// cachedPackage wraps Package for disk persistence so the unexported truncation
+// flags survive the round-trip. JSON only marshals exported fields, so a
+// truncated ID — stored as a clean prefix with the ellipsis already stripped
+// (see parseWingetTable) — would otherwise reload with idTruncated=false and
+// look like a valid full ID. That would let it slip past the truncation filter
+// in package-ID shell completion (cli_completion.go) and the lazy action-time
+// resolver's eligibility check. Embedding keeps the on-disk shape backward
+// compatible: older cache.json files (without these keys) load with the flags
+// defaulting to false.
+type cachedPackage struct {
+	Package
+	IDTruncated   bool `json:"id_truncated,omitempty"`
+	NameTruncated bool `json:"name_truncated,omitempty"`
+}
+
+func toCachedPackages(pkgs []Package) []cachedPackage {
+	out := make([]cachedPackage, len(pkgs))
+	for i, p := range pkgs {
+		out[i] = cachedPackage{Package: p, IDTruncated: p.idTruncated, NameTruncated: p.nameTruncated}
+	}
+	return out
+}
+
+func fromCachedPackages(cps []cachedPackage) []Package {
+	out := make([]Package, len(cps))
+	for i, cp := range cps {
+		p := cp.Package
+		p.idTruncated = cp.IDTruncated
+		p.nameTruncated = cp.NameTruncated
+		out[i] = p
+	}
+	return out
 }
 
 func (c *packageCache) getInstalled() ([]Package, bool) {
@@ -142,8 +176,8 @@ func (c *packageCache) saveToDiskLocked() {
 		return
 	}
 	data := diskCacheData{
-		Installed:   c.installed,
-		Upgradeable: c.upgradeable,
+		Installed:   toCachedPackages(c.installed),
+		Upgradeable: toCachedPackages(c.upgradeable),
 		SavedAt:     time.Now(),
 	}
 	b, err := json.Marshal(data)
@@ -174,7 +208,7 @@ func (c *packageCache) loadFromDisk() (installed []Package, upgradeable []Packag
 	if data.Installed == nil || data.Upgradeable == nil {
 		return nil, nil, time.Time{}, false
 	}
-	return data.Installed, data.Upgradeable, data.SavedAt, true
+	return fromCachedPackages(data.Installed), fromCachedPackages(data.Upgradeable), data.SavedAt, true
 }
 
 // deleteDiskCache removes the cache file (for manual refresh).
