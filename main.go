@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/fang/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -30,16 +32,26 @@ var rootCmd = &cobra.Command{
 	Use:   "wintui",
 	Short: "WinTUI - A terminal UI for winget",
 	Long:  `A modern, interactive terminal user interface for the Windows Package Manager (winget).`,
-	Example: `  wintui                           launch the interactive TUI
-  wintui check                     list available upgrades (exit 1 if any)
-  wintui list                      list installed packages
-  wintui show Mozilla.Firefox      print effective install/upgrade args for a package
-  wintui upgrade --all             upgrade every visible upgradeable package
-  wintui upgrade --auto            upgrade packages marked Auto
-  wintui upgrade --id Mozilla.Firefox  upgrade a single named package (repeatable)
-  wintui doctor                    one-line readiness verdict (exit 0/1/2)
-  wintui doctor --verbose --full   full check table including system diagnostics
-  wintui check --json              machine-readable output (--json works on check, list, show, doctor)`,
+	Example: `# Launch the interactive TUI
+wintui
+
+# List available upgrades (exit 1 if any) or installed packages
+wintui check
+wintui list
+
+# Upgrade packages without the TUI
+wintui upgrade --all
+wintui upgrade --auto
+wintui upgrade --id Mozilla.Firefox
+
+# Inspect a package's effective install/upgrade args
+wintui show Mozilla.Firefox
+
+# One-line readiness verdict (exit 0/1/2)
+wintui doctor --verbose
+
+# Machine-readable output (--json works on check, list, show, doctor)
+wintui check --json`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		appSettings = LoadSettings()
 		// Apply the saved theme before any TUI/CLI rendering starts.
@@ -129,8 +141,13 @@ func init() {
 }
 
 func main() {
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	// fang wraps cobra with styled help / usage / errors / version, themed from
+	// the active palette (fangOptions). It silences cobra's own error print and
+	// renders a styled one itself, so we don't print the error again here. We do
+	// NOT pass WithNotifySignal: fang then installs no signal handler, leaving
+	// the bubbletea TUI in full control of Ctrl+C. The cliExitCode path is
+	// preserved exactly — subcommands set it and we exit on it after a clean run.
+	if err := fang.Execute(context.Background(), rootCmd, fangOptions()...); err != nil {
 		os.Exit(1)
 	}
 	if cliExitCode != 0 {

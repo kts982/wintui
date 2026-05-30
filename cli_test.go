@@ -115,7 +115,8 @@ func TestCLIContract(t *testing.T) {
 		if code == 0 {
 			t.Errorf("Expected non-zero exit for removed root flags, got %d", code)
 		}
-		if !strings.Contains(out, "unknown flag: --check") {
+		// fang title-cases the first word of error text ("unknown" → "Unknown").
+		if !strings.Contains(out, "Unknown flag: --check") {
 			t.Errorf("Expected unknown flag error for --check, got: %q", out)
 		}
 	})
@@ -223,7 +224,8 @@ func TestCLIContract(t *testing.T) {
 		if code == 0 {
 			t.Errorf("Expected non-zero exit when id is missing, got %d", code)
 		}
-		if !strings.Contains(out, "accepts 1 arg") && !strings.Contains(out, "Error") {
+		// fang reformats: "accepts 1 arg(s)..." and an uppercase "ERROR" header.
+		if !strings.Contains(out, "1 arg") && !strings.Contains(out, "ERROR") {
 			t.Errorf("Expected arg-count error, got: %q", out)
 		}
 	})
@@ -249,7 +251,9 @@ func TestCLIContract(t *testing.T) {
 		if code == 0 {
 			t.Errorf("Expected non-zero exit for --source private, got %d", code)
 		}
-		if !strings.Contains(out, "invalid --source") {
+		// Match the stable tail of the message (fang title-cases the leading
+		// "invalid" but leaves the rest of the error text intact).
+		if !strings.Contains(out, "must be 'winget'") {
 			t.Errorf("Expected invalid-source error, got: %q", out)
 		}
 	})
@@ -263,7 +267,7 @@ func TestCLIContract(t *testing.T) {
 			t.Errorf("Expected exit code 0 for -h, got %d", code)
 		}
 		for _, want := range []string{
-			"Examples:",
+			"EXAMPLES", // fang renders the section header uppercase
 			"wintui check",
 			"wintui list",
 			"wintui show",
@@ -317,7 +321,8 @@ func TestCLIContract(t *testing.T) {
 		if code == 0 {
 			t.Errorf("Expected non-zero exit for removed --check, got %d", code)
 		}
-		if !strings.Contains(out, "unknown flag: --check") {
+		// fang title-cases the first word of error text ("unknown" → "Unknown").
+		if !strings.Contains(out, "Unknown flag: --check") {
 			t.Errorf("Expected unknown flag error, got: %q", out)
 		}
 	})
