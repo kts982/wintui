@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,6 +126,45 @@ func startupSelfUpdateAvailable() (Package, bool) {
 		}
 	}
 	return Package{}, false
+}
+
+// upgradeSelf drives `wintui upgrade --self`: an explicit, user-initiated
+// self-upgrade from the CLI. Unlike maybeStartStartupSelfUpdate it does NOT
+// gate on appSettings.AutoSelfUpdate (the user asked for it directly), but it
+// still requires the winget-installed binary — the PowerShell handoff replaces
+// the running exe, which only works for a managed install. A dev/portable build
+// gets a clear message and exit 0.
+//
+// On success the handoff is spawned and this process must exit so winget can
+// replace the binary, mirroring the startup self-update flow.
+func upgradeSelf(out io.Writer) error {
+	if !isRunningInstalledWinTUI() {
+		fmt.Fprintf(out, "WinTUI self-upgrade is only available for the winget-installed build.\n"+
+			"This looks like a dev or portable build — run `winget upgrade %s` if you installed it another way.\n", selfPackageID)
+		return nil
+	}
+
+	pkg, ok := startupSelfUpdateAvailable()
+	if !ok {
+		fmt.Fprintln(out, "WinTUI is already up to date.")
+		return nil
+	}
+
+	source := pkg.Source
+	if strings.TrimSpace(source) == "" {
+		source = "winget"
+	}
+	fmt.Fprintf(out, "WinTUI %s → %s available.\n", pkg.Version, pkg.Available)
+	if err := startSelfUpgradeHandoff(source, ""); err != nil {
+		return fmt.Errorf("could not start self-upgrade handoff: %w", err)
+	}
+	fmt.Fprintf(out, "Closing now so winget can upgrade %s.\nStart wintui again after the upgrade completes.\nLog: %s\n",
+		selfPackageID, selfUpdateLogPath())
+	return nil
+}
+
+func runUpgradeSelf() error {
+	return upgradeSelf(os.Stdout)
 }
 
 func powerShellHostArgs(scriptPath string) []string {

@@ -43,6 +43,7 @@ var showSource string
 var (
 	upgradeAllFlag  bool
 	upgradeAutoFlag bool
+	upgradeSelfFlag bool
 	upgradeIDsFlag  []string
 )
 
@@ -54,7 +55,11 @@ var upgradeCmd = &cobra.Command{
 --all upgrades every non-held package. --auto upgrades only packages whose
 per-package update policy is Auto. --id upgrades one or more named packages
 (repeatable). Held packages are skipped by --all/--auto; naming a held
-package via --id is an error.`,
+package via --id is an error.
+
+--self upgrades WinTUI itself via the same PowerShell handoff the TUI uses at
+startup. The other modes deliberately skip the running WinTUI binary, so a
+CLI-only user needs --self to keep WinTUI current.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		modes := 0
@@ -64,20 +69,25 @@ package via --id is an error.`,
 		if upgradeAutoFlag {
 			modes++
 		}
+		if upgradeSelfFlag {
+			modes++
+		}
 		if len(upgradeIDsFlag) > 0 {
 			modes++
 		}
 		switch {
 		case modes > 1:
-			return fmt.Errorf("specify only one of --all, --auto, or --id")
+			return fmt.Errorf("specify only one of --all, --auto, --self, or --id")
 		case upgradeAllFlag:
 			return runUpgradeAll()
 		case upgradeAutoFlag:
 			return runUpgradeAuto()
+		case upgradeSelfFlag:
+			return runUpgradeSelf()
 		case len(upgradeIDsFlag) > 0:
 			return runUpgradeIDs(upgradeIDsFlag)
 		default:
-			return fmt.Errorf("specify --all, --auto, or --id <package>")
+			return fmt.Errorf("specify --all, --auto, --self, or --id <package>")
 		}
 	},
 }
@@ -447,7 +457,7 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 			continue
 		}
 		if isSelfPackageID(pkg.ID) && isRunningInstalledWinTUI() {
-			fmt.Fprintln(out, "  • skipped: WinTUI cannot upgrade itself headlessly. Run 'wintui' (TUI) and upgrade from there, or run 'winget upgrade "+pkg.ID+"' manually.")
+			fmt.Fprintln(out, "  • skipped: WinTUI can't upgrade itself in a batch. Run 'wintui upgrade --self' (or launch the TUI) to update WinTUI.")
 			skippedSelf = true
 			continue
 		}
@@ -528,7 +538,7 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 	for _, pkg := range pkgs {
 		fmt.Fprintf(out, "\n→ %s (%s) %s → %s\n", pkg.Name, pkg.ID, pkg.Version, pkg.Available)
 		if isSelfPackageID(pkg.ID) && isRunningInstalledWinTUI() {
-			fmt.Fprintln(out, "  • skipped: WinTUI cannot upgrade itself headlessly. Run 'wintui' (TUI) and upgrade from there, or run 'winget upgrade "+pkg.ID+"' manually.")
+			fmt.Fprintln(out, "  • skipped: WinTUI can't upgrade itself in a batch. Run 'wintui upgrade --self' (or launch the TUI) to update WinTUI.")
 			skippedSelf = true
 			continue
 		}

@@ -47,7 +47,7 @@ func TestUpgradeAllSkipsRunningWinTUI(t *testing.T) {
 		t.Fatalf("streamUpgradeFn calls = %v, want only [Mozilla.Firefox]; the running WinTUI must be skipped", streamCalls)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "skipped: WinTUI cannot upgrade itself headlessly") {
+	if !strings.Contains(out, "wintui upgrade --self") {
 		t.Fatalf("missing skip message in output: %q", out)
 	}
 	if !strings.Contains(out, "WinTUI self-upgrade skipped") {
@@ -318,7 +318,7 @@ func TestUpgradeIDsSkipsRunningWinTUI(t *testing.T) {
 	if cliExitCode != 0 {
 		t.Fatalf("cliExitCode = %d, want 0 (self-skip is not a failure)", cliExitCode)
 	}
-	if !strings.Contains(buf.String(), "WinTUI cannot upgrade itself headlessly") {
+	if !strings.Contains(buf.String(), "wintui upgrade --self") {
 		t.Fatalf("expected self-skip hint, got %q", buf.String())
 	}
 }

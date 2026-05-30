@@ -39,10 +39,11 @@ wintui
 wintui check
 wintui list
 
-# Upgrade packages without the TUI
+# Upgrade packages without the TUI (--self updates WinTUI itself)
 wintui upgrade --all
 wintui upgrade --auto
 wintui upgrade --id Mozilla.Firefox
+wintui upgrade --self
 
 # Inspect a package's effective install args, or read its release notes
 wintui show Mozilla.Firefox
@@ -132,6 +133,7 @@ func init() {
 	showCmd.Flags().StringVar(&showSource, "source", "", "Package source (winget|msstore); defaults to winget")
 	upgradeCmd.Flags().BoolVar(&upgradeAllFlag, "all", false, "Upgrade all available non-held packages")
 	upgradeCmd.Flags().BoolVar(&upgradeAutoFlag, "auto", false, "Upgrade packages marked Auto")
+	upgradeCmd.Flags().BoolVar(&upgradeSelfFlag, "self", false, "Upgrade WinTUI itself via the startup handoff")
 	upgradeCmd.Flags().StringArrayVar(&upgradeIDsFlag, "id", nil, "Upgrade a specific package by ID (repeatable)")
 	doctorCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	doctorCmd.Flags().BoolVar(&doctorVerboseFlag, "verbose", false, "Show per-row check table beneath the verdict")
