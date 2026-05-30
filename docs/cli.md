@@ -289,10 +289,14 @@ if (Test-Path $wintuiCompletion) { . $wintuiCompletion }
 
 Once loaded, `wintui <TAB>` completes subcommands and flags, and `wintui
 upgrade --id <TAB>` / `wintui show <TAB>` complete package IDs from the local
-cache (populated by running `wintui` or `wintui check` — completion never calls
-winget). The registered completer re-invokes `wintui` by name through `PATH`,
-so the IDs reflect whichever `wintui` is on your `PATH`. For a menu that shows
-the package descriptions, bind Tab to menu completion:
+cache — completion never calls winget. That cache (`%LOCALAPPDATA%\wintui\
+cache.json`) is written when you **launch the TUI** (`wintui`); the headless
+subcommands (`check`, `list`, …) don't write it. So if you've only ever used the
+CLI, package-ID completion stays empty until you've run the TUI at least once —
+subcommand and flag completion work regardless. The registered completer
+re-invokes `wintui` by name through `PATH`, so the IDs reflect whichever
+`wintui` is on your `PATH`. For a menu that shows the package descriptions, bind
+Tab to menu completion:
 
 ```powershell
 Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete
