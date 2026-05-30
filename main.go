@@ -157,6 +157,13 @@ func init() {
 }
 
 func main() {
+	// Load settings up front so fang's themed help / usage / error output uses
+	// the user's chosen palette. cobra short-circuits --help, --version, and
+	// unknown-command errors BEFORE PersistentPreRun runs, so without this the
+	// colorscheme would always fall back to the default theme. PersistentPreRun
+	// still reloads settings (idempotently) for actual subcommands.
+	appSettings = LoadSettings()
+
 	// fang wraps cobra with styled help / usage / errors / version, themed from
 	// the active palette (fangOptions). It silences cobra's own error print and
 	// renders a styled one itself, so we don't print the error again here. We do
