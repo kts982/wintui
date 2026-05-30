@@ -29,8 +29,9 @@ The old root `--check` and `--list` flags have been removed. Use
 The CLI is wrapped with [fang](https://github.com/charmbracelet/fang), so
 `wintui --help`, usage, errors, and `--version` are styled to match your
 active theme. Shell completions are available via `wintui completion
-<bash|zsh|fish|powershell>`; on PowerShell, `wintui upgrade --id <TAB>` and
+<bash|zsh|fish|powershell>` — once enabled, `wintui upgrade --id <TAB>` and
 `wintui show <TAB>` complete package IDs from the local cache (no winget call).
+See [Enabling shell completions](#enabling-shell-completions) for setup.
 
 ## Exit Codes
 
@@ -230,6 +231,44 @@ wintui check --json | jq -r '.[].id' | xargs -r -n1 wintui upgrade --id
 
 PowerShell snippets for common automation patterns. Each one assumes
 `wintui.exe` is on `PATH`.
+
+### Enabling shell completions
+
+Completion is **not** automatic — PowerShell can't see inside an external
+`.exe`, so the completer has to be registered once per session. `wintui`
+generates the registration script via `wintui completion <shell>`
+(`powershell`, `bash`, `zsh`, `fish`).
+
+Activate for the **current session**:
+
+```powershell
+wintui completion powershell | Out-String | Invoke-Expression
+```
+
+Make it **permanent** — add that line to your PowerShell `$PROFILE`. To avoid
+regenerating on every shell start, cache the script and dot-source it instead:
+
+```powershell
+# one-time: write the cache (re-run after upgrading wintui)
+$cache = "$env:LOCALAPPDATA\wintui\completion-pwsh.ps1"
+New-Item -ItemType Directory -Force (Split-Path $cache) | Out-Null
+wintui completion powershell | Out-String | Set-Content -Encoding UTF8 $cache
+
+# in $PROFILE: load the cache if present
+$wintuiCompletion = "$env:LOCALAPPDATA\wintui\completion-pwsh.ps1"
+if (Test-Path $wintuiCompletion) { . $wintuiCompletion }
+```
+
+Once loaded, `wintui <TAB>` completes subcommands and flags, and `wintui
+upgrade --id <TAB>` / `wintui show <TAB>` complete package IDs from the local
+cache (populated by running `wintui` or `wintui check` — completion never calls
+winget). The registered completer re-invokes `wintui` by name through `PATH`,
+so the IDs reflect whichever `wintui` is on your `PATH`. For a menu that shows
+the package descriptions, bind Tab to menu completion:
+
+```powershell
+Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete
+```
 
 ### Daily toast when updates are available
 

@@ -153,7 +153,15 @@ wintui theme nord
 wintui export --output packages.json
 wintui import packages.json --dry-run     # preview before installing
 wintui import packages.json               # install the safe subset
+
+# Enable Tab completion (this session); add to $PROFILE to make it permanent
+wintui completion powershell | Out-String | Invoke-Expression
 ```
+
+Completion isn't automatic — PowerShell can't introspect an external `.exe`,
+so the completer must be registered once (in your `$PROFILE` to persist). See
+[docs/cli.md → Enabling shell completions](docs/cli.md#enabling-shell-completions)
+for the persistent / cached setup and the `MenuComplete` tip.
 
 The old root flags `--check` and `--list` have been removed; use
 `wintui check` and `wintui list`. `--all` / `--auto` / `--id` deliberately
