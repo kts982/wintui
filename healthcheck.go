@@ -54,6 +54,7 @@ func runDoctorReport(full, devTools bool) healthReport {
 		checkPrivileges(),
 		checkSystemDrive(),
 		checkSettingsSummary(),
+		checkThemeSummary(),
 	}
 	if full {
 		checks = append(checks, checkHostInfo(), checkUptime(), checkRAM())
@@ -202,6 +203,21 @@ func checkSettingsSummary() healthCheck {
 		Status: "INFO",
 		Details: fmt.Sprintf("Auto Elevate: %s · Self Update: %s · Action Mode: %s · Source: %s",
 			onOff(appSettings.AutoElevate), onOff(appSettings.AutoSelfUpdate), mode, source),
+	}
+}
+
+// checkThemeSummary reports the active palette and OSC 11 background mode as a
+// neutral INFO row, so users can confirm their theme without launching the TUI.
+func checkThemeSummary() healthCheck {
+	id := normalizeTheme(appSettings.Theme)
+	bg := "terminal"
+	if normalizeThemeBackground(appSettings.ThemeBackground) == ThemeBackgroundTheme {
+		bg = "theme"
+	}
+	return healthCheck{
+		Check:   "Theme",
+		Status:  "INFO",
+		Details: fmt.Sprintf("%s · background: %s", lookupTheme(id).Label, bg),
 	}
 }
 

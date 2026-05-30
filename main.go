@@ -50,6 +50,10 @@ wintui show Mozilla.Firefox
 # One-line readiness verdict (exit 0/1/2)
 wintui doctor --verbose
 
+# Switch the color theme from the CLI
+wintui theme --list
+wintui theme nord
+
 # Machine-readable output (--json works on check, list, show, doctor)
 wintui check --json`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -137,7 +141,8 @@ func init() {
 	importCmd.Flags().BoolVar(&importDryRunFlag, "dry-run", false, "Print the plan without installing anything")
 	importCmd.Flags().BoolVar(&importAllFlag, "all", false, "Also install packages flagged as possible name matches")
 	importCmd.Flags().BoolVar(&jsonFlag, "json", false, "Print the plan as JSON (implies --dry-run)")
-	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd, exportCmd, importCmd)
+	themeCmd.Flags().BoolVar(&themeListFlag, "list", false, "List all available themes")
+	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd, exportCmd, importCmd, themeCmd)
 }
 
 func main() {
