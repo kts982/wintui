@@ -168,9 +168,13 @@ func TestCleanupDeleteGlobModeOnlyTouchesMatchingNames(t *testing.T) {
 
 func TestCleanupDeleteRefusesGuardedRoot(t *testing.T) {
 	// Point LOCALAPPDATA at a sandbox dir, then ask the engine to clean the
-	// sandbox dir directly — the guard list must refuse it.
+	// sandbox dir directly — the allowlist must refuse the base itself.
+	// TEMP is pointed elsewhere because t.TempDir() lives under the real
+	// %TEMP%, which would make the sandbox an allowed TEMP descendant.
 	guarded := t.TempDir()
 	t.Setenv("LOCALAPPDATA", guarded)
+	t.Setenv("TMP", filepath.Join(guarded, "redirected-temp"))
+	t.Setenv("TEMP", filepath.Join(guarded, "redirected-temp"))
 	makeFile(t, filepath.Join(guarded, "a.tmp"), 100, 0)
 
 	res := cleanupDelete(context.Background(), purgeDef("test", guarded))

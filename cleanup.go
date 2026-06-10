@@ -355,7 +355,7 @@ func (s cleanupScreen) toggleFocused() (screen, tea.Cmd) {
 	} else {
 		delete(s.checked, def.id)
 	}
-	next := appSettings
+	next := appSettings.clone()
 	next.setCleanupTargetEnabled(def, now)
 	_ = persistSettings(next)
 	return s, nil
@@ -384,7 +384,7 @@ func (s cleanupScreen) toggleFocusedGroup() (screen, tea.Cmd) {
 	}
 	target := !allChecked
 
-	next := appSettings
+	next := appSettings.clone()
 	for _, idx := range s.visible {
 		d := s.targets[idx]
 		if d.group != group {

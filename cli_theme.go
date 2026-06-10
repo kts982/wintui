@@ -57,8 +57,10 @@ func runTheme(name string, list bool, out io.Writer) error {
 
 	// setValue mirrors the settings-UI normalization (persists "" for the
 	// default slot rather than a literal "default").
-	appSettings.setValue("theme", requested)
-	if err := SaveSettings(appSettings); err != nil {
+	next := appSettings
+	next.setValue("theme", requested)
+	setAppSettings(next)
+	if err := SaveSettings(next); err != nil {
 		return fmt.Errorf("could not save settings: %w", err)
 	}
 	fmt.Fprintf(out, "Theme set to %s.\n", lookupTheme(requested).Label)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -304,9 +305,16 @@ func cleanupResolveEnvDir(envVar string, parts ...string) string {
 // path matches a critical filesystem location that must never be purged.
 var errCleanupGuardedPath = errors.New("path is guarded against bulk delete")
 
-// cleanupValidateRoot rejects resolved roots we must never purge, regardless
-// of where they came from. Both the in-process engine and the elevated helper
-// call this before deleting; the helper does not trust the TUI's word for it.
+// cleanupValidateRoot accepts only roots inside the locations the cleanup
+// registry actually resolves to — an allowlist, not a denylist, so a bug
+// elsewhere can't route an arbitrary directory through bulk delete. Both the
+// in-process engine and the elevated helper call this before deleting; the
+// helper does not trust the TUI's word for it.
+//
+// Allowed: %TEMP% itself or below (the user_temp target IS the temp root —
+// the engine only deletes entries under it, never the root), and strict
+// descendants of %LOCALAPPDATA% and %WINDIR% (the bases themselves stay
+// guarded).
 func cleanupValidateRoot(p string) error {
 	if p == "" {
 		return errCleanupGuardedPath
@@ -317,34 +325,25 @@ func cleanupValidateRoot(p string) error {
 	}
 	abs = filepath.Clean(abs)
 
-	vol := filepath.VolumeName(abs)
-	if vol != "" {
-		root := vol + string(filepath.Separator)
-		if abs == vol || abs == root {
-			return errCleanupGuardedPath
+	if tmp := os.TempDir(); tmp != "" {
+		if tmpAbs, err := filepath.Abs(tmp); err == nil {
+			tmpAbs = filepath.Clean(tmpAbs)
+			if strings.EqualFold(tmpAbs, abs) || pathIsDescendant(abs, tmpAbs) {
+				return nil
+			}
 		}
 	}
-
-	guarded := []string{
-		os.Getenv("WINDIR"),
-		os.Getenv("USERPROFILE"),
-		os.Getenv("LOCALAPPDATA"),
-		os.Getenv("APPDATA"),
-		os.Getenv("PROGRAMDATA"),
-		os.Getenv("PROGRAMFILES"),
-		os.Getenv("PROGRAMFILES(X86)"),
-	}
-	for _, g := range guarded {
-		if g == "" {
+	for _, base := range []string{os.Getenv("LOCALAPPDATA"), os.Getenv("WINDIR")} {
+		if base == "" {
 			continue
 		}
-		gAbs, err := filepath.Abs(g)
+		baseAbs, err := filepath.Abs(base)
 		if err != nil {
 			continue
 		}
-		if strings.EqualFold(filepath.Clean(gAbs), abs) {
-			return errCleanupGuardedPath
+		if pathIsDescendant(abs, baseAbs) {
+			return nil
 		}
 	}
-	return nil
+	return fmt.Errorf("%w: %s is outside the allowed cleanup locations", errCleanupGuardedPath, abs)
 }

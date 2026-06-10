@@ -162,6 +162,29 @@ func TestCleanupValidateRootRejectsGuardedPaths(t *testing.T) {
 	}
 }
 
+// The validator is an allowlist: anything outside {TEMP, LOCALAPPDATA,
+// WINDIR} is rejected even when it isn't a well-known system directory.
+func TestCleanupValidateRootRejectsPathsOutsideAllowedBases(t *testing.T) {
+	t.Setenv("WINDIR", `C:\Windows`)
+	t.Setenv("LOCALAPPDATA", `C:\Users\test\AppData\Local`)
+
+	outside := []string{
+		`D:\SomeRandom\Dir`,
+		`C:\Users\test\Documents`,
+		`C:\Users\test\AppData\LocalEvil\cache`, // name-prefix sibling
+		`C:\Users\test\AppData\Local\..\Roaming\cache`,
+	}
+	for _, p := range outside {
+		if err := cleanupValidateRoot(p); err == nil {
+			t.Errorf("expected out-of-allowlist path %q to be rejected", p)
+		}
+	}
+
+	if err := cleanupValidateRoot(`C:\Windows\Temp`); err != nil {
+		t.Errorf("expected %%WINDIR%%\\Temp to be accepted, got %v", err)
+	}
+}
+
 func TestCleanupValidateRootAcceptsNormalPaths(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", `C:\Users\test\AppData\Local`)
 

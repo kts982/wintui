@@ -603,8 +603,37 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 	return m, nil, false
 }
 
+// validateImportArgvValue rejects import-file values that winget could
+// misread as flags (a hand-edited export is untrusted input). Real winget
+// IDs never start with '-' and never contain whitespace; versions never
+// start with '-' and never contain control characters.
+func validateImportArgvValue(field, v string) error {
+	if strings.HasPrefix(v, "-") {
+		return fmt.Errorf("invalid %s %q in import file: must not start with '-'", field, v)
+	}
+	for _, r := range v {
+		if r < ' ' || r == 0x7f {
+			return fmt.Errorf("invalid %s %q in import file: contains control characters", field, v)
+		}
+		if field == "id" && r == ' ' {
+			return fmt.Errorf("invalid %s %q in import file: contains whitespace", field, v)
+		}
+	}
+	return nil
+}
+
 func importInstallSingleCmd(ctx context.Context, id, source, version string, index int) tea.Cmd {
 	return func() tea.Msg {
+		// Guard the argv boundary: export files are user-editable JSON, so
+		// the ID/version land in winget's argv only after validation.
+		if err := validateImportArgvValue("id", id); err != nil {
+			return singleImportInstallDoneMsg{err: err, index: index}
+		}
+		if version != "" {
+			if err := validateImportArgvValue("version", version); err != nil {
+				return singleImportInstallDoneMsg{err: err, index: index}
+			}
+		}
 		// Imported IDs come from the export envelope or legacy raw array —
 		// they're complete by construction (and exports resolve truncated
 		// IDs upfront), so resolveTruncatedPackage inside the wrapper is

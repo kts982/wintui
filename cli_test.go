@@ -17,8 +17,12 @@ func TestCLIContract(t *testing.T) {
 		t.Fatalf("Failed to build test binary: %v\nOutput: %s", err, out)
 	}
 
-	// Create a dummy winget executable to mock winget behavior
-	dummyWingetDir := filepath.Join(t.TempDir(), "bin")
+	// Create a dummy winget executable to mock winget behavior. The winget
+	// path validator only accepts a binary under a system app location, so
+	// stage the mock under a fake %LOCALAPPDATA%\Microsoft\WindowsApps and
+	// point the child's LOCALAPPDATA at it.
+	fakeLocalAppData := t.TempDir()
+	dummyWingetDir := filepath.Join(fakeLocalAppData, "Microsoft", "WindowsApps")
 	os.MkdirAll(dummyWingetDir, 0755)
 	dummyWingetSrc := filepath.Join(t.TempDir(), "mock_winget.go")
 	dummyWinget := filepath.Join(dummyWingetDir, "winget.exe")
@@ -43,7 +47,10 @@ func TestCLIContract(t *testing.T) {
 		}
 
 		cmd := exec.Command(exePath, args...)
-		cmd.Env = append(os.Environ(), "PATH="+dummyWingetDir+";"+os.Getenv("PATH"))
+		cmd.Env = append(os.Environ(),
+			"PATH="+dummyWingetDir+";"+os.Getenv("PATH"),
+			"LOCALAPPDATA="+fakeLocalAppData,
+		)
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &out

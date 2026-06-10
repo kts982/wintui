@@ -40,7 +40,7 @@ var getEnvFn = os.Getenv
 // via PowerShell + WinRT, so transient PowerShell failures cannot block
 // the TUI or the CLI.
 func sendToast(title, body string) {
-	if !appSettings.ToastNotifications {
+	if !currentSettings().ToastNotifications {
 		return
 	}
 	if shouldSuppressToast() {
@@ -77,7 +77,7 @@ func sendToastWindows(title, body string) {
 		return
 	}
 
-	cmd := exec.Command("powershell.exe", toastPowerShellHostArgs(scriptPath)...)
+	cmd := exec.Command(powershellExePath(), toastPowerShellHostArgs(scriptPath)...)
 	configureToastScriptHost(cmd)
 	_ = cmd.Start()
 }
@@ -191,7 +191,7 @@ func ensureToastShortcut() error {
 		return err
 	}
 
-	cmd := exec.Command("powershell.exe", toastPowerShellHostArgs(scriptPath)...)
+	cmd := exec.Command(powershellExePath(), toastPowerShellHostArgs(scriptPath)...)
 	configureToastScriptHost(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

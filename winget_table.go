@@ -181,7 +181,7 @@ func detectHeaderCells(header string, kind tableKind) ([]headerCell, error) {
 		// This way a partially recognised header (e.g. mixed locale) still
 		// keeps its dictionary-resolved kinds for the cells it knows.
 		for i := range cells {
-			if cells[i].kind == colUnknown {
+			if cells[i].kind == colUnknown && i < len(schema) {
 				cells[i].kind = schema[i]
 			}
 		}

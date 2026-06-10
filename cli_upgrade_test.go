@@ -53,8 +53,8 @@ func TestUpgradeAllSkipsRunningWinTUI(t *testing.T) {
 	if !strings.Contains(out, "WinTUI self-upgrade skipped") {
 		t.Fatalf("missing trailing skip note in summary: %q", out)
 	}
-	if !strings.Contains(out, "1/2 succeeded.") {
-		t.Fatalf("expected 1/2 succeeded summary, got: %q", out)
+	if !strings.Contains(out, "1/1 succeeded.") {
+		t.Fatalf("expected 1/1 succeeded summary (skipped self excluded from the denominator), got: %q", out)
 	}
 	if cliExitCode != 0 {
 		t.Fatalf("cliExitCode = %d, want 0 (skipping the self-package is not a failure)", cliExitCode)

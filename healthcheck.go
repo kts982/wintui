@@ -55,6 +55,7 @@ func runDoctorReport(full, devTools bool) healthReport {
 		checkSystemDrive(),
 		checkSettingsSummary(),
 		checkThemeSummary(),
+		checkStateDirs(),
 	}
 	if full {
 		checks = append(checks, checkHostInfo(), checkUptime(), checkRAM())
@@ -127,7 +128,7 @@ func checkWingetTool() healthCheck {
 }
 
 func checkSources() healthCheck {
-	source := appSettings.Source
+	source := currentSettings().Source
 	if source == "" {
 		source = "all"
 	}
@@ -156,7 +157,7 @@ func checkUpdates() healthCheck {
 			Details: "no cached upgrade scan yet",
 		}
 	}
-	plan := planUpgrades(upgradeable, appSettings)
+	plan := planUpgrades(upgradeable, currentSettings())
 	return healthCheck{
 		Check:  "Updates",
 		Status: "PASS",
@@ -171,7 +172,7 @@ func checkPrivileges() healthCheck {
 		role = "Administrator"
 	}
 	autoElev := "off"
-	if appSettings.AutoElevate {
+	if currentSettings().AutoElevate {
 		autoElev = "on"
 	}
 	return healthCheck{
@@ -190,11 +191,12 @@ func checkSystemDrive() healthCheck {
 }
 
 func checkSettingsSummary() healthCheck {
-	source := appSettings.Source
+	settings := currentSettings()
+	source := settings.Source
 	if source == "" {
 		source = "all"
 	}
-	mode := string(appSettings.InstallMode)
+	mode := string(settings.InstallMode)
 	if mode == "" {
 		mode = "default"
 	}
@@ -202,22 +204,47 @@ func checkSettingsSummary() healthCheck {
 		Check:  "Settings",
 		Status: "INFO",
 		Details: fmt.Sprintf("Auto Elevate: %s · Self Update: %s · Action Mode: %s · Source: %s",
-			onOff(appSettings.AutoElevate), onOff(appSettings.AutoSelfUpdate), mode, source),
+			onOff(settings.AutoElevate), onOff(settings.AutoSelfUpdate), mode, source),
 	}
 }
 
 // checkThemeSummary reports the active palette and OSC 11 background mode as a
 // neutral INFO row, so users can confirm their theme without launching the TUI.
 func checkThemeSummary() healthCheck {
-	id := normalizeTheme(appSettings.Theme)
+	settings := currentSettings()
+	id := normalizeTheme(settings.Theme)
 	bg := "terminal"
-	if normalizeThemeBackground(appSettings.ThemeBackground) == ThemeBackgroundTheme {
+	if normalizeThemeBackground(settings.ThemeBackground) == ThemeBackgroundTheme {
 		bg = "theme"
 	}
 	return healthCheck{
 		Check:   "Theme",
 		Status:  "INFO",
 		Details: fmt.Sprintf("%s · background: %s", lookupTheme(id).Label, bg),
+	}
+}
+
+// checkStateDirs surfaces MkdirAll failures that the state-path helpers
+// swallow by design (a failed dir creation otherwise shows up only as
+// settings/cache silently not saving). Calling the helpers first makes the
+// probe deterministic even when nothing else touched them in this process.
+func checkStateDirs() healthCheck {
+	_ = configPath()
+	_ = diskCachePath()
+	_ = selfUpdateStateDir()
+	issues := stateDirErrors()
+	if len(issues) == 0 {
+		return healthCheck{
+			Check:   "State dirs",
+			Status:  "PASS",
+			Details: "settings, cache, and self-update directories present",
+		}
+	}
+	return healthCheck{
+		Check:          "State dirs",
+		Status:         "FAIL",
+		Details:        strings.Join(issues, " · "),
+		Recommendation: "Settings/cache changes are not being saved. Check permissions on the wintui config and cache directories.",
 	}
 }
 

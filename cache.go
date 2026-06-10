@@ -165,7 +165,7 @@ func diskCachePath() string {
 		configDir = "."
 	}
 	dir := filepath.Join(configDir, "wintui")
-	os.MkdirAll(dir, 0755)
+	recordStateDirResult("cache dir", os.MkdirAll(dir, 0755))
 	return filepath.Join(dir, "cache.json")
 }
 

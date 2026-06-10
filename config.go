@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 )
 
 // InstallScope constrains the install/upgrade scope.
@@ -277,7 +279,47 @@ func DefaultSettings() Settings {
 	}
 }
 
-var appSettings = DefaultSettings()
+// appSettings is the process-wide settings value. The Bubble Tea Update
+// goroutine owns it: every write happens there (or before the TUI starts, or
+// in single-goroutine CLI paths) and goes through setAppSettings. Code running
+// on the Update goroutine may read the global directly; worker goroutines
+// (tea.Cmd bodies and everything they call) must snapshot via
+// currentSettings() instead — a direct read there races the writes.
+var (
+	appSettingsMu sync.RWMutex
+	appSettings   = DefaultSettings()
+)
+
+// currentSettings returns a snapshot of appSettings for worker goroutines.
+// The shallow copy is safe because writers never mutate the Packages map or
+// the CleanupEnabledTargets slice in place — mutating writers operate on a
+// clone() and publish the result wholesale.
+func currentSettings() Settings {
+	appSettingsMu.RLock()
+	defer appSettingsMu.RUnlock()
+	return appSettings
+}
+
+// setAppSettings publishes next as the active settings. Callers that built
+// next by mutating a copy of appSettings must have started from clone() if
+// any map/slice-mutating method (setOverride, expireVersionIgnores) was used.
+func setAppSettings(next Settings) {
+	appSettingsMu.Lock()
+	appSettings = next
+	appSettingsMu.Unlock()
+}
+
+// clone returns a copy of s whose Packages map and CleanupEnabledTargets
+// slice are owned by the copy, so mutating methods can't write into storage
+// shared with concurrent currentSettings() readers.
+func (s Settings) clone() Settings {
+	out := s
+	if s.Packages != nil {
+		out.Packages = maps.Clone(s.Packages)
+	}
+	out.CleanupEnabledTargets = slices.Clone(s.CleanupEnabledTargets)
+	return out
+}
 
 func packageRuleKey(pkgID, source string) string {
 	if source == "" {
@@ -442,7 +484,7 @@ func configPath() string {
 		configDir = "."
 	}
 	dir := filepath.Join(configDir, "wintui")
-	os.MkdirAll(dir, 0755)
+	recordStateDirResult("settings dir", os.MkdirAll(dir, 0755))
 	return filepath.Join(dir, "settings.json")
 }
 
@@ -475,12 +517,12 @@ func persistSettings(next Settings) error {
 	if err := SaveSettings(next); err != nil {
 		return err
 	}
-	appSettings = next
+	setAppSettings(next)
 	return nil
 }
 
 func persistPackageOverride(pkgID, source string, o PackageOverride) error {
-	next := appSettings
+	next := appSettings.clone()
 	next.setOverride(pkgID, source, o)
 	return persistSettings(next)
 }

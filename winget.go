@@ -68,11 +68,15 @@ func runWingetWithModeCtx(ctx context.Context, nonInteractive bool, args ...stri
 		allArgs = append(allArgs, "--disable-interactivity")
 	}
 	allArgs = append(allArgs, "--accept-source-agreements")
-	cmd := exec.CommandContext(ctx, "winget", allArgs...)
+	wingetExe, err := wingetExePath()
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, wingetExe, allArgs...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	out := stdout.String()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -88,7 +92,7 @@ func runWingetWithModeCtx(ctx context.Context, nonInteractive bool, args ...stri
 func getUpgradeableCtx(ctx context.Context) ([]Package, error) {
 	// Don't pass --source here: it removes the Available column from output.
 	args := []string{"upgrade"}
-	if appSettings.IncludeUnknown {
+	if currentSettings().IncludeUnknown {
 		args = append(args, "--include-unknown")
 	}
 	out, err := runWingetCtx(ctx, args...)
@@ -102,7 +106,10 @@ func getInstalledCtx(ctx context.Context) ([]Package, error) {
 	// --include-unknown is only valid for `winget upgrade`; passing it to
 	// `winget list` makes winget exit non-zero with a usage error, which
 	// surfaces as an empty installed list in the TUI.
-	args := []string{"list", "--count", "1000"}
+	//
+	// No --count: winget returns the full inventory by default, and the flag
+	// caps at 1000 — passing it silently truncated >1000-package machines.
+	args := []string{"list"}
 	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
 		return nil, err
@@ -112,7 +119,7 @@ func getInstalledCtx(ctx context.Context) ([]Package, error) {
 
 func searchPackagesCtx(ctx context.Context, query string) ([]Package, error) {
 	args := []string{"search", query, "--count", "100"}
-	args = append(args, appSettings.BuildListArgs()...)
+	args = append(args, currentSettings().BuildListArgs()...)
 	out, err := runWingetCtx(ctx, args...)
 	if err != nil && len(out) == 0 {
 		return nil, err
@@ -160,17 +167,19 @@ func formatWingetCommand(args []string) string {
 }
 
 func installCommandArgs(id, source, version string) []string {
+	settings := currentSettings()
 	args := []string{"install", "--id", id, "--exact", "--accept-package-agreements"}
 	args = appendVersionArg(args, version)
-	args = append(args, appSettings.effectiveSettings(id, source).BuildInstallArgs()...)
-	return appendPreferredSourceArg(args, source)
+	args = append(args, settings.effectiveSettings(id, source).BuildInstallArgs()...)
+	return appendPreferredSourceArg(args, source, settings.Source)
 }
 
 func upgradeCommandArgs(id, source, version string) []string {
+	settings := currentSettings()
 	args := []string{"upgrade", "--id", id, "--exact", "--accept-package-agreements"}
 	args = appendVersionArg(args, version)
-	args = append(args, appSettings.effectiveSettings(id, source).BuildInstallArgs()...)
-	return appendPreferredSourceArg(args, source)
+	args = append(args, settings.effectiveSettings(id, source).BuildInstallArgs()...)
+	return appendPreferredSourceArg(args, source, settings.Source)
 }
 
 func uninstallLookupArgs(pkg Package) []string {
@@ -202,7 +211,7 @@ func uninstallCommandArgs(pkg Package, includePurge, allVersions bool) []string 
 	if allVersions {
 		args = append(args, "--all-versions")
 	}
-	return append(args, appSettings.BuildUninstallArgs(includePurge)...)
+	return append(args, currentSettings().BuildUninstallArgs(includePurge)...)
 }
 
 func installPackageSourceCtx(ctx context.Context, pkg Package, version string) (string, error) {
@@ -215,7 +224,7 @@ func installPackageSourceCtx(ctx context.Context, pkg Package, version string) (
 }
 
 func shouldRetryUninstallWithoutPurge(err error, output string) bool {
-	if err == nil || !appSettings.PurgeOnUninstall {
+	if err == nil || !currentSettings().PurgeOnUninstall {
 		return false
 	}
 	lower := strings.ToLower(err.Error() + "\n" + output)
@@ -279,38 +288,41 @@ func showPackageVersionsCtx(ctx context.Context, pkg Package) ([]string, error) 
 
 // ── Error translation ──────────────────────────────────────────────
 
+// wingetErrorCodes maps known winget exit/installer codes to friendly
+// descriptions. An ordered slice, not a map: when output mentions several
+// known codes the FIRST entry here wins, so the mapping is deterministic.
+// Specific winget hex codes come before the generic MSI decimal codes.
+var wingetErrorCodes = []struct{ code, desc string }{
+	{"0x8a150002", "package not found or no applicable installer"},
+	{"0x8a150003", "installer command failed"},
+	{"0x8a15000e", "upgrade not applicable (already up to date)"},
+	{"0x8a150011", "package not found"},
+	{"0x8a150014", "no installed package found matching input criteria"},
+	{"0x8a150015", "no applicable update found"},
+	{"0x8a150019", "package version already installed"},
+	{"0x8a15002b", "install technology differs from installed version (package manages its own updates)"},
+	{"0x8a15002c", "some packages failed to upgrade"},
+	{"0x8a150006", "installer failed (the installer process was terminated)"},
+	{"0x8a150052", "portable package could not replace files (close the running app before upgrading)"},
+	{"0x8a150056", "package requires administrator privileges to install"},
+	{"0x8a150066", "one or more versions failed to uninstall (close the app and retry)"},
+	{"0x80073d28", "installer requires administrator privileges (try running as admin)"},
+	{"0x80073cf3", "package install failed (conflicting package)"},
+	{"0x80073d02", "installation blocked by a running process"},
+	{"0x80072efd", "network connection failed while reaching the package source (check VPN/proxy/firewall)"},
+	{"3221226525", "installer was terminated (close the app before upgrading)"},
+	{"1603", "installer failed with a fatal error"},
+	{"1618", "another installation is already in progress"},
+	{"1638", "another version of this product is already installed"},
+	{"3010", "installer completed and a restart is required"},
+	{"1641", "installer initiated a restart"},
+}
+
 // friendlyWingetError translates raw winget exit codes into human-readable messages.
 func friendlyWingetError(err error, stderr, stdout string) error {
 	msg := err.Error()
 
-	// Map known winget exit/installer codes to friendly descriptions.
-	replacements := map[string]string{
-		"0x8a150002": "package not found or no applicable installer",
-		"0x8a150003": "installer command failed",
-		"0x8a15000e": "upgrade not applicable (already up to date)",
-		"0x8a150011": "package not found",
-		"0x8a150014": "no installed package found matching input criteria",
-		"0x8a150015": "no applicable update found",
-		"0x8a150019": "package version already installed",
-		"0x8a15002b": "install technology differs from installed version (package manages its own updates)",
-		"0x8a15002c": "some packages failed to upgrade",
-		"0x8a150006": "installer failed (the installer process was terminated)",
-		"0x8a150052": "portable package could not replace files (close the running app before upgrading)",
-		"0x8a150056": "package requires administrator privileges to install",
-		"0x8a150066": "one or more versions failed to uninstall (close the app and retry)",
-		"0x80073d28": "installer requires administrator privileges (try running as admin)",
-		"0x80073cf3": "package install failed (conflicting package)",
-		"0x80073d02": "installation blocked by a running process",
-		"0x80072efd": "network connection failed while reaching the package source (check VPN/proxy/firewall)",
-		"1603":       "installer failed with a fatal error",
-		"1618":       "another installation is already in progress",
-		"1638":       "another version of this product is already installed",
-		"3010":       "installer completed and a restart is required",
-		"1641":       "installer initiated a restart",
-		"3221226525": "installer was terminated (close the app before upgrading)",
-	}
-
-	code, desc := matchKnownWingetErrorCode(strings.Join([]string{msg, stderr, stdout}, "\n"), replacements)
+	code, desc := matchKnownWingetErrorCode(strings.Join([]string{msg, stderr, stdout}, "\n"))
 	if code != "" {
 		msg = fmt.Sprintf("%s (%s)", desc, code)
 	}
@@ -327,14 +339,36 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 	return fmt.Errorf("%s", msg)
 }
 
-func matchKnownWingetErrorCode(text string, replacements map[string]string) (string, string) {
+func matchKnownWingetErrorCode(text string) (string, string) {
 	lower := strings.ToLower(text)
-	for code, desc := range replacements {
-		if strings.Contains(lower, strings.ToLower(code)) {
-			return code, desc
+	for _, entry := range wingetErrorCodes {
+		if containsCodeToken(lower, entry.code) {
+			return entry.code, entry.desc
 		}
 	}
 	return "", ""
+}
+
+// containsCodeToken reports whether text contains code bounded by
+// non-alphanumeric characters, so "1603" doesn't match inside "31603" or
+// "0x8a150002" inside a longer hex literal. text must already be lowercased.
+func containsCodeToken(text, code string) bool {
+	for start := 0; ; {
+		idx := strings.Index(text[start:], code)
+		if idx < 0 {
+			return false
+		}
+		idx += start
+		end := idx + len(code)
+		if (idx == 0 || !isCodeChar(text[idx-1])) && (end == len(text) || !isCodeChar(text[end])) {
+			return true
+		}
+		start = idx + 1
+	}
+}
+
+func isCodeChar(c byte) bool {
+	return c == '_' || ('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
 }
 
 // isProcessInUseError reports whether a winget error/output indicates the
@@ -400,9 +434,9 @@ func likelyBenefitsFromElevation(err error, output string) bool {
 	return strings.Contains(lower, "1603") || strings.Contains(lower, "0x80070643")
 }
 
-func appendPreferredSourceArg(args []string, source string) []string {
+func appendPreferredSourceArg(args []string, source, defaultSource string) []string {
 	if source != "winget" && source != "msstore" {
-		source = appSettings.Source
+		source = defaultSource
 	}
 	if source == "winget" || source == "msstore" {
 		return append(args, "--source", source)
@@ -870,7 +904,12 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 			allArgs = append(allArgs, "--disable-interactivity")
 		}
 		allArgs = append(allArgs, "--accept-source-agreements")
-		cmd := exec.CommandContext(ctx, "winget", allArgs...)
+		wingetExe, pathErr := wingetExePath()
+		if pathErr != nil {
+			errChan <- pathErr
+			return
+		}
+		cmd := exec.CommandContext(ctx, wingetExe, allArgs...)
 		applyHiddenChildWindow(cmd)
 
 		stdout, err := cmd.StdoutPipe()
@@ -938,12 +977,14 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 }
 
 func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string, <-chan error) {
+	settings := currentSettings()
+
 	// When silent mode + auto-elevate are both on and we're not already
 	// elevated, run everything through the elevated helper upfront.
 	// This avoids UAC popups from installers that elevate themselves
 	// (e.g. MSI packages with ElevationRequirement: elevatesSelf).
-	if appSettings.InstallMode == ModeSilent && appSettings.AutoElevate && !isElevated() {
-		out, errCh, initErr := globalElevator.runCommandElevated(args...)
+	if settings.InstallMode == ModeSilent && settings.AutoElevate && !isElevated() {
+		out, errCh, initErr := globalElevator.runCommandElevated(ctx, args...)
 		if initErr == nil {
 			return out, errCh
 		}
@@ -968,9 +1009,9 @@ func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string
 		}
 
 		err := <-errChan
-		if err != nil && requiresElevation(err, strings.Join(lines, "\n")) && !isElevated() && appSettings.AutoElevate {
+		if err != nil && requiresElevation(err, strings.Join(lines, "\n")) && !isElevated() && settings.AutoElevate {
 			proxyOut <- "Elevation required. Requesting..."
-			eOut, eErr, initErr := globalElevator.runCommandElevated(args...)
+			eOut, eErr, initErr := globalElevator.runCommandElevated(ctx, args...)
 			if initErr != nil {
 				proxyOut <- fmt.Sprintf("Automatic elevation failed: %v", initErr)
 				proxyErr <- err
@@ -989,10 +1030,10 @@ func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string
 }
 
 func runActionStreamForPackage(ctx context.Context, pkgID, source string, args ...string) (<-chan string, <-chan error) {
-	elev := appSettings.packageElevateOverride(pkgID, source)
+	elev := currentSettings().packageElevateOverride(pkgID, source)
 	if elev != nil {
 		if *elev && !isElevated() {
-			out, errCh, initErr := globalElevator.runCommandElevated(args...)
+			out, errCh, initErr := globalElevator.runCommandElevated(ctx, args...)
 			if initErr == nil {
 				return out, errCh
 			}
@@ -1020,7 +1061,7 @@ func installPackageElevatedStreamCtx(ctx context.Context, pkg Package, version s
 		return nil, closedStringChan(), errChanWith(err), nil
 	}
 	args := installCommandArgs(resolved.ID, resolved.Source, version)
-	out, errCh, initErr := globalElevator.runCommandElevated(args...)
+	out, errCh, initErr := globalElevator.runCommandElevated(ctx, args...)
 	return args, out, errCh, initErr
 }
 
@@ -1040,7 +1081,7 @@ func upgradePackageElevatedStreamCtx(ctx context.Context, pkg Package, version s
 		return nil, closedStringChan(), errChanWith(err), nil
 	}
 	args := upgradeCommandArgs(resolved.ID, resolved.Source, version)
-	out, errCh, initErr := globalElevator.runCommandElevated(args...)
+	out, errCh, initErr := globalElevator.runCommandElevated(ctx, args...)
 	return args, out, errCh, initErr
 }
 
@@ -1068,7 +1109,8 @@ func uninstallPackageStreamCtx(ctx context.Context, pkg Package, allVersions boo
 		return nil, closedStringChan(), errChanWith(err)
 	}
 	pkg = resolved
-	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall, allVersions)
+	purgeOnUninstall := currentSettings().PurgeOnUninstall
+	args := uninstallCommandArgs(pkg, purgeOnUninstall, allVersions)
 	outChan := make(chan string)
 	errChan := make(chan error, 1)
 
@@ -1092,7 +1134,7 @@ func uninstallPackageStreamCtx(ctx context.Context, pkg Package, allVersions boo
 			return strings.Join(lines, "\n"), err, false
 		}
 
-		output, err, aborted := runAttempt(appSettings.PurgeOnUninstall)
+		output, err, aborted := runAttempt(purgeOnUninstall)
 		if aborted {
 			return
 		}
@@ -1120,7 +1162,8 @@ func uninstallPackageElevatedStreamCtx(ctx context.Context, pkg Package, allVers
 		return nil, closedStringChan(), errChanWith(err), nil
 	}
 	pkg = resolved
-	args := uninstallCommandArgs(pkg, appSettings.PurgeOnUninstall, allVersions)
+	purgeOnUninstall := currentSettings().PurgeOnUninstall
+	args := uninstallCommandArgs(pkg, purgeOnUninstall, allVersions)
 	outChan := make(chan string)
 	errChan := make(chan error, 1)
 	go func() {
@@ -1128,7 +1171,7 @@ func uninstallPackageElevatedStreamCtx(ctx context.Context, pkg Package, allVers
 		defer close(errChan)
 
 		runAttempt := func(includePurge bool) (string, error, error) {
-			streamOut, streamErr, initErr := globalElevator.runCommandElevated(uninstallCommandArgs(pkg, includePurge, allVersions)...)
+			streamOut, streamErr, initErr := globalElevator.runCommandElevated(ctx, uninstallCommandArgs(pkg, includePurge, allVersions)...)
 			if initErr != nil {
 				return "", nil, initErr
 			}
@@ -1144,7 +1187,7 @@ func uninstallPackageElevatedStreamCtx(ctx context.Context, pkg Package, allVers
 			return strings.Join(lines, "\n"), err, nil
 		}
 
-		output, err, initErr := runAttempt(appSettings.PurgeOnUninstall)
+		output, err, initErr := runAttempt(purgeOnUninstall)
 		if initErr != nil {
 			errChan <- initErr
 			return

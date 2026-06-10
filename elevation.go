@@ -15,9 +15,19 @@ import (
 type elevationManager struct {
 	mu     sync.Mutex
 	initMu sync.Mutex
-	ln     net.Listener
-	conn   net.Conn
+	// reqMu serializes whole request/response exchanges on the pipe. The
+	// protocol has no framing for interleaved requests, so a second request
+	// must wait for the first one's terminal done/error response.
+	reqMu sync.Mutex
+	ln    net.Listener
+	conn  net.Conn
+	// reader is the single persistent reader on conn. A per-call
+	// bufio.Reader could swallow bytes buffered for the next exchange.
+	reader *bufio.Reader
 	pipeID string
+	// token is the per-session secret generated when the helper was
+	// launched; every request must carry it (the helper rejects the rest).
+	token string
 }
 
 var globalElevator = &elevationManager{}
@@ -38,13 +48,15 @@ func (m *elevationManager) ensureHelper() error {
 	m.mu.Unlock()
 
 	pipeID := "wintui-" + uuid.New().String()
-	ln, err := startElevatedHelperFunc(context.Background(), pipeID)
+	token := uuid.New().String()
+	ln, err := startElevatedHelperFunc(context.Background(), pipeID, token)
 	if err != nil {
 		return err
 	}
 
 	m.mu.Lock()
 	m.pipeID = pipeID
+	m.token = token
 	m.ln = ln
 	m.mu.Unlock()
 
@@ -59,6 +71,7 @@ func (m *elevationManager) ensureHelper() error {
 		}
 		m.mu.Lock()
 		m.conn = conn
+		m.reader = bufio.NewReader(conn)
 		m.mu.Unlock()
 		errChan <- nil
 	}()
@@ -85,6 +98,7 @@ func (m *elevationManager) shutdown() {
 	if m.conn != nil {
 		m.conn.Close()
 		m.conn = nil
+		m.reader = nil
 	}
 	if m.ln != nil {
 		m.ln.Close()
@@ -94,19 +108,24 @@ func (m *elevationManager) shutdown() {
 
 // cleanupTargetElevated runs an admin-required cleanup target through the
 // elevated helper. The TUI sends only the registry ID; the helper resolves
-// and validates the path on its side. Caller must serialize against any
-// outstanding runCommandElevated — both share m.conn without locking the
-// connection across reads.
+// and validates the path on its side. reqMu serializes the whole exchange
+// against any outstanding runCommandElevated on the shared connection.
 func (m *elevationManager) cleanupTargetElevated(targetID string) (cleanupTargetResult, error) {
 	if err := m.ensureHelper(); err != nil {
 		return cleanupTargetResult{}, err
 	}
 
-	m.mu.Lock()
-	conn := m.conn
-	m.mu.Unlock()
+	m.reqMu.Lock()
+	defer m.reqMu.Unlock()
 
-	req := helperRequest{Action: "cleanup_delete", TargetID: targetID}
+	m.mu.Lock()
+	conn, reader, token := m.conn, m.reader, m.token
+	m.mu.Unlock()
+	if conn == nil {
+		return cleanupTargetResult{}, fmt.Errorf("helper connection lost")
+	}
+
+	req := helperRequest{Action: "cleanup_delete", TargetID: targetID, Token: token}
 	b, err := json.Marshal(req)
 	if err != nil {
 		return cleanupTargetResult{}, err
@@ -116,7 +135,6 @@ func (m *elevationManager) cleanupTargetElevated(targetID string) (cleanupTarget
 		return cleanupTargetResult{}, fmt.Errorf("send cleanup request: %w", err)
 	}
 
-	reader := bufio.NewReader(conn)
 	var wire cleanupTargetResultWire
 	gotResult := false
 
@@ -149,13 +167,24 @@ func (m *elevationManager) cleanupTargetElevated(targetID string) (cleanupTarget
 
 func (m *elevationManager) markConnLost() {
 	m.mu.Lock()
+	if m.conn != nil {
+		m.conn.Close()
+	}
 	m.conn = nil
+	m.reader = nil
 	m.mu.Unlock()
 }
 
-func (m *elevationManager) runCommandElevated(args ...string) (<-chan string, <-chan error, error) {
+// runCommandElevated streams one winget command through the elevated helper.
+// The caller's ctx propagates: cancelling it closes the pipe, which makes the
+// helper cancel its in-flight winget and exit (the next elevated action
+// restarts it with a fresh UAC prompt — the price of a real cancel).
+func (m *elevationManager) runCommandElevated(ctx context.Context, args ...string) (<-chan string, <-chan error, error) {
 	if err := m.ensureHelper(); err != nil {
 		return nil, nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	outChan := make(chan string)
@@ -165,27 +194,48 @@ func (m *elevationManager) runCommandElevated(args ...string) (<-chan string, <-
 		defer close(outChan)
 		defer close(errChan)
 
+		// One exchange at a time: the pipe protocol has no request framing,
+		// so hold reqMu from the request write through the terminal response.
+		m.reqMu.Lock()
+		defer m.reqMu.Unlock()
+
 		m.mu.Lock()
-		conn := m.conn
+		conn, reader, token := m.conn, m.reader, m.token
 		m.mu.Unlock()
+		if conn == nil {
+			errChan <- fmt.Errorf("helper connection lost")
+			return
+		}
+
+		// Closing the conn is the only way to unblock the pipe read below.
+		stopCancelWatch := context.AfterFunc(ctx, func() { conn.Close() })
+		defer stopCancelWatch()
+
+		fail := func(err error) {
+			m.markConnLost() // reset so the next action can restart the helper
+			if ctx.Err() != nil {
+				errChan <- fmt.Errorf("cancelled")
+				return
+			}
+			errChan <- err
+		}
 
 		req := helperRequest{
 			Action: "winget",
 			Args:   args,
 			NonInt: false,
+			Token:  token,
 		}
 		b, _ := json.Marshal(req)
-		conn.Write(b)
-		conn.Write([]byte("\n"))
+		if _, err := conn.Write(append(b, '\n')); err != nil {
+			fail(fmt.Errorf("send winget request: %w", err))
+			return
+		}
 
-		reader := bufio.NewReader(conn)
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
-				errChan <- fmt.Errorf("helper connection lost: %w", err)
-				m.mu.Lock()
-				m.conn = nil // Reset so we can restart it
-				m.mu.Unlock()
+				fail(fmt.Errorf("helper connection lost: %w", err))
 				return
 			}
 

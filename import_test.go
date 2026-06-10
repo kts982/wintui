@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -146,6 +147,49 @@ func TestLoadImportFileBackwardCompatible(t *testing.T) {
 	}
 	if pkgs[0].Name != "Firefox" {
 		t.Errorf("expected Firefox, got %q", pkgs[0].Name)
+	}
+}
+
+func TestValidateImportArgvValue(t *testing.T) {
+	bad := []struct{ field, v string }{
+		{"id", "--manifest"},
+		{"id", "-m"},
+		{"id", "Has Space.ID"},
+		{"id", "Tab\tID"},
+		{"version", "-1.0"},
+		{"version", "1.0\x00"},
+	}
+	for _, tt := range bad {
+		if err := validateImportArgvValue(tt.field, tt.v); err == nil {
+			t.Errorf("validateImportArgvValue(%q, %q) = nil, want error", tt.field, tt.v)
+		}
+	}
+	good := []struct{ field, v string }{
+		{"id", "Mozilla.Firefox"},
+		{"id", "9NBLGGH4NNS1"},
+		{"version", "121.0.1"},
+		{"version", "1.0 (Build 2)"}, // versions may contain spaces
+	}
+	for _, tt := range good {
+		if err := validateImportArgvValue(tt.field, tt.v); err != nil {
+			t.Errorf("validateImportArgvValue(%q, %q) = %v, want nil", tt.field, tt.v, err)
+		}
+	}
+}
+
+func TestImportInstallSingleCmdRejectsFlagLikeID(t *testing.T) {
+	// A flag-like ID must fail validation before any winget call happens —
+	// the returned message carries the error for that batch entry.
+	msg := importInstallSingleCmd(context.Background(), "--manifest", "winget", "", 3)()
+	done, ok := msg.(singleImportInstallDoneMsg)
+	if !ok {
+		t.Fatalf("msg = %T, want singleImportInstallDoneMsg", msg)
+	}
+	if done.err == nil || !strings.Contains(done.err.Error(), "must not start with '-'") {
+		t.Fatalf("err = %v, want flag-like ID rejection", done.err)
+	}
+	if done.index != 3 {
+		t.Fatalf("index = %d, want 3", done.index)
 	}
 }
 

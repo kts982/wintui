@@ -74,7 +74,7 @@ func startSelfUpgradeHandoff(source, version string) error {
 	}
 
 	appendSelfUpdateLogf("launching handoff script: %s", scriptPath)
-	cmd := exec.Command("powershell.exe", powerShellHostArgs(scriptPath)...)
+	cmd := exec.Command(powershellExePath(), powerShellHostArgs(scriptPath)...)
 	if err := startSelfUpdateHost(cmd); err != nil {
 		return err
 	}
@@ -179,20 +179,35 @@ func powerShellHostArgs(scriptPath string) []string {
 }
 
 func writeSelfUpdateScript(parentPID int, source, version string) (string, error) {
+	// Fail closed: the handoff replaces the running binary with elevated
+	// winget, so it must resolve to the same validated absolute path the TUI
+	// uses — never fall back to a bare name that PowerShell would re-resolve
+	// off PATH (that would undo the absolute-path hardening at the most
+	// sensitive moment).
+	wingetExe, err := selfUpdateWingetResolver()
+	if err != nil {
+		return "", fmt.Errorf("cannot start self-upgrade: %w; reinstall winget (App Installer) from the Microsoft Store or repair its WindowsApps execution alias", err)
+	}
 	scriptPath := selfUpdateScriptPath(parentPID)
-	script := renderSelfUpdateScript(parentPID, selfUpgradeCommandArgs(source, version))
+	script := renderSelfUpdateScript(parentPID, wingetExe, selfUpgradeCommandArgs(source, version))
 	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
 		return "", err
 	}
 	return scriptPath, nil
 }
 
-func renderSelfUpdateScript(parentPID int, wingetArgs []string) string {
+// selfUpdateWingetResolver is the seam tests override so the handoff path can
+// be exercised without winget installed. Production resolves and validates
+// winget's absolute path.
+var selfUpdateWingetResolver = wingetExePath
+
+func renderSelfUpdateScript(parentPID int, wingetExe string, wingetArgs []string) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "$ParentPid = %d\n", parentPID)
 	fmt.Fprintf(&b, "$LogPath = %s\n", quotePowerShellLiteral(selfUpdateLogPath()))
 	fmt.Fprintf(&b, "$CachePath = %s\n", quotePowerShellLiteral(diskCachePath()))
+	fmt.Fprintf(&b, "$WingetExe = %s\n", quotePowerShellLiteral(wingetExe))
 	b.WriteString("$WingetArgs = @(\n")
 	for i, arg := range wingetArgs {
 		suffix := ","
@@ -222,7 +237,7 @@ if ($ParentPid -gt 0) {
 
 try {
   Write-Log ("winget start: {0}" -f ($WingetArgs -join ' '))
-  & winget.exe @WingetArgs
+  & $WingetExe @WingetArgs
   $wingetExit = $LASTEXITCODE
   if ($wingetExit -ne 0) {
     throw "winget exited with code $wingetExit"
@@ -316,7 +331,7 @@ func selfUpdateStateDir() string {
 		baseDir = os.TempDir()
 	}
 	dir := filepath.Join(baseDir, "wintui", "self-update")
-	_ = os.MkdirAll(dir, 0755)
+	recordStateDirResult("self-update dir", os.MkdirAll(dir, 0755))
 	return dir
 }
 
@@ -374,6 +389,9 @@ func selfUpgradeManifestArgs(manifestPath string) []string {
 }
 
 func loadSelfUpgradeManifestOverride() string {
+	if !rehearsalMode {
+		return ""
+	}
 	data, err := os.ReadFile(selfUpdateManifestOverridePath())
 	if err != nil {
 		return ""

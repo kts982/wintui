@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,16 +108,29 @@ func TestSelfUpgradeCommandArgsUseOverriddenSelfPackageID(t *testing.T) {
 	}
 }
 
-func TestSelfUpgradeCommandArgsUseManifestOverride(t *testing.T) {
+// TestSelfUpgradeCommandArgsIgnoreManifestOverrideInReleaseBuilds asserts the
+// release-build behavior: a planted rehearsal-manifest.txt must be ignored and
+// the normal `upgrade <selfPackageID> …` args returned. The honoring side runs
+// only under -tags rehearsal (see self_update_rehearsal_test.go).
+func TestSelfUpgradeCommandArgsIgnoreManifestOverrideInReleaseBuilds(t *testing.T) {
+	if rehearsalMode {
+		t.Skip("override honoring is exercised by the rehearsal-tagged test")
+	}
+
 	dir := t.TempDir()
 	manifestDir := filepath.Join(dir, "manifest")
 	if err := os.MkdirAll(manifestDir, 0755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
+	origSettings := appSettings
 	origCacheDir := userCacheDirPath
+	appSettings = DefaultSettings()
 	userCacheDirPath = func() (string, error) { return dir, nil }
-	t.Cleanup(func() { userCacheDirPath = origCacheDir })
+	t.Cleanup(func() {
+		appSettings = origSettings
+		userCacheDirPath = origCacheDir
+	})
 
 	overridePath := selfUpdateManifestOverridePath()
 	if err := os.WriteFile(overridePath, []byte(manifestDir), 0644); err != nil {
@@ -124,13 +138,11 @@ func TestSelfUpgradeCommandArgsUseManifestOverride(t *testing.T) {
 	}
 
 	args := selfUpgradeCommandArgs("winget", "0.0.2")
-	if len(args) < 3 || args[0] != "upgrade" || args[1] != "--manifest" || args[2] != manifestDir {
-		t.Fatalf("selfUpgradeCommandArgs() = %#v, want manifest override", args)
+	if containsArg(args, "--manifest") {
+		t.Fatalf("selfUpgradeCommandArgs() = %#v, release build must ignore the manifest override", args)
 	}
-	for _, want := range []string{"--accept-package-agreements", "--disable-interactivity", "--force"} {
-		if !containsArg(args, want) {
-			t.Fatalf("selfUpgradeCommandArgs() = %#v, missing %q", args, want)
-		}
+	if len(args) < 3 || args[0] != "upgrade" || args[1] != "--id" || args[2] != selfPackageID {
+		t.Fatalf("selfUpgradeCommandArgs() = %#v, want normal upgrade %s args", args, selfPackageID)
 	}
 }
 
@@ -157,6 +169,7 @@ func TestStartSelfUpgradeHandoffClearsManifestOverrideAfterLaunch(t *testing.T) 
 	origElevated := isElevated
 	origCacheDir := userCacheDirPath
 	origStartHost := startSelfUpdateHost
+	origResolver := selfUpdateWingetResolver
 	currentExecutablePath = func() (string, error) {
 		return `C:\Users\ktsio\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
 	}
@@ -164,12 +177,16 @@ func TestStartSelfUpgradeHandoffClearsManifestOverrideAfterLaunch(t *testing.T) 
 	isElevated = func() bool { return true }
 	userCacheDirPath = func() (string, error) { return dir, nil }
 	startSelfUpdateHost = func(cmd *exec.Cmd) error { return nil }
+	selfUpdateWingetResolver = func() (string, error) {
+		return `C:\Users\ktsio\AppData\Local\Microsoft\WindowsApps\winget.exe`, nil
+	}
 	t.Cleanup(func() {
 		currentExecutablePath = origExe
 		evalSymlinksPath = origEval
 		isElevated = origElevated
 		userCacheDirPath = origCacheDir
 		startSelfUpdateHost = origStartHost
+		selfUpdateWingetResolver = origResolver
 	})
 
 	overridePath := selfUpdateManifestOverridePath()
@@ -191,6 +208,7 @@ func TestStartSelfUpgradeHandoffDoesNotRequireAdmin(t *testing.T) {
 	origElevated := isElevated
 	origCacheDir := userCacheDirPath
 	origStartHost := startSelfUpdateHost
+	origResolver := selfUpdateWingetResolver
 	currentExecutablePath = func() (string, error) {
 		return `C:\Users\ktsio\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
 	}
@@ -198,16 +216,59 @@ func TestStartSelfUpgradeHandoffDoesNotRequireAdmin(t *testing.T) {
 	isElevated = func() bool { return false }
 	userCacheDirPath = func() (string, error) { return t.TempDir(), nil }
 	startSelfUpdateHost = func(cmd *exec.Cmd) error { return nil }
+	selfUpdateWingetResolver = func() (string, error) {
+		return `C:\Users\ktsio\AppData\Local\Microsoft\WindowsApps\winget.exe`, nil
+	}
 	t.Cleanup(func() {
 		currentExecutablePath = origExe
 		evalSymlinksPath = origEval
 		isElevated = origElevated
 		userCacheDirPath = origCacheDir
 		startSelfUpdateHost = origStartHost
+		selfUpdateWingetResolver = origResolver
 	})
 
 	if err := startSelfUpgradeHandoff("winget", ""); err != nil {
 		t.Fatalf("startSelfUpgradeHandoff() err = %v, want nil for non-admin handoff", err)
+	}
+}
+
+// When winget can't be resolved to a validated absolute path, the handoff
+// must fail closed (actionable error, no script written, host never started)
+// rather than fall back to a bare name PowerShell would re-resolve off PATH.
+func TestStartSelfUpgradeHandoffFailsClosedWhenWingetUnresolved(t *testing.T) {
+	origExe := currentExecutablePath
+	origEval := evalSymlinksPath
+	origElevated := isElevated
+	origCacheDir := userCacheDirPath
+	origStartHost := startSelfUpdateHost
+	origResolver := selfUpdateWingetResolver
+	currentExecutablePath = func() (string, error) {
+		return `C:\Users\ktsio\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
+	}
+	evalSymlinksPath = func(path string) (string, error) { return path, nil }
+	isElevated = func() bool { return false }
+	userCacheDirPath = func() (string, error) { return t.TempDir(), nil }
+	hostStarted := false
+	startSelfUpdateHost = func(cmd *exec.Cmd) error { hostStarted = true; return nil }
+	selfUpdateWingetResolver = func() (string, error) {
+		return "", fmt.Errorf("refusing winget at %q: not under a known system app location", `C:\evil\winget.exe`)
+	}
+	t.Cleanup(func() {
+		currentExecutablePath = origExe
+		evalSymlinksPath = origEval
+		isElevated = origElevated
+		userCacheDirPath = origCacheDir
+		startSelfUpdateHost = origStartHost
+		selfUpdateWingetResolver = origResolver
+	})
+
+	err := startSelfUpgradeHandoff("winget", "")
+	if err == nil || !strings.Contains(err.Error(), "cannot start self-upgrade") {
+		t.Fatalf("startSelfUpgradeHandoff() err = %v, want a fail-closed self-upgrade error", err)
+	}
+	if hostStarted {
+		t.Fatal("script host was started despite winget resolution failing — must fail closed")
 	}
 }
 
@@ -218,6 +279,7 @@ func TestMaybeStartStartupSelfUpdateSchedulesHandoff(t *testing.T) {
 	origCacheDir := userCacheDirPath
 	origStartHost := startSelfUpdateHost
 	origRunCheck := runSelfUpdateCheckCtx
+	origResolver := selfUpdateWingetResolver
 	appSettings = DefaultSettings()
 	currentExecutablePath = func() (string, error) {
 		return `C:\Users\ktsio\AppData\Local\Microsoft\WinGet\Links\wintui.exe`, nil
@@ -225,6 +287,9 @@ func TestMaybeStartStartupSelfUpdateSchedulesHandoff(t *testing.T) {
 	evalSymlinksPath = func(path string) (string, error) { return path, nil }
 	cacheDir := t.TempDir()
 	userCacheDirPath = func() (string, error) { return cacheDir, nil }
+	selfUpdateWingetResolver = func() (string, error) {
+		return `C:\Users\ktsio\AppData\Local\Microsoft\WindowsApps\winget.exe`, nil
+	}
 	var gotArgs []string
 	runSelfUpdateCheckCtx = func(ctx context.Context, args ...string) (string, error) {
 		gotArgs = append([]string(nil), args...)
@@ -244,6 +309,7 @@ func TestMaybeStartStartupSelfUpdateSchedulesHandoff(t *testing.T) {
 		userCacheDirPath = origCacheDir
 		startSelfUpdateHost = origStartHost
 		runSelfUpdateCheckCtx = origRunCheck
+		selfUpdateWingetResolver = origResolver
 	})
 
 	scheduled, err := maybeStartStartupSelfUpdate()
@@ -320,10 +386,11 @@ func TestRenderSelfUpdateScriptIncludesExpectedCommands(t *testing.T) {
 		return `C:\Users\ktsio\AppData\Local`, nil
 	}
 
-	script := renderSelfUpdateScript(42, selfUpgradeCommandArgs("winget", "2.2.0"))
+	script := renderSelfUpdateScript(42, `C:\Users\ktsio\AppData\Local\Microsoft\WindowsApps\winget.exe`, selfUpgradeCommandArgs("winget", "2.2.0"))
 	for _, want := range []string{
 		"Wait-Process -Id $ParentPid -Timeout 120",
-		"& winget.exe @WingetArgs",
+		"$WingetExe = '",
+		"& $WingetExe @WingetArgs",
 		"'kts982.WinTUI'",
 		"'--accept-source-agreements'",
 		"'--force'",
@@ -361,6 +428,7 @@ func TestRenderSelfUpdateScriptParsesInPowerShell(t *testing.T) {
 
 	script := renderSelfUpdateScript(
 		42,
+		`C:\Users\ktsio\AppData\Local\Microsoft\WindowsApps\winget.exe`,
 		selfUpgradeManifestArgs(`C:\TEST\canary-build\manifests\k\kts982\WinTUI.Canary\0.0.2`),
 	)
 	scriptPath := filepath.Join(t.TempDir(), "handoff.ps1")

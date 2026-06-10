@@ -411,6 +411,36 @@ func TestFriendlyWingetErrorMapsSelfUpgradeCodes(t *testing.T) {
 	}
 }
 
+func TestFriendlyWingetErrorMultiCodeOutputIsDeterministic(t *testing.T) {
+	// Output mentioning several known codes must map to the highest-priority
+	// (first) table entry every run — the old map-based lookup iterated in
+	// random order.
+	for range 20 {
+		err := friendlyWingetError(
+			assertErr("exit status 1"),
+			"",
+			"Installer failed with exit code: 1603\nupgrade failed: 0x8a15002c",
+		)
+		got := err.Error()
+		want := "some packages failed to upgrade (0x8a15002c)"
+		if got != want {
+			t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestMatchKnownWingetErrorCodeRequiresTokenBoundaries(t *testing.T) {
+	if code, _ := matchKnownWingetErrorCode("installer wrote 31603 bytes"); code != "" {
+		t.Fatalf("matched %q inside a longer number, want no match", code)
+	}
+	if code, _ := matchKnownWingetErrorCode("hash 0x8a150002f mismatch"); code != "" {
+		t.Fatalf("matched %q inside a longer hex literal, want no match", code)
+	}
+	if code, _ := matchKnownWingetErrorCode("exit code: 1603."); code != "1603" {
+		t.Fatalf("code = %q, want 1603 for a properly bounded token", code)
+	}
+}
+
 func TestFriendlyWingetErrorMapsConnectivityCode(t *testing.T) {
 	err := friendlyWingetError(
 		assertErr("exit status 0x80072efd"),

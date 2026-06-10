@@ -281,17 +281,25 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
+			blocked := false
 			if blocker, ok := a.activeScreen().(globalShortcutBlocker); ok && blocker.blocksGlobalShortcuts() {
-				return a.updateScreen(a.currentScreenID(), msg)
+				blocked = true
 			}
-			// Check if click is on the tab bar row
-			tabRow := lipgloss.Height(a.renderLogo()) // row right after logo
-			if msg.Y == tabRow {
-				if idx := a.tabHitTest(msg.X); idx >= 0 {
-					return a.switchTab(idx)
+			if !blocked {
+				// Check if click is on the tab bar row
+				tabRow := lipgloss.Height(a.renderLogo()) // row right after logo
+				if msg.Y == tabRow {
+					if idx := a.tabHitTest(msg.X); idx >= 0 {
+						return a.switchTab(idx)
+					}
 				}
 			}
 		}
+		// Forward with Y translated to content-relative rows so screens
+		// don't have to know the chrome height — it varies between the
+		// full and compact headers.
+		msg.Y -= a.screenContentTop()
+		return a.updateScreen(a.currentScreenID(), msg)
 
 	case logoTickMsg:
 		n := float64(len(logoGradient))
@@ -368,6 +376,14 @@ func (a app) switchTab(idx int) (app, tea.Cmd) {
 	s, sizeCmd = a.applyCurrentSize(id, s)
 	a.screens[id] = s
 	return a, tea.Batch(blurCmd, sizeCmd, a.wrapScreenCmd(id, s.init()))
+}
+
+// screenContentTop returns the absolute terminal row where the active
+// screen's content begins. Everything above it is chrome: the (full or
+// compact) logo, the tab bar, and the separator line — exactly the prefix
+// View() renders before the screen content.
+func (a app) screenContentTop() int {
+	return strings.Count(a.renderLogo()+a.renderTabBar()+"\n", "\n")
 }
 
 func (a app) View() tea.View {

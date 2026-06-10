@@ -63,7 +63,7 @@ wintui theme nord
 # Machine-readable output (--json works on check, list, show, doctor, notes)
 wintui check --json`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		appSettings = LoadSettings()
+		setAppSettings(LoadSettings())
 		// Apply the saved theme before any TUI/CLI rendering starts.
 		// Default assumes a dark terminal — app.Init follows up with
 		// tea.RequestBackgroundColor and flips to the light variant
@@ -168,7 +168,7 @@ func main() {
 	// unknown-command errors BEFORE PersistentPreRun runs, so without this the
 	// colorscheme would always fall back to the default theme. PersistentPreRun
 	// still reloads settings (idempotently) for actual subcommands.
-	appSettings = LoadSettings()
+	setAppSettings(LoadSettings())
 
 	// fang wraps cobra with styled help / usage / errors / version, themed from
 	// the active palette (fangOptions). It silences cobra's own error print and

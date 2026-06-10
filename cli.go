@@ -626,11 +626,19 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 		}
 	}
 
-	upgraded := len(pkgs) - len(failures)
+	// The skipped self-package is excluded from both sides of the summary:
+	// counting it in the denominator made a clean run read "0/1 succeeded"
+	// when WinTUI was the only pending update.
+	attempted := len(pkgs)
 	if skippedSelf {
-		upgraded--
+		attempted--
 	}
-	fmt.Fprintf(out, "\n%d/%d succeeded.", upgraded, len(pkgs))
+	upgraded := attempted - len(failures)
+	if attempted == 0 && skippedSelf {
+		fmt.Fprintln(out, "\nNothing upgraded: only WinTUI itself had an update. Run 'wintui upgrade --self'.")
+		return nil
+	}
+	fmt.Fprintf(out, "\n%d/%d succeeded.", upgraded, attempted)
 	if len(failures) > 0 {
 		fmt.Fprintf(out, " %s", cliDanger("Failed: "+strings.Join(failures, ", ")))
 		cliExitCode = 1

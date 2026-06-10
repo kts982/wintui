@@ -62,7 +62,7 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.errMsg = ""
 			}
 		case "r":
-			appSettings = DefaultSettings()
+			setAppSettings(DefaultSettings())
 			s.saved = false
 			s.dirty = !settingsEqual(appSettings, s.diskState)
 			s.errMsg = ""
@@ -72,7 +72,9 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
-			contentY := msg.Y - 9 // header + tab + title offset
+			// msg.Y arrives content-relative (the app subtracts the chrome
+			// height before forwarding); row 0 is the panel's top border.
+			contentY := msg.Y - 1
 			if contentY >= 0 && contentY < len(settingDefs) {
 				s.cursor = contentY
 				cmd = s.cycleForward()
@@ -103,16 +105,20 @@ func emitThemeChanged() tea.Msg { return themeChangedMsg{} }
 
 func (s *settingsScreen) cycleForward() tea.Cmd {
 	def := settingDefs[s.cursor]
+	// Mutate a copy and publish it via setAppSettings so worker-goroutine
+	// snapshots never observe a half-written value. setValue only touches
+	// scalar fields, so the shallow copy is safe.
+	next := appSettings
 	switch def.stype {
 	case settingToggle:
-		cur := appSettings.getValue(def.key)
+		cur := next.getValue(def.key)
 		if cur == "true" {
-			appSettings.setValue(def.key, "false")
+			next.setValue(def.key, "false")
 		} else {
-			appSettings.setValue(def.key, "true")
+			next.setValue(def.key, "true")
 		}
 	case settingChoice:
-		cur := appSettings.getValue(def.key)
+		cur := next.getValue(def.key)
 		idx := 0
 		for i, c := range def.choices {
 			if c == cur {
@@ -121,8 +127,9 @@ func (s *settingsScreen) cycleForward() tea.Cmd {
 			}
 		}
 		idx = (idx + 1) % len(def.choices)
-		appSettings.setValue(def.key, def.choices[idx])
+		next.setValue(def.key, def.choices[idx])
 	}
+	setAppSettings(next)
 	s.saved = false
 	s.dirty = !settingsEqual(appSettings, s.diskState)
 	cache.invalidate()
@@ -138,7 +145,8 @@ func (s *settingsScreen) cycleBackward() tea.Cmd {
 	case settingToggle:
 		return s.cycleForward() // toggle is the same either direction
 	case settingChoice:
-		cur := appSettings.getValue(def.key)
+		next := appSettings
+		cur := next.getValue(def.key)
 		idx := 0
 		for i, c := range def.choices {
 			if c == cur {
@@ -150,7 +158,8 @@ func (s *settingsScreen) cycleBackward() tea.Cmd {
 		if idx < 0 {
 			idx = len(def.choices) - 1
 		}
-		appSettings.setValue(def.key, def.choices[idx])
+		next.setValue(def.key, def.choices[idx])
+		setAppSettings(next)
 	}
 	s.saved = false
 	s.dirty = !settingsEqual(appSettings, s.diskState)

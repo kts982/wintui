@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -56,7 +57,7 @@ func TestEnsureHelperTimeout(t *testing.T) {
 	})
 
 	listener := newFakePipeListener()
-	startElevatedHelperFunc = func(_ context.Context, pipeID string) (net.Listener, error) {
+	startElevatedHelperFunc = func(_ context.Context, _, _ string) (net.Listener, error) {
 		return listener, nil
 	}
 	helperAcceptTimeout = 10 * time.Millisecond
@@ -148,7 +149,7 @@ func TestCleanupTargetElevatedSuccess(t *testing.T) {
 	})
 
 	listener := newFakePipeListener()
-	startElevatedHelperFunc = func(_ context.Context, _ string) (net.Listener, error) {
+	startElevatedHelperFunc = func(_ context.Context, _, _ string) (net.Listener, error) {
 		return listener, nil
 	}
 	helperAcceptTimeout = time.Second
@@ -203,7 +204,7 @@ func TestCleanupTargetElevatedHelperError(t *testing.T) {
 	})
 
 	listener := newFakePipeListener()
-	startElevatedHelperFunc = func(_ context.Context, _ string) (net.Listener, error) {
+	startElevatedHelperFunc = func(_ context.Context, _, _ string) (net.Listener, error) {
 		return listener, nil
 	}
 	helperAcceptTimeout = time.Second
@@ -236,7 +237,7 @@ func TestCleanupTargetElevatedDoneWithoutResult(t *testing.T) {
 	})
 
 	listener := newFakePipeListener()
-	startElevatedHelperFunc = func(_ context.Context, _ string) (net.Listener, error) {
+	startElevatedHelperFunc = func(_ context.Context, _, _ string) (net.Listener, error) {
 		return listener, nil
 	}
 	helperAcceptTimeout = time.Second
@@ -267,7 +268,7 @@ func TestRunCommandElevated(t *testing.T) {
 	})
 
 	listener := newFakePipeListener()
-	startElevatedHelperFunc = func(_ context.Context, pipeID string) (net.Listener, error) {
+	startElevatedHelperFunc = func(_ context.Context, _, _ string) (net.Listener, error) {
 		return listener, nil
 	}
 	helperAcceptTimeout = time.Second
@@ -296,7 +297,7 @@ func TestRunCommandElevated(t *testing.T) {
 	}()
 
 	m := &elevationManager{}
-	outChan, errChan, err := m.runCommandElevated("install", "--id", "Test.App")
+	outChan, errChan, err := m.runCommandElevated(context.Background(), "install", "--id", "Test.App")
 	if err != nil {
 		t.Fatalf("runCommandElevated() init error = %v", err)
 	}
@@ -317,5 +318,127 @@ func TestRunCommandElevated(t *testing.T) {
 		if lines[i] != want[i] {
 			t.Fatalf("streamed lines = %#v, want %#v", lines, want)
 		}
+	}
+}
+
+// TestRunCommandElevatedSerializesConcurrentRequests drives two overlapping
+// runCommandElevated calls against a strictly sequential fake helper. reqMu
+// must hold each exchange together — without it the second request's bytes
+// could interleave into the first one's response stream.
+func TestRunCommandElevatedSerializesConcurrentRequests(t *testing.T) {
+	origStart := startElevatedHelperFunc
+	origTimeout := helperAcceptTimeout
+	t.Cleanup(func() {
+		startElevatedHelperFunc = origStart
+		helperAcceptTimeout = origTimeout
+	})
+
+	listener := newFakePipeListener()
+	startElevatedHelperFunc = func(_ context.Context, _, _ string) (net.Listener, error) {
+		return listener, nil
+	}
+	helperAcceptTimeout = time.Second
+
+	serverConn, clientConn := net.Pipe()
+	listener.acceptCh <- serverConn
+
+	go func() {
+		defer clientConn.Close()
+		reader := bufio.NewReader(clientConn)
+		for range 2 {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			var req helperRequest
+			if err := json.Unmarshal([]byte(line), &req); err != nil {
+				return
+			}
+			_ = sendHelperResponse(clientConn, "line", "run:"+req.Args[len(req.Args)-1])
+			_ = sendHelperResponse(clientConn, "done", "")
+		}
+	}()
+
+	m := &elevationManager{}
+	var wg sync.WaitGroup
+	for _, id := range []string{"App.A", "App.B"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			out, errCh, err := m.runCommandElevated(context.Background(), "install", "--id", id)
+			if err != nil {
+				t.Errorf("runCommandElevated(%s) init error = %v", id, err)
+				return
+			}
+			var lines []string
+			for line := range out {
+				lines = append(lines, line)
+			}
+			if err := <-errCh; err != nil {
+				t.Errorf("runCommandElevated(%s) err = %v", id, err)
+				return
+			}
+			if len(lines) != 1 || lines[0] != "run:"+id {
+				t.Errorf("runCommandElevated(%s) lines = %#v, want [run:%s] — exchanges interleaved?", id, lines, id)
+			}
+		}(id)
+	}
+	wg.Wait()
+}
+
+// TestRunCommandElevatedCancelPropagates asserts a TUI-side ctx cancel
+// surfaces as "cancelled" and tears down the pipe so the helper notices.
+func TestRunCommandElevatedCancelPropagates(t *testing.T) {
+	origStart := startElevatedHelperFunc
+	origTimeout := helperAcceptTimeout
+	t.Cleanup(func() {
+		startElevatedHelperFunc = origStart
+		helperAcceptTimeout = origTimeout
+	})
+
+	listener := newFakePipeListener()
+	startElevatedHelperFunc = func(_ context.Context, _, _ string) (net.Listener, error) {
+		return listener, nil
+	}
+	helperAcceptTimeout = time.Second
+
+	serverConn, clientConn := net.Pipe()
+	listener.acceptCh <- serverConn
+
+	helperSawClose := make(chan struct{})
+	go func() {
+		defer clientConn.Close()
+		reader := bufio.NewReader(clientConn)
+		if _, err := reader.ReadString('\n'); err != nil {
+			return
+		}
+		_ = sendHelperResponse(clientConn, "line", "Downloading package")
+		// Simulate a long-running winget: never send done; the closed pipe
+		// is what unblocks this read.
+		_, _ = reader.ReadString('\n')
+		close(helperSawClose)
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := &elevationManager{}
+	out, errCh, err := m.runCommandElevated(ctx, "install", "--id", "Test.App")
+	if err != nil {
+		t.Fatalf("runCommandElevated() init error = %v", err)
+	}
+	if line := <-out; line != "Downloading package" {
+		t.Fatalf("first line = %q", line)
+	}
+
+	cancel()
+	for range out {
+	}
+	if err := <-errCh; err == nil || err.Error() != "cancelled" {
+		t.Fatalf("err = %v, want cancelled", err)
+	}
+	select {
+	case <-helperSawClose:
+	case <-time.After(2 * time.Second):
+		t.Fatal("helper never observed the closed pipe after cancel")
 	}
 }
