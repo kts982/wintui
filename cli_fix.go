@@ -195,6 +195,25 @@ func printPortableUpgradeAdvisory(out io.Writer, pkgs []Package, settings Settin
 		len(risky))))
 }
 
+// filterPackagesByIDs returns the subset of pkgs whose ID matches one of ids
+// (case-insensitive, trimmed) — used to scope the portable advisory for
+// `upgrade --id` to the packages the user actually named, not the whole list.
+func filterPackagesByIDs(pkgs []Package, ids []string) []Package {
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if t := strings.ToLower(strings.TrimSpace(id)); t != "" {
+			want[t] = true
+		}
+	}
+	out := make([]Package, 0, len(pkgs))
+	for _, p := range pkgs {
+		if want[strings.ToLower(strings.TrimSpace(p.ID))] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func portableUnpinned(pkgs []Package, settings Settings) []Package {
 	dirNames := fixPortablePackageDirsFn()
 	if len(dirNames) == 0 {

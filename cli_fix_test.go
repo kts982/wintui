@@ -223,6 +223,45 @@ func TestPortablePredicateConsistencyScopeUserElevateNil(t *testing.T) {
 	}
 }
 
+func TestFilterPackagesByIDs(t *testing.T) {
+	raw := []Package{
+		{ID: "Mozilla.Firefox", Source: "winget"},
+		{ID: "Git.Git", Source: "winget"},
+		{ID: "Other.Pkg", Source: "winget"},
+	}
+	got := filterPackagesByIDs(raw, []string{"mozilla.firefox", " Git.Git "})
+	ids := map[string]bool{}
+	for _, p := range got {
+		ids[p.ID] = true
+	}
+	if len(got) != 2 || !ids["Mozilla.Firefox"] || !ids["Git.Git"] || ids["Other.Pkg"] {
+		t.Fatalf("filtered = %+v, want Firefox+Git only (case-insensitive, trimmed)", got)
+	}
+}
+
+// Regression: the advisory now receives the planned upgrade set, so a HELD
+// portable package (excluded from plan.Visible) must not trigger the nudge.
+func TestPortableAdvisoryNotShownForHeldPackages(t *testing.T) {
+	origDirs := fixPortablePackageDirsFn
+	fixPortablePackageDirsFn = func() []string { return []string{"Held.CLI_src", "Visible.CLI_src"} }
+	t.Cleanup(func() { fixPortablePackageDirsFn = origDirs })
+
+	settings := DefaultSettings()
+	settings.Packages = map[string]PackageOverride{
+		packageRuleKey("Held.CLI", "winget"): {UpdatePolicy: PolicyHold},
+	}
+	raw := []Package{
+		{ID: "Held.CLI", Source: "winget", Version: "1.0", Available: "2.0"},
+		{ID: "Visible.CLI", Source: "winget", Version: "1.0", Available: "2.0"},
+	}
+
+	plan := planUpgrades(raw, settings)
+	risky := portableUnpinned(plan.Visible, settings) // what runUpgradeAll now passes
+	if len(risky) != 1 || risky[0].ID != "Visible.CLI" {
+		t.Fatalf("advisory set = %v, want only [Visible.CLI] — the held portable must be excluded", risky)
+	}
+}
+
 func TestPortableUpgradeAdvisory(t *testing.T) {
 	origDirs := fixPortablePackageDirsFn
 	fixPortablePackageDirsFn = func() []string { return []string{"Risky.CLI_src", "Pinned.CLI_src"} }

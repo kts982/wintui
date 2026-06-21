@@ -314,17 +314,23 @@ func newHistoryRecord(trigger string, items []historyItem) historyRecord {
 
 // buildTUIHistoryRecord turns a finished workspace batch into a history record.
 // Versions come straight from the batch item (no winget re-query): the installed
-// version is the from-version, the available version the target.
-func buildTUIHistoryRecord(items []batchItem, trigger string) historyRecord {
+// version is the from-version. The target is the user's explicitly chosen
+// version (selectedVersions, keyed by item.key()) when set — matching the actual
+// winget command — otherwise the available (latest) version.
+func buildTUIHistoryRecord(items []batchItem, trigger string, selectedVersions map[string]string) historyRecord {
 	hi := make([]historyItem, 0, len(items))
 	for _, bi := range items {
+		to := bi.item.available
+		if v := selectedVersions[bi.item.key()]; v != "" {
+			to = v
+		}
 		it := historyItem{
 			ID:          bi.item.pkg.ID,
 			Name:        bi.item.pkg.Name,
 			Source:      bi.item.pkg.Source,
 			Action:      string(bi.action),
 			FromVersion: bi.item.installed,
-			ToVersion:   bi.item.available,
+			ToVersion:   to,
 			Status:      historyStatusFromBatch(bi.status),
 		}
 		if bi.status == batchFailed && bi.err != nil {

@@ -45,7 +45,7 @@ func TestBuildTUIHistoryRecord(t *testing.T) {
 		{action: retryOpUpgrade, status: batchFailed, err: errors.New("boom"), item: workspaceItem{pkg: Package{ID: "B", Name: "App B", Source: "winget"}, installed: "1.0", available: "2.0"}},
 		{action: retryOpInstall, status: batchPendingRestart, item: workspaceItem{pkg: Package{ID: "C", Name: "App C", Source: "winget"}}},
 	}
-	rec := buildTUIHistoryRecord(items, historyTriggerTUI)
+	rec := buildTUIHistoryRecord(items, historyTriggerTUI, nil)
 
 	if rec.Trigger != historyTriggerTUI {
 		t.Errorf("trigger = %q, want %q", rec.Trigger, historyTriggerTUI)
@@ -64,6 +64,27 @@ func TestBuildTUIHistoryRecord(t *testing.T) {
 	}
 	if rec.Items[2].Status != historyStatusPending || rec.Items[2].Action != "install" {
 		t.Errorf("item[2] = %+v, want pending install", rec.Items[2])
+	}
+}
+
+// Regression: when a user picks a specific (non-latest) version, the record's
+// ToVersion must be that chosen version (what winget actually installs), not the
+// available/latest version.
+func TestBuildTUIHistoryRecordUsesSelectedVersion(t *testing.T) {
+	item := workspaceItem{pkg: Package{ID: "A.Pkg", Source: "winget"}, installed: "1.0", available: "3.0"}
+	items := []batchItem{{action: retryOpUpgrade, status: batchDone, item: item}}
+
+	// User chose 2.5, not the latest 3.0.
+	sel := map[string]string{item.key(): "2.5"}
+	rec := buildTUIHistoryRecord(items, historyTriggerTUI, sel)
+	if rec.Items[0].ToVersion != "2.5" {
+		t.Errorf("ToVersion = %q, want 2.5 (the chosen version, not available 3.0)", rec.Items[0].ToVersion)
+	}
+
+	// No selection -> falls back to available.
+	rec2 := buildTUIHistoryRecord(items, historyTriggerTUI, nil)
+	if rec2.Items[0].ToVersion != "3.0" {
+		t.Errorf("ToVersion = %q, want 3.0 (available, no version chosen)", rec2.Items[0].ToVersion)
 	}
 }
 

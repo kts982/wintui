@@ -457,7 +457,7 @@ func runUpgradeAll() error {
 	if err != nil {
 		return err
 	}
-	printPortableUpgradeAdvisory(os.Stdout, raw, appSettings)
+	printPortableUpgradeAdvisory(os.Stdout, planUpgrades(raw, appSettings).Visible, appSettings)
 	return upgradeAll(ctx, raw, appSettings, os.Stdout)
 }
 
@@ -467,7 +467,7 @@ func runUpgradeAuto() error {
 	if err != nil {
 		return err
 	}
-	printPortableUpgradeAdvisory(os.Stdout, raw, appSettings)
+	printPortableUpgradeAdvisory(os.Stdout, planUpgrades(raw, appSettings).Auto, appSettings)
 	return upgradeAuto(ctx, raw, appSettings, os.Stdout)
 }
 
@@ -477,7 +477,7 @@ func runUpgradeIDs(ids []string) error {
 	if err != nil {
 		return err
 	}
-	printPortableUpgradeAdvisory(os.Stdout, raw, appSettings)
+	printPortableUpgradeAdvisory(os.Stdout, filterPackagesByIDs(raw, ids), appSettings)
 	return upgradeIDs(ctx, ids, raw, appSettings, os.Stdout)
 }
 

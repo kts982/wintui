@@ -30,6 +30,46 @@ func TestFinishBatchRecordsHistory(t *testing.T) {
 	}
 }
 
+// Regression: cancelling a running batch (Esc) records the completed installs.
+// finishBatch never runs for a cancelled batch, so without the cancel-path
+// record the already-succeeded items would leave no history. Completed items
+// keep their real status; queued items record as "skipped" (recorded before the
+// queued->failed marking).
+func TestCancelBatchRecordsHistory(t *testing.T) {
+	recs := captureHistory(t)
+	ws := workspaceScreen{
+		state:  workspaceExecuting,
+		cancel: func() {},
+		modal: &execModal{
+			phase: execPhaseRunning,
+			items: []batchItem{
+				{action: retryOpUpgrade, status: batchDone, item: workspaceItem{pkg: Package{ID: "Done.Pkg", Name: "Done", Source: "winget"}, installed: "1.0", available: "2.0"}},
+				{action: retryOpUpgrade, status: batchQueued, item: workspaceItem{pkg: Package{ID: "Queued.Pkg", Name: "Queued", Source: "winget"}, installed: "1.0", available: "2.0"}},
+			},
+		},
+	}
+
+	ws.update(keyMsg("esc"))
+
+	if len(*recs) != 1 {
+		t.Fatalf("records = %d, want 1 (a cancelled batch must be recorded)", len(*recs))
+	}
+	rec := (*recs)[0]
+	if rec.Trigger != historyTriggerTUI {
+		t.Errorf("trigger = %q, want %q", rec.Trigger, historyTriggerTUI)
+	}
+	byID := map[string]historyItem{}
+	for _, it := range rec.Items {
+		byID[it.ID] = it
+	}
+	if byID["Done.Pkg"].Status != historyStatusOK {
+		t.Errorf("Done.Pkg status = %q, want ok (it completed before the cancel)", byID["Done.Pkg"].Status)
+	}
+	if byID["Queued.Pkg"].Status != historyStatusSkipped {
+		t.Errorf("Queued.Pkg status = %q, want skipped (recorded before queued->failed marking)", byID["Queued.Pkg"].Status)
+	}
+}
+
 func TestFinishBatchEmptyWritesNoHistory(t *testing.T) {
 	recs := captureHistory(t)
 	s := workspaceScreen{ctx: context.Background(), modal: &execModal{}}

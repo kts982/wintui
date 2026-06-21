@@ -479,7 +479,7 @@ func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 	// on-launch auto-update, and Ctrl+E elevation retry (each retry is its own
 	// record). Versions are read from the batch items — no winget re-query.
 	if len(s.modal.items) > 0 {
-		_, _ = historyRecordFn(buildTUIHistoryRecord(s.modal.items, historyTriggerTUI))
+		_, _ = historyRecordFn(buildTUIHistoryRecord(s.modal.items, historyTriggerTUI, s.selectedVersions))
 	}
 
 	notifyBatchFinish(s.modal.items)

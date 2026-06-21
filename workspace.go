@@ -314,6 +314,14 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					if s.cancel != nil {
 						s.cancel()
 					}
+					// Record the cancelled batch before marking the rest skipped. finishBatch
+					// never runs for a cancelled batch (the streamDoneMsg guard drops late
+					// completions once phase is complete), so already-succeeded installs
+					// would otherwise leave no history; recording first keeps the
+					// queued / in-flight items as "skipped" rather than "error".
+					if len(s.modal.items) > 0 {
+						_, _ = historyRecordFn(buildTUIHistoryRecord(s.modal.items, historyTriggerTUI, s.selectedVersions))
+					}
 					// Mark remaining queued items as skipped and finish.
 					for i := range s.modal.items {
 						if s.modal.items[i].status == batchQueued {
