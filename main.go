@@ -157,13 +157,16 @@ func init() {
 	historyCmd.Flags().IntVar(&historyLimitFlag, "limit", 20, "Max rows to show (0 = all)")
 	historyCmd.Flags().StringVar(&historySinceFlag, "since", "", "Only records newer than a Go duration (e.g. 168h, 30m)")
 	historyCmd.Flags().BoolVar(&historyFailedOnlyFlag, "failed-only", false, "Only records/items that failed")
+	fixCmd.Flags().BoolVar(&fixPortableFlag, "portable", false, "Pin portable winget packages to user scope (prevents PATH loss on upgrade)")
+	fixCmd.Flags().BoolVar(&fixDryRunFlag, "dry-run", false, "Preview the changes without writing")
+	fixCmd.Flags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 
 	// Dynamic completion of package IDs from the on-disk cache (no winget call).
 	// notesCmd and historyCmd set their own ValidArgsFunction in the command literal.
 	showCmd.ValidArgsFunction = completeInstalledIDs
 	_ = upgradeCmd.RegisterFlagCompletionFunc("id", completeUpgradeableIDs)
 
-	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd, exportCmd, importCmd, themeCmd, notesCmd, historyCmd)
+	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd, exportCmd, importCmd, themeCmd, notesCmd, historyCmd, fixCmd)
 }
 
 func main() {
