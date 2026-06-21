@@ -239,6 +239,24 @@ func TestFilterPackagesByIDs(t *testing.T) {
 	}
 }
 
+// Regression: `upgrade --id <held portable>` must not get the advisory — a held
+// package errors instead of upgrading, so it isn't "about to upgrade".
+func TestAdvisoryPackagesForIDsExcludesHeld(t *testing.T) {
+	settings := DefaultSettings()
+	settings.Packages = map[string]PackageOverride{
+		packageRuleKey("Held.CLI", "winget"): {UpdatePolicy: PolicyHold},
+	}
+	raw := []Package{
+		{ID: "Held.CLI", Source: "winget", Version: "1.0", Available: "2.0"},
+		{ID: "Live.CLI", Source: "winget", Version: "1.0", Available: "2.0"},
+		{ID: "Other.CLI", Source: "winget", Version: "1.0", Available: "2.0"},
+	}
+	got := advisoryPackagesForIDs(raw, []string{"Held.CLI", "Live.CLI"}, settings)
+	if len(got) != 1 || got[0].ID != "Live.CLI" {
+		t.Fatalf("advisory set = %v, want only [Live.CLI] (held requested id excluded)", got)
+	}
+}
+
 // Regression: the advisory now receives the planned upgrade set, so a HELD
 // portable package (excluded from plan.Visible) must not trigger the nudge.
 func TestPortableAdvisoryNotShownForHeldPackages(t *testing.T) {

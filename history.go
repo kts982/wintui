@@ -320,9 +320,15 @@ func newHistoryRecord(trigger string, items []historyItem) historyRecord {
 func buildTUIHistoryRecord(items []batchItem, trigger string, selectedVersions map[string]string) historyRecord {
 	hi := make([]historyItem, 0, len(items))
 	for _, bi := range items {
-		to := bi.item.available
-		if v := selectedVersions[bi.item.key()]; v != "" {
-			to = v
+		// to_version is meaningful only for install/upgrade. An uninstall has
+		// none, and must not inherit a stale per-package version pick (selections
+		// persist globally) or the package's available update.
+		to := ""
+		if bi.action != retryOpUninstall {
+			to = bi.item.available
+			if v := selectedVersions[bi.item.key()]; v != "" {
+				to = v
+			}
 		}
 		it := historyItem{
 			ID:          bi.item.pkg.ID,

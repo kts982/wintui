@@ -88,6 +88,23 @@ func TestBuildTUIHistoryRecordUsesSelectedVersion(t *testing.T) {
 	}
 }
 
+// Regression: an uninstall must record no to_version, even when a stale version
+// pick lingers in selectedVersions (selections persist globally) or the package
+// has an available update. Only from_version (the removed version) is meaningful.
+func TestBuildTUIHistoryRecordUninstallHasNoToVersion(t *testing.T) {
+	item := workspaceItem{pkg: Package{ID: "Gone.Pkg", Source: "winget"}, installed: "1.0", available: "2.0"}
+	items := []batchItem{{action: retryOpUninstall, status: batchDone, item: item}}
+	sel := map[string]string{item.key(): "2.5"} // stale pick from a prior detail-panel selection
+
+	rec := buildTUIHistoryRecord(items, historyTriggerTUI, sel)
+	if rec.Items[0].ToVersion != "" {
+		t.Errorf("uninstall ToVersion = %q, want empty (no stale selected/available version)", rec.Items[0].ToVersion)
+	}
+	if rec.Items[0].FromVersion != "1.0" {
+		t.Errorf("uninstall FromVersion = %q, want 1.0 (the removed version)", rec.Items[0].FromVersion)
+	}
+}
+
 func TestUpgradePlannedWritesHistory(t *testing.T) {
 	origStream := streamUpgradeFn
 	origExit := cliExitCode

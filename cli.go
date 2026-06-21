@@ -477,7 +477,7 @@ func runUpgradeIDs(ids []string) error {
 	if err != nil {
 		return err
 	}
-	printPortableUpgradeAdvisory(os.Stdout, filterPackagesByIDs(raw, ids), appSettings)
+	printPortableUpgradeAdvisory(os.Stdout, advisoryPackagesForIDs(raw, ids, appSettings), appSettings)
 	return upgradeIDs(ctx, ids, raw, appSettings, os.Stdout)
 }
 

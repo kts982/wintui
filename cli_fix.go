@@ -214,6 +214,21 @@ func filterPackagesByIDs(pkgs []Package, ids []string) []Package {
 	return out
 }
 
+// advisoryPackagesForIDs returns the requested packages that `upgrade --id`
+// would actually attempt to upgrade — present in raw and not held by policy.
+// Held packages error out instead of upgrading, so they don't earn the advisory.
+func advisoryPackagesForIDs(raw []Package, ids []string, settings Settings) []Package {
+	requested := filterPackagesByIDs(raw, ids)
+	out := make([]Package, 0, len(requested))
+	for _, p := range requested {
+		if settings.updatePolicy(p.ID, p.Source, p.Available) == PolicyHold {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func portableUnpinned(pkgs []Package, settings Settings) []Package {
 	dirNames := fixPortablePackageDirsFn()
 	if len(dirNames) == 0 {
