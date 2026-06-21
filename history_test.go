@@ -182,6 +182,31 @@ func TestHistoryFutureVersionRejectedAndNotClobbered(t *testing.T) {
 	}
 }
 
+// Regression: a future schema may change a field's TYPE (here records is an
+// object, not an array) so it won't unmarshal into the v1 struct. It must still
+// be recognized as future and left untouched, not mislabeled corrupt + clobbered.
+func TestHistoryFutureVersionIncompatibleFieldNoClobber(t *testing.T) {
+	path := tempHistoryPath(t)
+	future := []byte(`{"version":99,"records":{"shape":"changed-in-v99"}}`)
+	if err := os.WriteFile(path, future, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := loadHistoryFrom(path); err == nil || !strings.Contains(err.Error(), "unsupported history format v99") {
+		t.Fatalf("expected unsupported-version error, got %v", err)
+	}
+	if _, err := recordHistoryTo(path, historyRecord{Trigger: historyTriggerTUI, Items: []historyItem{{ID: "x", Status: historyStatusOK}}}); err == nil {
+		t.Fatal("expected recordHistoryTo to refuse the future-version file")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(future) {
+		t.Errorf("future-version file was clobbered:\n got: %s\nwant: %s", after, future)
+	}
+}
+
 func TestSummarizeCounts(t *testing.T) {
 	got := summarize([]historyItem{
 		{Status: historyStatusOK},

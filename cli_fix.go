@@ -205,8 +205,8 @@ func portableUnpinned(pkgs []Package, settings Settings) []Package {
 		if !isPortableInstalled(pkg.ID, dirNames) {
 			continue
 		}
-		if _, o, _ := settings.lookupOverride(pkg.ID, pkg.Source); o.Scope == ScopeUser {
-			continue // already user-scoped
+		if _, o, _ := settings.lookupOverride(pkg.ID, pkg.Source); portableAlreadyPinned(o) {
+			continue // already pinned (scope=user, elevate=false)
 		}
 		risky = append(risky, pkg)
 	}

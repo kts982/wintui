@@ -189,6 +189,40 @@ func TestRunFixPortableNonePresent(t *testing.T) {
 	}
 }
 
+// Regression: the advisory's "already pinned" check and fix --portable's must
+// agree. A scope=user override with Elevate=nil must be treated as NOT-yet-pinned
+// by BOTH (the advisory fires AND fix --portable completes the pin to elevate=false).
+func TestPortablePredicateConsistencyScopeUserElevateNil(t *testing.T) {
+	settings := DefaultSettings()
+	settings.Packages = map[string]PackageOverride{
+		packageRuleKey("Half.Pinned", "winget"): {Scope: ScopeUser}, // Elevate nil
+	}
+	dirs := []string{"Half.Pinned_src"}
+
+	// Advisory side: must flag it as at-risk (not silently "safe").
+	origDirs := fixPortablePackageDirsFn
+	fixPortablePackageDirsFn = func() []string { return dirs }
+	t.Cleanup(func() { fixPortablePackageDirsFn = origDirs })
+
+	risky := portableUnpinned([]Package{{ID: "Half.Pinned", Source: "winget"}}, settings)
+	if len(risky) != 1 {
+		t.Fatalf("portableUnpinned = %v, want it flagged (scope=user but elevate=nil)", risky)
+	}
+
+	// fix --portable side: must complete the pin (set elevate=false).
+	applied := fixPortableHarness(t, []Package{{ID: "Half.Pinned", Source: "winget"}}, dirs)
+	var buf bytes.Buffer
+	if err := runFixPortable(fixPortableOptions{}, settings, &buf); err != nil {
+		t.Fatalf("runFixPortable: %v", err)
+	}
+	if len(*applied) != 1 {
+		t.Fatalf("expected fix to pin the half-pinned package, applied %+v", *applied)
+	}
+	if (*applied)[0].o.Elevate == nil || *(*applied)[0].o.Elevate {
+		t.Errorf("fix should set elevate=false, got %+v", (*applied)[0].o)
+	}
+}
+
 func TestPortableUpgradeAdvisory(t *testing.T) {
 	origDirs := fixPortablePackageDirsFn
 	fixPortablePackageDirsFn = func() []string { return []string{"Risky.CLI_src", "Pinned.CLI_src"} }

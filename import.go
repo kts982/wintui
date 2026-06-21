@@ -495,6 +495,16 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 				if m.cancel != nil {
 					m.cancel()
 				}
+				// Record the installs that completed before the cancel so they
+				// still land in action history. batchCurrent is the count of
+				// resolved items, so this excludes the in-flight (unknown) one.
+				if m.batchCurrent > 0 {
+					recordImportHistory(historyTriggerTUIImport,
+						m.batchIDs[:m.batchCurrent],
+						m.batchSources[:m.batchCurrent],
+						m.batchVersions[:m.batchCurrent],
+						m.batchErrs[:m.batchCurrent])
+				}
 				m.state = importDone
 				m.statusMsg = warnStyle.Render("Cancelled")
 				m.progress = m.progress.stop()

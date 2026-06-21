@@ -222,6 +222,76 @@ func TestHistoryLimitCaps(t *testing.T) {
 	}
 }
 
+// Regression: the predicate exit code must be set even in --json mode (the JSON
+// branch used to return before setting it).
+func TestHistoryJSONPredicateMissExits1(t *testing.T) {
+	// Tier1: a filter (--failed-only) that matches nothing, as JSON.
+	resetExit(t)
+	withHistory(t, []historyRecord{
+		histRecord("b1", historyTriggerCLIAll, "upgrade", tLater,
+			historyItem{ID: "A.Pkg", Action: "upgrade", Status: historyStatusOK}),
+	})
+	var buf bytes.Buffer
+	if err := runHistory(historyOptions{FailedOnly: true, JSON: true, Limit: 20}, &buf); err != nil {
+		t.Fatalf("runHistory: %v", err)
+	}
+	if cliExitCode != 1 {
+		t.Errorf("Tier1 --failed-only --json miss: cliExitCode = %d, want 1", cliExitCode)
+	}
+	var b historyBatchesJSON
+	if err := json.Unmarshal(buf.Bytes(), &b); err != nil || b.Count != 0 {
+		t.Errorf("expected {count:0} JSON, got err=%v count=%d", err, b.Count)
+	}
+
+	// Tier2: a selected id with no records, as JSON.
+	resetExit(t)
+	var buf2 bytes.Buffer
+	if err := runHistory(historyOptions{ID: "Absent.Pkg", JSON: true, Limit: 20}, &buf2); err != nil {
+		t.Fatalf("runHistory: %v", err)
+	}
+	if cliExitCode != 1 {
+		t.Errorf("Tier2 --json miss: cliExitCode = %d, want 1", cliExitCode)
+	}
+}
+
+func TestHistorySinceFilters(t *testing.T) {
+	resetExit(t)
+	// Anchor relative to now, since runHistory computes the cutoff from time.Now().
+	old := time.Now().Add(-48 * time.Hour)
+	recent := time.Now().Add(-1 * time.Hour)
+	withHistory(t, []historyRecord{
+		histRecord("old", historyTriggerCLIAll, "upgrade", old,
+			historyItem{ID: "Old.Pkg", Name: "Old", Action: "upgrade", Status: historyStatusOK}),
+		histRecord("new", historyTriggerCLIAll, "upgrade", recent,
+			historyItem{ID: "New.Pkg", Name: "New", Action: "upgrade", Status: historyStatusOK}),
+	})
+
+	var buf bytes.Buffer
+	if err := runHistory(historyOptions{Since: "24h", Limit: 20}, &buf); err != nil {
+		t.Fatalf("runHistory: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "New") {
+		t.Errorf("--since 24h should keep the recent record:\n%s", out)
+	}
+	if strings.Contains(out, "Old") {
+		t.Errorf("--since 24h should drop the 48h-old record:\n%s", out)
+	}
+	if cliExitCode != 0 {
+		t.Errorf("cliExitCode = %d, want 0 (matches found)", cliExitCode)
+	}
+
+	// --since matching nothing is a filtered-empty predicate miss -> exit 1.
+	resetExit(t)
+	var buf2 bytes.Buffer
+	if err := runHistory(historyOptions{Since: "1m", Limit: 20}, &buf2); err != nil {
+		t.Fatalf("runHistory: %v", err)
+	}
+	if cliExitCode != 1 {
+		t.Errorf("--since 1m (no matches) cliExitCode = %d, want 1", cliExitCode)
+	}
+}
+
 func TestHistoryInvalidSinceErrors(t *testing.T) {
 	withHistory(t, nil)
 	var buf bytes.Buffer

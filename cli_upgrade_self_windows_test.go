@@ -79,6 +79,7 @@ func TestUpgradeSelfAvailableStartsHandoff(t *testing.T) {
 		startSelfUpdateHost = origStartHost
 	})
 
+	recs := captureHistory(t)
 	var buf bytes.Buffer
 	if err := upgradeSelf(&buf); err != nil {
 		t.Fatalf("upgradeSelf: %v", err)
@@ -89,5 +90,20 @@ func TestUpgradeSelfAvailableStartsHandoff(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "2.8.0 → 2.9.0") || !strings.Contains(out, "Closing now") {
 		t.Errorf("expected availability + closing message, got: %q", out)
+	}
+	// The cli-self write-point records one pending record.
+	if len(*recs) != 1 {
+		t.Fatalf("history records = %d, want 1 (cli-self)", len(*recs))
+	}
+	rec := (*recs)[0]
+	if rec.Trigger != historyTriggerCLISelf {
+		t.Errorf("trigger = %q, want %q", rec.Trigger, historyTriggerCLISelf)
+	}
+	if len(rec.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(rec.Items))
+	}
+	it := rec.Items[0]
+	if it.ID != selfPackageID || it.Status != historyStatusPending || it.FromVersion != "2.8.0" || it.ToVersion != "2.9.0" {
+		t.Errorf("item = %+v, want %s pending 2.8.0->2.9.0", it, selfPackageID)
 	}
 }

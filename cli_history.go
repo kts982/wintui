@@ -108,6 +108,12 @@ func historyBatches(env historyEnvelope, opts historyOptions, since time.Time, f
 		recs = recs[:opts.Limit]
 	}
 
+	// A selector/filter that matches nothing exits 1 (predicate) — set before
+	// the JSON branch so --json reports the same exit code as the text view.
+	if total == 0 && filtered {
+		cliExitCode = 1
+	}
+
 	if opts.JSON {
 		payload := historyBatchesJSON{View: "batches", Count: len(recs), Batches: []historyBatchJSON{}}
 		for _, r := range recs {
@@ -118,7 +124,6 @@ func historyBatches(env historyEnvelope, opts historyOptions, since time.Time, f
 
 	if total == 0 {
 		if filtered {
-			cliExitCode = 1
 			fmt.Fprintln(out, "No matching history records.")
 		} else {
 			fmt.Fprintln(out, "No action history yet. WinTUI records the install/upgrade/uninstall operations it runs.")
@@ -178,6 +183,12 @@ func historyTimeline(env historyEnvelope, opts historyOptions, since time.Time, 
 		entries = entries[:opts.Limit]
 	}
 
+	// A timeline is always id-selected, so an empty result is a predicate miss.
+	// Set before the JSON branch so --json exits 1 too.
+	if total == 0 {
+		cliExitCode = 1
+	}
+
 	if opts.JSON {
 		payload := historyTimelineJSON{View: "timeline", PackageID: opts.ID, Count: len(entries), Records: []historyTimelineEntryJSON{}}
 		for _, e := range entries {
@@ -187,8 +198,6 @@ func historyTimeline(env historyEnvelope, opts historyOptions, since time.Time, 
 	}
 
 	if total == 0 {
-		// A selected id with no records is a predicate miss.
-		cliExitCode = 1
 		fmt.Fprintf(out, "No history for %q.\n", opts.ID)
 		return nil
 	}

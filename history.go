@@ -170,6 +170,15 @@ func readHistoryRaw(path string) (historyEnvelope, historyLoadKind) {
 	if err != nil {
 		return historyEnvelope{}, historyMissing
 	}
+	// Probe the version first: a future schema may change a field's type and
+	// fail to unmarshal into the v1 struct. Recognizing it as future here (not
+	// "corrupt") preserves the no-clobber guarantee if a user downgrades WinTUI.
+	var probe struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(b, &probe) == nil && probe.Version > historyEnvelopeVersion {
+		return historyEnvelope{Version: probe.Version}, historyFuture
+	}
 	var env historyEnvelope
 	if err := json.Unmarshal(b, &env); err != nil {
 		return historyEnvelope{}, historyCorrupt
