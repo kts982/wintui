@@ -19,6 +19,11 @@ func TestMain(m *testing.M) {
 	settingsBackup, settingsErr := os.ReadFile(settingsPath)
 	cacheBackup, cacheErr := os.ReadFile(cachePath)
 
+	// Action-history write-points (finishBatch, the CLI upgrade loops) go through
+	// historyRecordFn. Default it to a no-op so no test writes the real
+	// history.json; write-point tests override it locally to capture records.
+	historyRecordFn = func(historyRecord) (string, error) { return "", nil }
+
 	code := m.Run()
 
 	if settingsErr == nil {

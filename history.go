@@ -259,3 +259,109 @@ func writeHistoryEnvelope(path string, env historyEnvelope) error {
 	}
 	return os.Rename(tmp, path)
 }
+
+// ── Record builders (write-point seam) ─────────────────────────────
+
+// historyStatusFromBatch maps a finished batch item's status to a history
+// status. batchQueued/batchRunning should never reach a completed batch; they
+// default to "skipped" so an unexpected state is recorded honestly, not as "ok".
+func historyStatusFromBatch(st batchItemStatus) string {
+	switch st {
+	case batchDone:
+		return historyStatusOK
+	case batchFailed:
+		return historyStatusError
+	case batchPendingRestart:
+		return historyStatusPending
+	default:
+		return historyStatusSkipped
+	}
+}
+
+// dominantAction returns a batch's overall action: the shared per-item action,
+// or "mixed" when items disagree (e.g. an apply batch of install + uninstall).
+func dominantAction(items []historyItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	first := items[0].Action
+	for _, it := range items[1:] {
+		if it.Action != first {
+			return historyActionMixed
+		}
+	}
+	return first
+}
+
+// newHistoryRecord assembles a record from already-built items, deriving the
+// dominant action. ID / Timestamp / Summary are filled in by recordHistory.
+func newHistoryRecord(trigger string, items []historyItem) historyRecord {
+	return historyRecord{
+		Trigger: trigger,
+		Action:  dominantAction(items),
+		Items:   items,
+	}
+}
+
+// buildTUIHistoryRecord turns a finished workspace batch into a history record.
+// Versions come straight from the batch item (no winget re-query): the installed
+// version is the from-version, the available version the target.
+func buildTUIHistoryRecord(items []batchItem, trigger string) historyRecord {
+	hi := make([]historyItem, 0, len(items))
+	for _, bi := range items {
+		it := historyItem{
+			ID:          bi.item.pkg.ID,
+			Name:        bi.item.pkg.Name,
+			Source:      bi.item.pkg.Source,
+			Action:      string(bi.action),
+			FromVersion: bi.item.installed,
+			ToVersion:   bi.item.available,
+			Status:      historyStatusFromBatch(bi.status),
+		}
+		if bi.status == batchFailed && bi.err != nil {
+			it.Error = bi.err.Error()
+		}
+		hi = append(hi, it)
+	}
+	return newHistoryRecord(trigger, hi)
+}
+
+// cliUpgradeItem builds a per-package history item for the headless upgrade
+// loops, from the data already on hand in the upgradeable list (no re-query).
+func cliUpgradeItem(pkg Package, status string) historyItem {
+	return historyItem{
+		ID:          pkg.ID,
+		Name:        pkg.Name,
+		Source:      pkg.Source,
+		Action:      historyActionUpgrade,
+		FromVersion: pkg.Version,
+		ToVersion:   pkg.Available,
+		Status:      status,
+	}
+}
+
+// recordImportHistory records an install batch from the parallel id/source/
+// version/error slices the TUI import state machine carries. Installs have no
+// from-version; the (optional) pinned version is the target. errs is indexed in
+// step with ids; a nil entry (or a short slice) means success.
+func recordImportHistory(trigger string, ids, sources, versions []string, errs []error) {
+	if len(ids) == 0 {
+		return
+	}
+	items := make([]historyItem, 0, len(ids))
+	for i, id := range ids {
+		it := historyItem{ID: id, Action: historyActionInstall, Status: historyStatusOK}
+		if i < len(sources) {
+			it.Source = sources[i]
+		}
+		if i < len(versions) {
+			it.ToVersion = versions[i]
+		}
+		if i < len(errs) && errs[i] != nil {
+			it.Status = historyStatusError
+			it.Error = errs[i].Error()
+		}
+		items = append(items, it)
+	}
+	_, _ = historyRecordFn(newHistoryRecord(trigger, items))
+}

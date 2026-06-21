@@ -158,6 +158,18 @@ func upgradeSelf(out io.Writer) error {
 	if err := startSelfUpgradeHandoff(source, ""); err != nil {
 		return fmt.Errorf("could not start self-upgrade handoff: %w", err)
 	}
+	// The process exits after the handoff, so the outcome isn't observable here —
+	// record it as pending; the handoff completes the upgrade after restart.
+	_, _ = historyRecordFn(newHistoryRecord(historyTriggerCLISelf, []historyItem{{
+		ID:          selfPackageID,
+		Name:        "WinTUI",
+		Source:      source,
+		Action:      historyActionUpgrade,
+		FromVersion: pkg.Version,
+		ToVersion:   pkg.Available,
+		Status:      historyStatusPending,
+		Notes:       "self-upgrade handoff started; completes after restart",
+	}}))
 	fmt.Fprintf(out, "Closing now so winget can upgrade %s.\nStart wintui again after the upgrade completes.\nLog: %s\n",
 		selfPackageID, selfUpdateLogPath())
 	return nil

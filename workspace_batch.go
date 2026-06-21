@@ -474,6 +474,14 @@ func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {
 		s.searchQuery = ""
 	}
 
+	// Record the batch to action history before the toast/refresh. Covers every
+	// path that funnels through finishBatch: manual batch, install-from-search,
+	// on-launch auto-update, and Ctrl+E elevation retry (each retry is its own
+	// record). Versions are read from the batch items — no winget re-query.
+	if len(s.modal.items) > 0 {
+		_, _ = historyRecordFn(buildTUIHistoryRecord(s.modal.items, historyTriggerTUI))
+	}
+
 	notifyBatchFinish(s.modal.items)
 
 	// Emit incremental lookups for each successful item, using s.ctx so they

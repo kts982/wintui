@@ -508,6 +508,13 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 
 	fmt.Fprintf(out, "Upgrading %d package(s) by ID:\n", len(requested))
 
+	var histItems []historyItem
+	defer func() {
+		if len(histItems) > 0 {
+			_, _ = historyRecordFn(newHistoryRecord(historyTriggerCLIID, histItems))
+		}
+	}()
+
 	var (
 		failures    []string
 		held        []string
@@ -522,6 +529,7 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 		if !ok {
 			fmt.Fprintf(out, "\n%s\n  • no update available\n", cliAccent("→ "+id))
 			notFound = append(notFound, id)
+			histItems = append(histItems, historyItem{ID: id, Action: historyActionUpgrade, Status: historyStatusSkipped, Notes: "no update available"})
 			continue
 		}
 
@@ -530,19 +538,29 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 		if settings.updatePolicy(pkg.ID, pkg.Source, pkg.Available) == PolicyHold {
 			fmt.Fprintln(out, "  "+cliDanger("✗ held by policy.")+" Remove the hold from settings or use the TUI.")
 			held = append(held, pkg.ID)
+			item := cliUpgradeItem(pkg, historyStatusSkipped)
+			item.Notes = "held by policy"
+			histItems = append(histItems, item)
 			continue
 		}
 		if isSelfPackageID(pkg.ID) && isRunningInstalledWinTUI() {
 			fmt.Fprintln(out, "  • skipped: WinTUI can't upgrade itself in a batch. Run 'wintui upgrade --self' (or launch the TUI) to update WinTUI.")
 			skippedSelf = true
+			item := cliUpgradeItem(pkg, historyStatusSkipped)
+			item.Notes = "WinTUI self-upgrade skipped (run 'wintui upgrade --self')"
+			histItems = append(histItems, item)
 			continue
 		}
 		if err := streamUpgradeFn(ctx, pkg, out); err != nil {
 			fmt.Fprintf(out, "  %s\n", cliDanger(fmt.Sprintf("✗ failed: %v", err)))
 			failures = append(failures, pkg.ID)
+			item := cliUpgradeItem(pkg, historyStatusError)
+			item.Error = err.Error()
+			histItems = append(histItems, item)
 		} else {
 			fmt.Fprintln(out, "  "+cliSuccess("✓ upgraded"))
 			upgraded++
+			histItems = append(histItems, cliUpgradeItem(pkg, historyStatusOK))
 		}
 	}
 
@@ -609,6 +627,20 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 	}
 	fmt.Fprintln(out, ":")
 
+	// Record this CLI run to action history on return (covers both the normal
+	// and the only-self-pending early exit). Skipped via the len check when no
+	// package was processed.
+	trigger := historyTriggerCLIAll
+	if mode == "auto" {
+		trigger = historyTriggerCLIAuto
+	}
+	var histItems []historyItem
+	defer func() {
+		if len(histItems) > 0 {
+			_, _ = historyRecordFn(newHistoryRecord(trigger, histItems))
+		}
+	}()
+
 	var failures []string
 	var skippedSelf bool
 	for _, pkg := range pkgs {
@@ -616,13 +648,20 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 		if isSelfPackageID(pkg.ID) && isRunningInstalledWinTUI() {
 			fmt.Fprintln(out, "  • skipped: WinTUI can't upgrade itself in a batch. Run 'wintui upgrade --self' (or launch the TUI) to update WinTUI.")
 			skippedSelf = true
+			item := cliUpgradeItem(pkg, historyStatusSkipped)
+			item.Notes = "WinTUI self-upgrade skipped (run 'wintui upgrade --self')"
+			histItems = append(histItems, item)
 			continue
 		}
 		if err := streamUpgradeFn(ctx, pkg, out); err != nil {
 			fmt.Fprintf(out, "  %s\n", cliDanger(fmt.Sprintf("✗ failed: %v", err)))
 			failures = append(failures, pkg.ID)
+			item := cliUpgradeItem(pkg, historyStatusError)
+			item.Error = err.Error()
+			histItems = append(histItems, item)
 		} else {
 			fmt.Fprintln(out, "  "+cliSuccess("✓ upgraded"))
+			histItems = append(histItems, cliUpgradeItem(pkg, historyStatusOK))
 		}
 	}
 

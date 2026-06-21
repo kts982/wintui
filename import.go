@@ -575,6 +575,7 @@ func (m importModel) update(msg tea.Msg, installed []Package) (importModel, tea.
 		}
 		m.progress = m.progress.stop()
 		m.state = importDone
+		recordImportHistory(historyTriggerTUIImport, m.batchIDs, m.batchSources, m.batchVersions, m.batchErrs)
 		cache.invalidate()
 		return m, nil, true
 

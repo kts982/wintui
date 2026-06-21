@@ -283,11 +283,21 @@ func printImportRows(out io.Writer, pkgs []importPkg) {
 	}
 }
 
+// importInstallFn is the seam tests replace to record install calls without a
+// real winget invocation.
+var importInstallFn = installPackageSourceCtx
+
 func executeImport(out io.Writer, pkgs []importPkg) error {
 	fmt.Fprintf(out, "Installing %d package(s)...\n", len(pkgs))
 
 	ctx := context.Background()
 	var failures int
+	var histItems []historyItem
+	defer func() {
+		if len(histItems) > 0 {
+			_, _ = historyRecordFn(newHistoryRecord(historyTriggerCLIImport, histItems))
+		}
+	}()
 	for i, pkg := range pkgs {
 		fmt.Fprintf(out, "[%d/%d] %s\n", i+1, len(pkgs), pkg.ID)
 		source := resolveImportSource(pkg)
@@ -295,11 +305,15 @@ func executeImport(out io.Writer, pkgs []importPkg) error {
 		// "install latest" (the default --with-versions=false case);
 		// non-empty pins to that exact version, surfacing winget's own
 		// "version not found" error if it has aged out of the catalog.
-		_, err := installPackageSourceCtx(ctx, Package{ID: pkg.ID, Source: source}, pkg.Version)
+		_, err := importInstallFn(ctx, Package{ID: pkg.ID, Source: source}, pkg.Version)
+		item := historyItem{ID: pkg.ID, Name: pkg.Name, Source: source, Action: historyActionInstall, ToVersion: pkg.Version, Status: historyStatusOK}
 		if err != nil {
 			failures++
 			fmt.Fprintf(out, "      ✗ %v\n", err)
+			item.Status = historyStatusError
+			item.Error = err.Error()
 		}
+		histItems = append(histItems, item)
 	}
 
 	if failures > 0 {
