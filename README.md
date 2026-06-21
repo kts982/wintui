@@ -55,10 +55,12 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Batch Execution Modal** — review selected packages, press `?` to preview the exact winget command for each one, watch live progress with per-package spinners and the most recent winget output line, view compact results with `Ctrl+E` retry (elevated when needed, plain retry for process-in-use failures)
 - **Version Selection** — pick a specific version to install or upgrade to from the detail panel
 - **Self-upgrade handoff** — WinTUI can check for its own winget update before launch and close so a local handoff script can run `winget upgrade kts982.WinTUI` after the current process exits
-- **Headless CLI** — `wintui check`, `wintui list [query]` (filter installed packages by name/id, like `winget list`), `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, `wintui upgrade --id <pkg>`, `wintui upgrade --self`, `wintui notes <id>`, `wintui theme`, and `wintui doctor` (verdict-first readiness check) for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, `show`, `doctor`, and `notes`. Help, usage, errors, and `--version` are styled with [fang](https://github.com/charmbracelet/fang) to match your theme, with shell completions via `wintui completion <shell>` (package IDs complete from the cache on `upgrade --id` and `show`)
+- **Headless CLI** — `wintui check`, `wintui list [query]` (filter installed packages by name/id, like `winget list`), `wintui show <id>`, `wintui upgrade --all`, `wintui upgrade --auto`, `wintui upgrade --id <pkg>`, `wintui upgrade --self`, `wintui notes <id>`, `wintui theme`, `wintui doctor` (verdict-first readiness check), `wintui history` (a log of WinTUI-originated upgrades), and `wintui fix --portable` (pin portable packages to user scope) for scripts, Task Scheduler, or CI without launching the TUI; `--json` works on `check`, `list`, `show`, `doctor`, `notes`, `history`, and `fix --portable`. Help, usage, errors, and `--version` are styled with [fang](https://github.com/charmbracelet/fang) to match your theme, with shell completions via `wintui completion <shell>` (package IDs complete from the cache on `upgrade --id` and `show`, and from history on `history`)
 - **`wintui notes <id>`** — render a package's latest-version release notes (themed markdown via a small built-in renderer) when the winget manifest provides them, with a URL fallback otherwise; `wintui check --notes` renders the notes for every pending update inline, so you can review what you're about to install before upgrading
 - **`wintui theme [name] [--list]`** — show, list, or set the color theme from the CLI (also surfaced as an INFO row in `wintui doctor`)
 - **`wintui upgrade --self`** — upgrade WinTUI itself from the CLI via the startup self-update handoff (the other upgrade modes deliberately skip the running binary), so CLI-only users stay current without launching the TUI
+- **`wintui history [id]`** — a log of the install/upgrade/uninstall operations WinTUI itself runs (TUI batches and headless `upgrade` / `import`), newest first, so scheduled CLI upgrades leave a trace; pass an id for that package's timeline. `--limit` / `--since` / `--failed-only` / `--json`, and exit 1 when a selector matches nothing (a "did WinTUI touch this?" predicate). Records WinTUI-originated actions only — winget has no event feed for external `winget` / Store changes. Stored at `%APPDATA%\wintui\history.json`
+- **`wintui fix --portable`** — pins portable winget packages (CLIs like `claude`, `gum`, `ffmpeg`) to user scope so a future `winget upgrade` can't strip them from PATH ([winget-cli #4044/#5099](https://github.com/microsoft/winget-cli/issues/4044)); writes a per-package `scope: user` + `elevate: false` override, idempotent, with `--dry-run` to preview. `wintui upgrade` also nudges toward it when an at-risk portable package is about to upgrade
 
 **System Utilities**
 - **Health Tab** — slim WinTUI / winget readiness panel: WinTUI version + path, winget version, source freshness, cached upgrade counts (visible / auto / held + cache age), privileges + Auto Elevate context, system drive free space, and a neutral Settings summary line. Loads instantly — no fresh winget calls or disk scans
@@ -154,6 +156,14 @@ wintui check --notes
 # Show/set the color theme
 wintui theme --list
 wintui theme nord
+
+# Review what WinTUI has upgraded (scheduled runs leave a trace now)
+wintui history
+wintui history Mozilla.Firefox          # one package's timeline
+
+# Pin portable packages to user scope so a future upgrade can't drop them from PATH
+wintui fix --portable --dry-run
+wintui fix --portable
 
 # Export and re-import package lists across machines
 wintui export --output packages.json

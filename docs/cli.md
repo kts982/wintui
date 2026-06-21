@@ -20,6 +20,8 @@ run headlessly and exit.
 | `wintui theme [name] [--list]` | Show, list, or set the color theme |
 | `wintui export [--output PATH] [--with-versions]` | Write the installed package list to a portable JSON file (stdout by default) |
 | `wintui import <path> [--dry-run] [--all] [--json]` | Install packages from a `wintui export` file (with optional preflight) |
+| `wintui history [id] [--limit N] [--since DUR] [--failed-only] [--json]` | Show WinTUI-originated install/upgrade/uninstall operations; with an id, that package's timeline |
+| `wintui fix --portable [--dry-run] [--json]` | Pin portable winget packages to user scope so upgrades can't drop them from PATH |
 
 `wintui` (no subcommand) launches the TUI.
 
@@ -93,7 +95,9 @@ those names contain the substring "git".
 | `1` | At least one row is WARN, none are FAIL — `WARN: N issues` |
 | `2` | At least one row is FAIL — `FAIL: N issues` |
 
-The slim default check set is identical to the TUI Health tab. `--full`
+The slim default check set is identical to the TUI Health tab and includes a
+neutral `winget MCP` INFO row reporting whether winget's MCP server binary is
+present (detected / not found). `--full`
 re-adds the verbose system-diagnostics rows (RAM, Defender, internet ping,
 extra fixed drives, OS / uptime, PATH, Windows PowerShell). `--dev-tools`
 appends a developer-tools detection group (Git, VS Code, Docker, Node,
@@ -195,6 +199,62 @@ up on the next run. An unknown name is an error — run `wintui theme --list`
 to see valid IDs. The active theme also appears as an INFO row in
 `wintui doctor`.
 
+### history
+
+`wintui history` lists the operations WinTUI itself has run — TUI batches and
+the headless `wintui upgrade` / `wintui import` commands — newest first, so a
+scheduled `wintui upgrade --all` leaves a trace. Pass a package id for that
+package's timeline (a query over the recorded batches):
+
+```powershell
+wintui history                  # recent batches (default --limit 20)
+wintui history Mozilla.Firefox  # that package's upgrade/install/uninstall timeline
+wintui history --failed-only --since 168h
+```
+
+| Flag | Behavior |
+|---|---|
+| `[id]` | Tier-2: show only the named package's timeline |
+| `--limit N` | Cap rows shown (default `20`; `0` = all) |
+| `--since DUR` | Only records newer than a Go duration (e.g. `168h`, `30m`) |
+| `--failed-only` | Only records / items that failed |
+| `--json` | Structured output (`{view, count, …}`) |
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Records shown, or an **unfiltered** history is empty (a fresh install is normal) |
+| `1` | A **selector / filter** (an id, `--since`, or `--failed-only`) matched nothing — so `wintui history <id>` doubles as a "did WinTUI ever touch this?" predicate |
+
+The exit-code predicate holds in `--json` mode too (corrupt / unsupported-version
+files are a hard error). **History records only WinTUI-originated actions.**
+winget exposes no event feed, so upgrades you run from plain `winget`, Microsoft
+Store auto-updates, and other tools are **not** captured — history will not match
+`winget list` deltas. It lives at `%APPDATA%\wintui\history.json`, independent of
+the cache (so completion and queries work even if you've only ever used the CLI).
+The newest 1000 batches are kept; WinTUI self-upgrades are recorded as `pending`
+(the handoff finishes after restart).
+
+### fix
+
+`wintui fix --portable` protects **portable** winget packages — CLIs like
+`claude`, `gum`, or `ffmpeg` that winget extracts to
+`%LOCALAPPDATA%\Microsoft\WinGet\Packages\` and adds to your user PATH. winget
+can mis-scope these on upgrade and strip them from PATH ([winget-cli #4044 /
+#5099](https://github.com/microsoft/winget-cli/issues/4044)), so the command
+suddenly "disappears". `fix --portable` pins each one with a per-package
+`scope: user` + `elevate: false` override, so WinTUI always passes
+`--scope user` for them and the PATH entry survives future upgrades:
+
+```powershell
+wintui fix --portable --dry-run   # preview which packages would be pinned
+wintui fix --portable             # apply (idempotent; merges with existing rules)
+```
+
+It's safe to re-run — already-pinned packages are skipped. Detection is a single
+directory listing, with no `winget show` calls. When `wintui upgrade
+--all/--auto/--id` is about to upgrade a portable package that isn't pinned yet,
+it prints a one-line nudge toward `fix --portable`.
+
 ## Examples
 
 ```powershell
@@ -238,6 +298,15 @@ wintui notes Git.Git --json
 wintui theme
 wintui theme --list
 wintui theme nord
+
+# Show WinTUI's action history (and one package's timeline)
+wintui history
+wintui history Mozilla.Firefox
+wintui history --failed-only --since 168h --json
+
+# Pin portable packages to user scope so a future upgrade can't drop them from PATH
+wintui fix --portable --dry-run
+wintui fix --portable
 
 # Install shell completions (PowerShell shown; bash/zsh/fish also supported)
 wintui completion powershell | Out-String | Invoke-Expression
@@ -332,6 +401,18 @@ wintui doctor
 if ($LASTEXITCODE -ne 0) { wintui doctor --verbose }
 ```
 
+### Audit what a scheduled upgrade did
+
+A scheduled `wintui upgrade --all` runs unattended, but it now records every
+batch, so you can review what happened after the fact (or check a single
+package's history):
+
+```powershell
+wintui history                       # what did the last runs upgrade?
+wintui history --failed-only         # only batches with a failure
+wintui history Mozilla.Firefox       # Firefox's upgrade timeline
+```
+
 ### Upgrade everything matching a pattern
 
 Selectively upgrade by package ID prefix without touching anything else:
@@ -423,7 +504,10 @@ Global and per-package action settings can add flags such as `--silent`,
 ### `upgrade --all` / `upgrade --auto`
 
 Headless upgrade commands stream winget output line-by-line under each
-package header and print a summary line on completion.
+package header and print a summary line on completion. A slow installer that
+goes quiet (e.g. one stopping a service or replacing in-use files for minutes)
+prints a periodic `… still working (Nm elapsed)` heartbeat so it isn't mistaken
+for a hang.
 
 ## JSON Output
 
@@ -488,7 +572,7 @@ The `override` field is omitted when no per-package rules exist.
 
 ## Notes
 
-- `--json` is valid with `check`, `list`, `show`, `doctor`, and `notes`.
+- `--json` is valid with `check`, `list`, `show`, `doctor`, `notes`, `history`, and `fix --portable`.
 - `wintui upgrade --all` and `wintui upgrade --auto` honor per-package update policy from `settings.json`.
 - `wintui upgrade --id` is the user-facing single-package mode. The
   identically-named `--id` on the root command (alongside `--retry-op`,
