@@ -55,6 +55,7 @@ func runDoctorReport(full, devTools bool) healthReport {
 		checkSystemDrive(),
 		checkSettingsSummary(),
 		checkThemeSummary(),
+		checkWingetMCP(),
 		checkStateDirs(),
 	}
 	if full {
@@ -221,6 +222,38 @@ func checkThemeSummary() healthCheck {
 		Check:   "Theme",
 		Status:  "INFO",
 		Details: fmt.Sprintf("%s · background: %s", lookupTheme(id).Label, bg),
+	}
+}
+
+// checkWingetMCP reports whether winget's MCP server binary is present in the
+// DesktopAppInstaller package dir, as a neutral INFO row. App Installer 1.29+
+// ships WindowsPackageManagerMCPServer.exe (upgrade-capable MCP tools).
+// Detection is a pure file-stat — no winget exec, no new Win32 surface. Note:
+// %ProgramFiles%\WindowsApps is access-restricted, so a non-elevated session
+// may not be able to glob it and will report "not found"; that's harmless for
+// an INFO row.
+func checkWingetMCP() healthCheck {
+	programFiles := os.Getenv("ProgramFiles")
+	if programFiles == "" {
+		programFiles = `C:\Program Files`
+	}
+	pattern := filepath.Join(programFiles, "WindowsApps", "Microsoft.DesktopAppInstaller_*", "WindowsPackageManagerMCPServer.exe")
+	matches, _ := filepath.Glob(pattern)
+	// Glob returns matches in sorted order; the lexically-last is the newest
+	// package version. Stat from newest down and report the first that exists.
+	for i := len(matches) - 1; i >= 0; i-- {
+		if info, err := os.Stat(matches[i]); err == nil && !info.IsDir() {
+			return healthCheck{
+				Check:   "winget MCP",
+				Status:  "INFO",
+				Details: "detected (" + filepath.Dir(matches[i]) + ")",
+			}
+		}
+	}
+	return healthCheck{
+		Check:   "winget MCP",
+		Status:  "INFO",
+		Details: "not found (ships with App Installer 1.29+)",
 	}
 }
 

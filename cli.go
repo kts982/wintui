@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -690,21 +691,54 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 	return nil
 }
 
+// heartbeatInterval is how long the headless upgrade stream may stay silent
+// before streamUpgradeToStdout prints a "still working" line. A slow installer
+// (observed: OpenVPN took ~10 min stopping its service + replacing in-use
+// files) emits nothing between winget lines and is otherwise indistinguishable
+// from a hang. A var so tests can shrink it.
+var heartbeatInterval = 60 * time.Second
+
+// heartbeatLine formats the periodic reassurance line.
+func heartbeatLine(elapsed time.Duration) string {
+	return fmt.Sprintf("  … still working (%dm elapsed)\n", int(elapsed.Minutes()))
+}
+
 // streamUpgradeToStdout drives a single package upgrade through the same
-// streaming pipeline the TUI uses, indenting each output line under out.
+// streaming pipeline the TUI uses, indenting each output line under out and
+// emitting a periodic heartbeat so a slow installer isn't mistaken for a hang.
 // Returns the final winget error (or nil on success).
 func streamUpgradeToStdout(ctx context.Context, pkg Package, out io.Writer) error {
 	_, outChan, errChan := upgradePackageStreamCtx(ctx, pkg, "")
-	for line := range outChan {
-		// Skip the TUI's progress sentinels; they are not human-readable.
-		if _, isProgress := parseProgressSentinel(line); isProgress {
-			continue
-		}
-		if line != "" {
-			fmt.Fprintln(out, "  "+line)
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+	start := time.Now()
+	return streamUpgradeOutput(out, outChan, errChan, ticker.C, func() time.Duration { return time.Since(start) })
+}
+
+// streamUpgradeOutput is the testable core of streamUpgradeToStdout. It relays
+// winget output (skipping progress sentinels and blank lines, two-space indent)
+// and prints a heartbeat on every tick, returning the terminal error once
+// outChan closes. The tick channel and clock are injected so tests can drive it
+// deterministically without real time. The no-tick path (ticks == nil, which
+// blocks forever in select) is byte-for-byte the pre-heartbeat behavior.
+func streamUpgradeOutput(out io.Writer, outChan <-chan string, errChan <-chan error, ticks <-chan time.Time, elapsed func() time.Duration) error {
+	for {
+		select {
+		case line, ok := <-outChan:
+			if !ok {
+				return <-errChan
+			}
+			// Skip the TUI's progress sentinels; they are not human-readable.
+			if _, isProgress := parseProgressSentinel(line); isProgress {
+				continue
+			}
+			if line != "" {
+				fmt.Fprintln(out, "  "+line)
+			}
+		case <-ticks:
+			fmt.Fprint(out, heartbeatLine(elapsed()))
 		}
 	}
-	return <-errChan
 }
 
 func printJSON(data interface{}) error {
