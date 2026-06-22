@@ -225,36 +225,55 @@ func checkThemeSummary() healthCheck {
 	}
 }
 
-// checkWingetMCP reports whether winget's MCP server binary is present in the
-// DesktopAppInstaller package dir, as a neutral INFO row. App Installer 1.29+
-// ships WindowsPackageManagerMCPServer.exe (upgrade-capable MCP tools).
-// Detection is a pure file-stat — no winget exec, no new Win32 surface. Note:
-// %ProgramFiles%\WindowsApps is access-restricted, so a non-elevated session
-// may not be able to glob it and will report "not found"; that's harmless for
-// an INFO row.
+// checkWingetMCP reports whether winget's MCP server binary
+// (WindowsPackageManagerMCPServer.exe, exposed via `winget mcp`) is present, as
+// a neutral INFO row. The user-facing execution alias lives under
+// %LOCALAPPDATA%\Microsoft\WindowsApps\Microsoft.DesktopAppInstaller_*\ — which
+// a non-elevated session CAN stat — so check that first. The package dir under
+// %ProgramFiles%\WindowsApps is access-restricted (an unelevated glob there
+// silently returns nothing), so it's only a fallback. Pure file-stat — no
+// winget exec, no new Win32 surface.
 func checkWingetMCP() healthCheck {
+	var patterns []string
+	if local := mcpLocalAppData(); local != "" {
+		patterns = append(patterns, filepath.Join(local, "Microsoft", "WindowsApps", "Microsoft.DesktopAppInstaller_*", "WindowsPackageManagerMCPServer.exe"))
+	}
 	programFiles := os.Getenv("ProgramFiles")
 	if programFiles == "" {
 		programFiles = `C:\Program Files`
 	}
-	pattern := filepath.Join(programFiles, "WindowsApps", "Microsoft.DesktopAppInstaller_*", "WindowsPackageManagerMCPServer.exe")
-	matches, _ := filepath.Glob(pattern)
-	// Glob returns matches in sorted order; the lexically-last is the newest
-	// package version. Stat from newest down and report the first that exists.
-	for i := len(matches) - 1; i >= 0; i-- {
-		if info, err := os.Stat(matches[i]); err == nil && !info.IsDir() {
-			return healthCheck{
-				Check:   "winget MCP",
-				Status:  "INFO",
-				Details: "detected (" + filepath.Dir(matches[i]) + ")",
+	patterns = append(patterns, filepath.Join(programFiles, "WindowsApps", "Microsoft.DesktopAppInstaller_*", "WindowsPackageManagerMCPServer.exe"))
+
+	for _, pattern := range patterns {
+		matches, _ := filepath.Glob(pattern)
+		// Lexically-last match is the newest package version; stat newest-down.
+		for i := len(matches) - 1; i >= 0; i-- {
+			if info, err := os.Stat(matches[i]); err == nil && !info.IsDir() {
+				return healthCheck{
+					Check:   "winget MCP",
+					Status:  "INFO",
+					Details: "detected (run 'winget mcp' for the client config)",
+				}
 			}
 		}
 	}
 	return healthCheck{
 		Check:   "winget MCP",
 		Status:  "INFO",
-		Details: "not found (ships with App Installer 1.29+)",
+		Details: "not found (update App Installer via the Microsoft Store)",
 	}
+}
+
+// mcpLocalAppData resolves %LOCALAPPDATA% (where the winget MCP execution alias
+// lives), falling back to os.UserCacheDir (which is %LocalAppData% on Windows).
+func mcpLocalAppData() string {
+	if local := os.Getenv("LOCALAPPDATA"); local != "" {
+		return local
+	}
+	if dir, err := os.UserCacheDir(); err == nil {
+		return dir
+	}
+	return ""
 }
 
 // checkStateDirs surfaces MkdirAll failures that the state-path helpers
