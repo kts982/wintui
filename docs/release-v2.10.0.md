@@ -77,3 +77,24 @@ dependencies, and `settings.json` / `cache.json` load unchanged.
 
 VirusTotal scans of the published artifacts are added here after the GoReleaser
 build, per `scripts/vt-scan.ps1` (pre-tag `-Path` + post-publish `-ReleaseTag`).
+
+## Verification
+
+VirusTotal scans of the published artifacts for v2.10.0 (run 2026-06-22):
+
+| Asset | SHA256 | Detections | Report |
+|---|---|---|---|
+| `wintui_2.10.0_windows_amd64.exe` (7.5 MB) | `3b68527001d0…` | 2/69 | [VT report](https://www.virustotal.com/gui/file/3b68527001d07465717296c68489fe1108db9503c317bea567c14391c3772226) |
+| `wintui_2.10.0_windows_amd64.zip` (2.7 MB) | `c71167311319…` | 1/66 | [VT report](https://www.virustotal.com/gui/file/c71167311319eac51f8a30415d9d679ccc8eb2d652b2613a053f2daef6477e03) |
+| `wintui_2.10.0_windows_arm64.exe` (6.9 MB) | `a14f77b5136f…` | 1/67 | [VT report](https://www.virustotal.com/gui/file/a14f77b5136ff79fcc2a4302b84e4bbdb6fe6cd155fa8b625f82bab0b8d77ffb) |
+| `wintui_2.10.0_windows_arm64.zip` (2.5 MB) | `35cba7fec843…` | 0/65 | [VT report](https://www.virustotal.com/gui/file/35cba7fec843eb0d11426295689a0840f7c3738ee247aa967af92ca2b5ea9eab) |
+
+Detections at scan time were single-vendor low-signal ML/reputation noise. Microsoft Defender returned clean across all artifacts.
+
+Full SHA256 hashes:
+
+- `wintui_2.10.0_windows_amd64.exe`: `3b68527001d07465717296c68489fe1108db9503c317bea567c14391c3772226`
+- `wintui_2.10.0_windows_amd64.zip`: `c71167311319eac51f8a30415d9d679ccc8eb2d652b2613a053f2daef6477e03`
+- `wintui_2.10.0_windows_arm64.exe`: `a14f77b5136ff79fcc2a4302b84e4bbdb6fe6cd155fa8b625f82bab0b8d77ffb`
+- `wintui_2.10.0_windows_arm64.zip`: `35cba7fec843eb0d11426295689a0840f7c3738ee247aa967af92ca2b5ea9eab`
+
