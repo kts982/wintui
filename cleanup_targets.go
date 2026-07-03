@@ -245,11 +245,13 @@ func cleanupTargetRegistry() []cleanupTargetDef {
 		},
 
 		// ── WinTUI's own scratch (default unchecked) ────────────────────
-		// Both targets glob inside %LOCALAPPDATA%\wintui\self-update\ — the
-		// only WinTUI-owned location that accumulates files over time.
+		// The self-update targets glob inside %LOCALAPPDATA%\wintui\self-update\
+		// — the only WinTUI-owned location that accumulates files over time.
 		// settings.json, cache.json, the toast Start-Menu shortcut and its
 		// .aumid marker are deliberately out of scope: they are user state
-		// or durable infra, not scratch.
+		// or durable infra, not scratch. history.json is also user state, but
+		// it gets an entry anyway as a deliberate privacy reset ("clear what
+		// WinTUI knows about my installs") — opt-in, with a warning.
 		{
 			id:    "wintui_self_update_log",
 			label: "WinTUI self-update log",
@@ -270,6 +272,19 @@ func cleanupTargetRegistry() []cleanupTargetDef {
 			mode:   cleanupModeGlob,
 			globs:  []string{selfUpdateScriptPrefix + "*.ps1"},
 			minAge: cleanupSelfUpdateHandoffMinAge,
+		},
+		{
+			id:    "wintui_history",
+			label: "WinTUI action history",
+			description: "WinTUI's record of the install/upgrade/uninstall operations it ran — " +
+				"what the History tab and 'wintui history' show. Bounded at 1000 batches, " +
+				"so this is a privacy reset, not a disk-space win.",
+			group:  cleanupGroupWinTUI,
+			pathFn: wintuiConfigDir,
+			mode:   cleanupModeGlob,
+			globs:  []string{historyFileName},
+			warning: "Deletes your audit trail of WinTUI-run installs. The History tab and " +
+				"'wintui history' will start empty; cleared records are not recoverable.",
 		},
 	}
 }
@@ -312,9 +327,11 @@ var errCleanupGuardedPath = errors.New("path is guarded against bulk delete")
 // helper does not trust the TUI's word for it.
 //
 // Allowed: %TEMP% itself or below (the user_temp target IS the temp root —
-// the engine only deletes entries under it, never the root), and strict
+// the engine only deletes entries under it, never the root), strict
 // descendants of %LOCALAPPDATA% and %WINDIR% (the bases themselves stay
-// guarded).
+// guarded), and %APPDATA%\wintui itself or below (the wintui_history target
+// IS that root; the rest of %APPDATA% stays guarded — other apps' roaming
+// state must never be routable through bulk delete).
 func cleanupValidateRoot(p string) error {
 	if p == "" {
 		return errCleanupGuardedPath
@@ -329,6 +346,14 @@ func cleanupValidateRoot(p string) error {
 		if tmpAbs, err := filepath.Abs(tmp); err == nil {
 			tmpAbs = filepath.Clean(tmpAbs)
 			if strings.EqualFold(tmpAbs, abs) || pathIsDescendant(abs, tmpAbs) {
+				return nil
+			}
+		}
+	}
+	if cfg := wintuiConfigDir(); cfg != "" {
+		if cfgAbs, err := filepath.Abs(cfg); err == nil {
+			cfgAbs = filepath.Clean(cfgAbs)
+			if strings.EqualFold(cfgAbs, abs) || pathIsDescendant(abs, cfgAbs) {
 				return nil
 			}
 		}

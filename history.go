@@ -114,16 +114,31 @@ var historyMu sync.Mutex
 // touch %APPDATA%.
 var historyRecordFn = recordHistory
 
+// historyFileName is the on-disk name, shared with the wintui_history cleanup
+// target's glob so the two can't drift apart.
+const historyFileName = "history.json"
+
+// wintuiConfigDir returns %APPDATA%\wintui WITHOUT creating it — writers
+// (historyPath, configPath) own directory creation; the cleanup scanner must
+// not create state dirs as a side effect of scanning. Empty when the config
+// dir can't be resolved (callers treat that as "skip").
+func wintuiConfigDir() string {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(configDir, "wintui")
+}
+
 // historyPath returns %APPDATA%\wintui\history.json, mirroring diskCachePath so
 // it shares the same state dir and the same MkdirAll-failure reporting.
 func historyPath() string {
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		configDir = "."
+	dir := wintuiConfigDir()
+	if dir == "" {
+		dir = filepath.Join(".", "wintui")
 	}
-	dir := filepath.Join(configDir, "wintui")
 	recordStateDirResult("history dir", os.MkdirAll(dir, 0755))
-	return filepath.Join(dir, "history.json")
+	return filepath.Join(dir, historyFileName)
 }
 
 // newBatchID mints a time-sortable, collision-resistant batch id. Format:

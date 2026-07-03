@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -272,5 +273,103 @@ func TestUserTempPathFnAlwaysResolves(t *testing.T) {
 	// And the default temp dir is never one of our guarded roots.
 	if err := cleanupValidateRoot(os.TempDir()); err != nil {
 		t.Errorf("os.TempDir() is itself guarded: %v", err)
+	}
+}
+
+// ── wintui_history target (v2.11.0 slice 2) ─────────────────────────
+
+func TestCleanupRegistryHistoryEntry(t *testing.T) {
+	def, ok := cleanupTargetByID("wintui_history")
+	if !ok {
+		t.Fatal("wintui_history missing from registry")
+	}
+	if def.group != cleanupGroupWinTUI {
+		t.Errorf("group = %q, want wintui", def.group)
+	}
+	if def.defaultChecked {
+		t.Error("wintui_history must be opt-in: it deletes user state, not scratch")
+	}
+	if def.mode != cleanupModeGlob || len(def.globs) != 1 || def.globs[0] != historyFileName {
+		t.Errorf("globs = %v (mode %v), want exactly [%s] in glob mode", def.globs, def.mode, historyFileName)
+	}
+	if def.requiresAdmin {
+		t.Error("wintui_history lives in %APPDATA% — must not suggest admin")
+	}
+	if def.minAge != 0 {
+		t.Error("wintui_history is an explicit opt-in wipe; age filtering makes it unpredictable")
+	}
+	if def.warning == "" {
+		t.Error("wintui_history must warn: it destroys the audit trail")
+	}
+}
+
+// The roaming allowlist addition is surgical: %APPDATA%\wintui itself and
+// below, never the rest of %APPDATA%.
+func TestCleanupValidateRootWinTUIRoamingDir(t *testing.T) {
+	t.Setenv("APPDATA", `C:\Users\test\AppData\Roaming`)
+
+	for _, p := range []string{
+		`C:\Users\test\AppData\Roaming\wintui`,
+		`c:\users\test\appdata\roaming\WINTUI`, // case-insensitive
+		`C:\Users\test\AppData\Roaming\wintui\sub`,
+	} {
+		if err := cleanupValidateRoot(p); err != nil {
+			t.Errorf("expected %q to be accepted, got %v", p, err)
+		}
+	}
+	for _, p := range []string{
+		`C:\Users\test\AppData\Roaming`,
+		`C:\Users\test\AppData\Roaming\Microsoft`,
+		`C:\Users\test\AppData\Roaming\wintui-evil`, // name-prefix sibling
+	} {
+		if err := cleanupValidateRoot(p); err == nil {
+			t.Errorf("expected %q to be rejected", p)
+		}
+	}
+}
+
+// End-to-end over a redirected %APPDATA%: the glob removes history.json and
+// nothing else in the state dir.
+func TestCleanupHistoryDeleteRemovesOnlyHistoryFile(t *testing.T) {
+	roaming := t.TempDir()
+	t.Setenv("APPDATA", roaming)
+	stateDir := filepath.Join(roaming, "wintui")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	historyFile := filepath.Join(stateDir, historyFileName)
+	settingsFile := filepath.Join(stateDir, "settings.json")
+	if err := os.WriteFile(historyFile, []byte(`{"version":1,"records":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settingsFile, []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	def, ok := cleanupTargetByID("wintui_history")
+	if !ok {
+		t.Fatal("wintui_history missing from registry")
+	}
+
+	scan := cleanupScan(context.Background(), def)
+	if scan.skipped != 0 {
+		t.Fatalf("scan skipped = %v, want none (dir exists, file present)", scan.skipped)
+	}
+	if scan.files != 1 || scan.sizeBytes == 0 {
+		t.Fatalf("scan = %d files / %d bytes, want exactly the history file", scan.files, scan.sizeBytes)
+	}
+
+	del := cleanupDelete(context.Background(), def)
+	if del.failed > 0 {
+		t.Fatalf("delete reported %d failures: %v", del.failed, del.errors)
+	}
+	if del.freedBytes == 0 {
+		t.Error("delete freed 0 bytes, want the history file's size")
+	}
+	if _, err := os.Stat(historyFile); !os.IsNotExist(err) {
+		t.Error("history.json should be gone")
+	}
+	if _, err := os.Stat(settingsFile); err != nil {
+		t.Error("settings.json must survive a history cleanup")
 	}
 }
