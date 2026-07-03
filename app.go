@@ -24,6 +24,7 @@ const (
 	screenCleanup
 	screenHealthcheck
 	screenSettings
+	screenHistory
 )
 
 // ── Tab definitions ────────────────────────────────────────────────
@@ -37,6 +38,7 @@ var tabs = []tabDef{
 	{"Packages", screenWorkspace},
 	{"Cleanup", screenCleanup},
 	{"Health", screenHealthcheck},
+	{"History", screenHistory},
 	{"Settings", screenSettings},
 }
 
@@ -59,9 +61,15 @@ type packageDataChangedMsg struct {
 
 // screenBlurMsg is dispatched to a screen when the user switches away from
 // its tab. Screens use it to cancel transient work (in-flight scans, async
-// fetches) without losing accumulated state. The new active screen is not
-// notified — its existing init/update path handles "becoming active".
+// fetches) without losing accumulated state.
 type screenBlurMsg struct{}
+
+// screenFocusMsg is the blur counterpart: dispatched to an already-created
+// screen when its tab becomes active again (first activation goes through
+// init instead). Screens whose data can change while they're hidden use it
+// to refresh — the History tab reloads history.json here so records written
+// by a concurrent CLI run appear. Screens that don't care ignore it.
+type screenFocusMsg struct{}
 
 type screenCmdMsg struct {
 	target screenID
@@ -368,8 +376,10 @@ func (a app) switchTab(idx int) (app, tea.Cmd) {
 	if s, ok := a.screens[id]; ok {
 		var sizeCmd tea.Cmd
 		s, sizeCmd = a.applyCurrentSize(id, s)
+		var focusCmd tea.Cmd
+		s, focusCmd = s.update(screenFocusMsg{})
 		a.screens[id] = s
-		return a, tea.Batch(blurCmd, sizeCmd)
+		return a, tea.Batch(blurCmd, sizeCmd, a.wrapScreenCmd(id, focusCmd))
 	}
 	s := createScreen(id)
 	var sizeCmd tea.Cmd
@@ -678,6 +688,8 @@ func createScreen(id screenID) screen {
 		return newCleanupScreen()
 	case screenHealthcheck:
 		return newHealthcheckScreen()
+	case screenHistory:
+		return newHistoryScreen()
 	case screenSettings:
 		return newSettingsScreen()
 	default:

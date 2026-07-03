@@ -42,8 +42,8 @@ var (
 		key.WithHelp("←→", "cycle"),
 	)
 	keyTabs = key.NewBinding(
-		key.WithKeys("1", "2", "3", "4"),
-		key.WithHelp("1-4", "tabs"),
+		key.WithKeys("1", "2", "3", "4", "5"),
+		key.WithHelp("1-5", "tabs"),
 	)
 	keyScroll = key.NewBinding(
 		key.WithKeys("up", "down", "pgup", "pgdown"),
@@ -92,5 +92,13 @@ var (
 	keySelectRow = key.NewBinding(
 		key.WithKeys("space"),
 		key.WithHelp("space", "select"),
+	)
+	keyFailedOnly = key.NewBinding(
+		key.WithKeys("f"),
+		key.WithHelp("f", "failed only"),
+	)
+	keyDetails = key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "details"),
 	)
 )
