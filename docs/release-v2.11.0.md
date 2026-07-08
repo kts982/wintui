@@ -83,3 +83,24 @@ throughout: the Win32 symbol surface is byte-identical to v2.10.0.
 
 VirusTotal scans of the published artifacts are added here after the GoReleaser
 build, per `scripts/vt-scan.ps1` (pre-tag `-Path` + post-publish `-ReleaseTag`).
+
+## Verification
+
+VirusTotal scans of the published artifacts for v2.11.0 (run 2026-07-08):
+
+| Asset | SHA256 | Detections | Report |
+|---|---|---|---|
+| `wintui_2.11.0_windows_amd64.exe` (7.5 MB) | `a40737bf6633…` | 1/69 | [VT report](https://www.virustotal.com/gui/file/a40737bf663314172e9aa9a9e75627b177b3ac34172bd4e7617c1d83a02835aa) |
+| `wintui_2.11.0_windows_amd64.zip` (2.7 MB) | `f1fdd19f7c7d…` | 1/67 | [VT report](https://www.virustotal.com/gui/file/f1fdd19f7c7d9b2370af9a1fe55a6967585f85070ca7848ff7aa0954c6ec3b42) |
+| `wintui_2.11.0_windows_arm64.exe` (7 MB) | `754b99170bdf…` | 1/68 | [VT report](https://www.virustotal.com/gui/file/754b99170bdf628b137053297099459fd85592e7eb80594dc73680ab1eee54c2) |
+| `wintui_2.11.0_windows_arm64.zip` (2.5 MB) | `1ba442e797c9…` | 0/66 | [VT report](https://www.virustotal.com/gui/file/1ba442e797c96941d732188d882a1c2f0072d2360cf3fbd3556f239441eb3280) |
+
+Detections at scan time were single-vendor low-signal ML/reputation noise. Microsoft Defender returned clean across all artifacts.
+
+Full SHA256 hashes:
+
+- `wintui_2.11.0_windows_amd64.exe`: `a40737bf663314172e9aa9a9e75627b177b3ac34172bd4e7617c1d83a02835aa`
+- `wintui_2.11.0_windows_amd64.zip`: `f1fdd19f7c7d9b2370af9a1fe55a6967585f85070ca7848ff7aa0954c6ec3b42`
+- `wintui_2.11.0_windows_arm64.exe`: `754b99170bdf628b137053297099459fd85592e7eb80594dc73680ab1eee54c2`
+- `wintui_2.11.0_windows_arm64.zip`: `1ba442e797c96941d732188d882a1c2f0072d2360cf3fbd3556f239441eb3280`
+
