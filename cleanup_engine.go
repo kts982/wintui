@@ -173,7 +173,7 @@ func cleanupEntrySize(ctx context.Context, path string, info os.FileInfo) int64 
 			return ctx.Err()
 		}
 		if err != nil || d == nil {
-			return nil
+			return nil //nolint:nilerr // best-effort size walk: unreadable entries are skipped, not fatal
 		}
 		if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
 			if d.IsDir() {
@@ -186,7 +186,7 @@ func cleanupEntrySize(ctx context.Context, path string, info os.FileInfo) int64 
 		}
 		fi, err := d.Info()
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // entry vanished mid-walk: skip it, keep the tally
 		}
 		total += fi.Size()
 		return nil

@@ -117,9 +117,9 @@ func handleHelperConnection(conn net.Conn, token string) error {
 		}
 
 		if execErr != nil {
-			sendHelperResponse(conn, "error", execErr.Error())
+			_ = sendHelperResponse(conn, "error", execErr.Error())
 		} else {
-			sendHelperResponse(conn, "done", "")
+			_ = sendHelperResponse(conn, "done", "")
 		}
 	}
 }
@@ -147,7 +147,7 @@ func executeCleanupDeleteForHelper(conn net.Conn, req helperRequest) error {
 	if err != nil {
 		return fmt.Errorf("encode cleanup result: %w", err)
 	}
-	sendHelperResponse(conn, "result", string(b))
+	_ = sendHelperResponse(conn, "result", string(b))
 	return nil
 }
 

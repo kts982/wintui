@@ -495,7 +495,10 @@ func LoadSettings() Settings {
 		return DefaultSettings()
 	}
 	s := DefaultSettings()
-	json.Unmarshal(data, &s)
+	// Best-effort by design: a corrupt file keeps whatever fields parsed
+	// before the error and falls back to defaults for the rest, rather than
+	// discarding all settings.
+	_ = json.Unmarshal(data, &s)
 	return s
 }
 

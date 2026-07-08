@@ -219,7 +219,6 @@ func (s workspaceScreen) renderSections(l layout) string {
 			desiredH: len(installed) + 2,
 			minH:     minScrollableSectionHeight,
 		})
-		offset += len(installed)
 	}
 
 	// Cache status indicator (rendered as a line above the sections).

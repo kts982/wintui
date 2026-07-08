@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Monthly to match the manual ecosystem sweep cadence; grouped so a
+  # cycle produces one PR per ecosystem, not one per module.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      go-deps:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"

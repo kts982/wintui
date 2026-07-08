@@ -228,7 +228,7 @@ func TestBatchIDFormatIsSortable(t *testing.T) {
 	if !re.MatchString(earlier) {
 		t.Errorf("batch id %q does not match expected format", earlier)
 	}
-	if !(earlier < later) {
+	if earlier >= later {
 		t.Errorf("batch ids not lexically sortable: %q !< %q", earlier, later)
 	}
 }

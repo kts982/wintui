@@ -960,7 +960,7 @@ func (p detailPanel) renderOverrideEditor(panelStyle lipgloss.Style) string {
 		val := p.overrideEdit.getValue(def.key)
 		valDisplay := renderSettingValue(def, val)
 		label := labelStyle.Render(fmt.Sprintf("%-16s", def.label))
-		b.WriteString(fmt.Sprintf("  %s%s %s\n", cursor, label, valDisplay))
+		fmt.Fprintf(&b, "  %s%s %s\n", cursor, label, valDisplay)
 	}
 
 	// Show hint for focused override.
@@ -987,10 +987,12 @@ func (p detailPanel) renderOverrideEditor(panelStyle lipgloss.Style) string {
 // ── Open URL ───────────────────────────────────────────────────────
 
 func openURL(url string) {
+	// Fire-and-forget: the browser owns the outcome; there is no UI surface
+	// to report a launch failure from a detail-pane shortcut.
 	if runtime.GOOS == "windows" {
-		exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 	} else {
-		exec.Command("xdg-open", url).Start()
+		_ = exec.Command("xdg-open", url).Start()
 	}
 }
 

@@ -1,0 +1,53 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - gosec
+    - misspell
+    - nilerr
+    - unconvert
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*os.File).Close
+    gosec:
+      excludes:
+        # G104 duplicates errcheck, which is configured above.
+        - G104
+        # Launching subprocesses with computed arguments is this program's
+        # core function (winget, the elevated helper, PowerShell hosts).
+        # The exec surface is constrained at the call sites (absolute exe
+        # paths, helper action allowlist) rather than by this lint.
+        - G204
+        # Windows-only binary: Go's POSIX permission bits map to nothing
+        # beyond the read-only flag on Windows, so 0644/0755 vs 0600/0750
+        # is a no-op distinction here.
+        - G301
+        - G302
+        - G306
+        # Reading files from computed paths (config dir, user-selected
+        # export files) is by design; paths never come from the network.
+        - G304
+        # Taint-analysis false positives on filepath.Glob results and
+        # locally computed paths.
+        - G703
+  exclusions:
+    generated: lax
+    rules:
+      - path: '_test\.go'
+        linters:
+          - errcheck
+          - gosec
+      # Raw Win32 interop (ShellExecuteW for UAC elevation,
+      # GetDiskFreeSpaceExW for the Health tab) — long-established,
+      # review-audited surface (see docs/elevation.md).
+      - path: '(elevate_windows|healthcheck)\.go'
+        text: 'G103'

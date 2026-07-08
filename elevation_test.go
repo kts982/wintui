@@ -170,7 +170,7 @@ func TestCleanupTargetElevatedSuccess(t *testing.T) {
 			return
 		}
 		if req.Action != "cleanup_delete" || req.TargetID != "windows_temp" {
-			sendHelperResponse(clientConn, "error", "unexpected request: "+string(line))
+			sendHelperResponse(clientConn, "error", "unexpected request: "+line)
 			return
 		}
 		wire := cleanupTargetResultWire{

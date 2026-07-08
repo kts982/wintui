@@ -147,7 +147,7 @@ func historyPath() string {
 func newBatchID() string { return batchIDFor(time.Now()) }
 
 func batchIDFor(t time.Time) string {
-	return t.UTC().Format("20060102T150405") + "Z-" + fmt.Sprintf("%04x", rand.Intn(0x10000))
+	return t.UTC().Format("20060102T150405") + "Z-" + fmt.Sprintf("%04x", rand.Intn(0x10000)) //nolint:gosec // G404: non-security disambiguator suffix for sortable batch ids
 }
 
 // summarize derives the per-batch roll-up from its items.

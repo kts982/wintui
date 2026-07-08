@@ -177,7 +177,7 @@ func (s cleanupScreen) startScan(id string) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: cancel is retained in s.inflight and called by cancelAllScans or the scanned-msg handler
 	s.inflight[id] = cancel
 	gen := s.scanGen
 	return func() tea.Msg {
@@ -226,6 +226,9 @@ func (s cleanupScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		// the previous cycle's goroutine is still in flight.
 		if msg.gen != s.scanGen {
 			return s, nil
+		}
+		if cancel, ok := s.inflight[msg.id]; ok {
+			cancel()
 		}
 		delete(s.inflight, msg.id)
 		s.results[msg.id] = msg.result

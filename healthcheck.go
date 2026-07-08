@@ -322,8 +322,8 @@ func isConfigDirWriteable() bool {
 	if err != nil {
 		return false
 	}
-	probe.Close()
-	os.Remove(probe.Name())
+	_ = probe.Close()
+	_ = os.Remove(probe.Name())
 	return true
 }
 

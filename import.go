@@ -809,39 +809,39 @@ func (m importModel) view(width, height int) string {
 		skipped := installed + nonCanonical
 		visible := m.visiblePackageIndices()
 
-		b.WriteString(fmt.Sprintf("  %s\n",
-			infoStyle.Render(fmt.Sprintf("%d package(s) in file", len(m.packages)))))
+		fmt.Fprintf(&b, "  %s\n",
+			infoStyle.Render(fmt.Sprintf("%d package(s) in file", len(m.packages))))
 		if installable > 0 && !m.showAll {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				helpStyle.Render(fmt.Sprintf("Showing %d actionable package(s)", installable))))
+			fmt.Fprintf(&b, "  %s\n",
+				helpStyle.Render(fmt.Sprintf("Showing %d actionable package(s)", installable)))
 		}
 		if m.showAll && len(m.packages) > 0 {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				helpStyle.Render(fmt.Sprintf("Showing all %d package(s)", len(m.packages)))))
+			fmt.Fprintf(&b, "  %s\n",
+				helpStyle.Render(fmt.Sprintf("Showing all %d package(s)", len(m.packages))))
 		}
 		if installed > 0 {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				helpStyle.Render(fmt.Sprintf("%d already installed (skipped)", installed))))
+			fmt.Fprintf(&b, "  %s\n",
+				helpStyle.Render(fmt.Sprintf("%d already installed (skipped)", installed)))
 		}
 		if nonCanonical > 0 {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				warnStyle.Render(fmt.Sprintf("%d non-restorable raw identity (flagged)", nonCanonical))))
+			fmt.Fprintf(&b, "  %s\n",
+				warnStyle.Render(fmt.Sprintf("%d non-restorable raw identity (flagged)", nonCanonical)))
 		}
 		if collisions > 0 {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				warnStyle.Render(fmt.Sprintf("%d possible name match — review before checking", collisions))))
+			fmt.Fprintf(&b, "  %s\n",
+				warnStyle.Render(fmt.Sprintf("%d possible name match — review before checking", collisions)))
 		}
 		selCount := m.selectedCount()
 		if selCount > 0 {
-			b.WriteString(fmt.Sprintf("  %s\n",
-				successStyle.Render(fmt.Sprintf("%d selected for install — press enter to proceed", selCount))))
+			fmt.Fprintf(&b, "  %s\n",
+				successStyle.Render(fmt.Sprintf("%d selected for install — press enter to proceed", selCount)))
 		}
 		if skipped > 0 {
 			hint := "Press v to show skipped entries"
 			if m.showAll {
 				hint = "Press v to focus installable packages"
 			}
-			b.WriteString(fmt.Sprintf("  %s\n", helpStyle.Render(hint)))
+			fmt.Fprintf(&b, "  %s\n", helpStyle.Render(hint))
 		}
 		b.WriteString("\n")
 
@@ -926,8 +926,8 @@ func (m importModel) view(width, height int) string {
 
 	case importInstalling:
 		if m.batchTotal > 0 {
-			b.WriteString(fmt.Sprintf("  %s Installing %d of %d: %s\n\n",
-				m.spinner.View(), m.batchCurrent+1, m.batchTotal, m.batchName))
+			fmt.Fprintf(&b, "  %s Installing %d of %d: %s\n\n",
+				m.spinner.View(), m.batchCurrent+1, m.batchTotal, m.batchName)
 		} else {
 			fmt.Fprintf(&b, "  %s Installing...\n\n", m.spinner.View())
 		}
@@ -941,11 +941,11 @@ func (m importModel) view(width, height int) string {
 		} else if m.batchTotal > 0 {
 			successCount, failCount := batchResultCounts(m.batchErrs)
 			if failCount == 0 {
-				b.WriteString(fmt.Sprintf("  %s\n\n",
-					successStyle.Render(fmt.Sprintf("%d package(s) installed from this export.", successCount))))
+				fmt.Fprintf(&b, "  %s\n\n",
+					successStyle.Render(fmt.Sprintf("%d package(s) installed from this export.", successCount)))
 			} else {
-				b.WriteString(fmt.Sprintf("  %s\n\n",
-					warnStyle.Render(fmt.Sprintf("Import finished: %d succeeded, %d failed", successCount, failCount))))
+				fmt.Fprintf(&b, "  %s\n\n",
+					warnStyle.Render(fmt.Sprintf("Import finished: %d succeeded, %d failed", successCount, failCount)))
 			}
 			output := formatBatchResults(m.batchIDs, m.batchErrs)
 			lines := strings.Split(output, "\n")
