@@ -3,7 +3,7 @@ module github.com/kts982/wintui
 go 1.26.5
 
 require (
-	charm.land/bubbles/v2 v2.1.0
+	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.8
 	charm.land/fang/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.5
@@ -14,7 +14,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/sahilm/fuzzy v0.1.3
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/sys v0.46.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
