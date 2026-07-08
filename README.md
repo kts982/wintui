@@ -66,13 +66,14 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - **Health Tab** — slim WinTUI / winget readiness panel: WinTUI version + path, winget version, source freshness, cached upgrade counts (visible / auto / held + cache age), privileges + Auto Elevate context, system drive free space, and a neutral Settings summary line. Loads instantly — no fresh winget calls or disk scans
 - **`wintui doctor`** — verdict-first headless health (`OK` / `WARN: N issues` / `FAIL: N issues`, exit 0/1/2). `--verbose` adds the per-row table; `--full` re-adds verbose system diagnostics (RAM, Defender, drives, ping, Windows PowerShell); `--dev-tools` appends a developer-tools detection group; `--json` emits structured output for scripts
 - **Toast notifications** — opt-in (off by default). When enabled, fires a single Windows toast on TUI batch finish, on `wintui upgrade --auto/--all` finish, and when `wintui check` finds updates. AUMID-attributed as "WinTUI" via a one-time Start Menu shortcut drop on first toast
-- **Cleanup tab** — registry-driven multi-target cleanup with grouped panels (Core Temp, Caches, Developer caches, GPU shader caches, WinTUI self-update scratch), per-target sizing, age-aware scrubbing, and an elevated helper for admin-only paths (`%WINDIR%\Temp`, system minidumps). Configurable auto-scan policy (`safe` / `all` / `off`); developer caches default to off and opt-in toggles persist across sessions
+- **History Tab** — browse the action-history log inside the TUI: newest-first batch list with a detail pane, per-batch drill-down showing each package's record and cross-batch timeline, failed-only filter (`f`), and reload on `r`. Read-only over the same `%APPDATA%\wintui\history.json` the CLI writes, so batches from concurrent `wintui upgrade` runs appear on tab switch
+- **Cleanup tab** — registry-driven multi-target cleanup with grouped panels (Core Temp, Caches, Developer caches, GPU shader caches, WinTUI self-update scratch), per-target sizing, age-aware scrubbing, and an elevated helper for admin-only paths (`%WINDIR%\Temp`, system minidumps). Configurable auto-scan policy (`safe` / `all` / `off`); developer caches default to off and opt-in toggles persist across sessions. Includes an opt-in, default-unchecked "WinTUI action history" target — a privacy reset that clears the log the History tab renders
 - **Settings** — persistent config for winget options (scope, architecture, silent/interactive, force, purge, etc.)
 
 **UX**
 - **Disk-persistent cache** — instant startup from cached data, background refresh for always-fresh results, per-package incremental updates after actions
 - **Update count badge** in the tab bar — see available updates at a glance before winget finishes refreshing
-- 4-tab layout: Packages, Cleanup, Health, Settings
+- 5-tab layout: Packages, Cleanup, Health, History, Settings
 - Boxed tab bar with animated gradient ASCII logo
 - Context-sensitive help bar that adapts to the active section
 - Full help panel on `?` with grouped keybindings
@@ -225,7 +226,7 @@ Further documentation:
 
 | Key | Action |
 |---|---|
-| `1-4` | Switch tabs |
+| `1-5` | Switch tabs |
 | `Tab` / `Shift+Tab` | Cycle tabs |
 | `q` | Quit |
 
