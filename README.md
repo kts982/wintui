@@ -4,6 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/kts982/wintui)](https://github.com/kts982/wintui/releases/latest)
 [![winget](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/kts982/wintui/badges/winget.json)](https://github.com/microsoft/winget-pkgs/tree/master/manifests/k/kts982/WinTUI)
 [![Downloads](https://img.shields.io/github/downloads/kts982/wintui/total)](https://github.com/kts982/wintui/releases)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/kts982/wintui/badge)](https://scorecard.dev/viewer/?uri=github.com/kts982/wintui)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A terminal user interface for **winget** (Windows Package Manager), built with Go and the [Charmbracelet](https://charm.sh) TUI libraries.
