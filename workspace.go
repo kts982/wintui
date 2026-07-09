@@ -242,6 +242,29 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		return s, nil
 
+	case tea.PasteMsg:
+		// Bracketed paste (Ctrl+V / right-click in the terminal) arrives as
+		// its own message type, not key presses — route it to whichever text
+		// input owns the foreground. The detail overlay, modals, and the
+		// import overlay have no text inputs, so paste is dropped there
+		// rather than falling through to a background input.
+		if s.detail.visible() || s.modal != nil {
+			return s, nil
+		}
+		if s.searchActive {
+			var cmd tea.Cmd
+			s.searchInput, cmd = s.searchInput.Update(msg)
+			return s, cmd
+		}
+		if s.filter.active {
+			var cmd tea.Cmd
+			s.filter.input, cmd = s.filter.input.Update(msg)
+			s.filter.query = s.filter.input.Value()
+			s.cursor = 0
+			return s, tea.Batch(cmd, s.focusSummary())
+		}
+		return s, nil
+
 	case tea.KeyPressMsg:
 		// Detail panel intercepts keys when visible.
 		if s.detail.visible() {
