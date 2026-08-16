@@ -66,5 +66,30 @@ changes the shipped binary — but starting with this release, artifacts carry
 
 ## Verification
 
-VirusTotal scans of the published artifacts are added here after the GoReleaser
-build, per `scripts/vt-scan.ps1` (pre-tag `-Path` + post-publish `-ReleaseTag`).
+VirusTotal scans of the published artifacts for v2.11.1 (run 2026-08-16):
+
+| Asset | SHA256 | Detections | Report |
+|---|---|---|---|
+| `wintui_2.11.1_windows_amd64.exe` (7.6 MB) | `cef405a07fef…` | 3/71 | [VT report](https://www.virustotal.com/gui/file/cef405a07fefc0aed0abdc8b08c638cb2f45cf48ad03d6834f627c241b7f79ef) |
+| `wintui_2.11.1_windows_amd64.zip` (2.8 MB) | `beccfa86d49e…` | 1/68 | [VT report](https://www.virustotal.com/gui/file/beccfa86d49ea8ff7a5746b3e50cbccd25cec1678c63443fae2cf46f02e0632e) |
+| `wintui_2.11.1_windows_arm64.exe` (7 MB) | `6f510b244de8…` | 1/69 | [VT report](https://www.virustotal.com/gui/file/6f510b244de8110e1cd0012c59484cab2955a6e169e9a81ca8bc960525f95c17) |
+| `wintui_2.11.1_windows_arm64.zip` (2.5 MB) | `eb213ce8578d…` | 0/67 | [VT report](https://www.virustotal.com/gui/file/eb213ce8578db19d7733d3cee9763c75257d5430ee0515134bace8f56760f243) |
+
+VirusTotal's Microsoft engine flagged both `.exe` artifacts (`Wacatac.B!ml`) at
+scan time. Cross-check per the established playbook: **live Windows Defender
+(`MpCmdRun -Scan -ScanType 3`, signatures 1.457.187.0) scanned the identical
+published bytes and found no threats on either architecture** — the VT hit is a
+known configuration artifact of VT's non-production engine settings (same
+pattern as v2.9.1, which passed winget-pkgs validation against real Defender).
+
+Build provenance: all four artifacts are attested;
+`gh attestation verify <file> --repo kts982/wintui` succeeds for both `.exe`
+files and both `.zip` archives.
+
+Full SHA256 hashes:
+
+- `wintui_2.11.1_windows_amd64.exe`: `cef405a07fefc0aed0abdc8b08c638cb2f45cf48ad03d6834f627c241b7f79ef`
+- `wintui_2.11.1_windows_amd64.zip`: `beccfa86d49ea8ff7a5746b3e50cbccd25cec1678c63443fae2cf46f02e0632e`
+- `wintui_2.11.1_windows_arm64.exe`: `6f510b244de8110e1cd0012c59484cab2955a6e169e9a81ca8bc960525f95c17`
+- `wintui_2.11.1_windows_arm64.zip`: `eb213ce8578db19d7733d3cee9763c75257d5430ee0515134bace8f56760f243`
+
