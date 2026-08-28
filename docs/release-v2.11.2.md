@@ -71,5 +71,38 @@ slow-exiting parent was not exercised. The remaining optional environment
 matrix is Restricted / RemoteSigned / AllSigned and an AppLocker or Constrained
 Language Mode system.
 
-VirusTotal, live Defender, WDSI, and final artifact hashes are added here after
-the release build.
+Post-build verification of the published artifacts (2026-08-28):
+
+- **Live Windows Defender clean** on both published exes: `MpCmdRun -Scan
+  -ScanType 3 -DisableRemediation`, platform 4.18.26070.9, signatures
+  1.457.375.0, exit 0 / "found no threats" for amd64 and arm64.
+- **Build provenance verified**: `gh attestation verify` exits 0 for both
+  published exes, and the `wintui_provenance.intoto.jsonl` subjects cover all
+  four artifacts with digests matching the downloaded bytes.
+- **VirusTotal Microsoft engine clean on every artifact** — the first
+  zero-detection arm64 exe to date; amd64 carries only the usual
+  single-vendor ML noise (see table below).
+- A WDSI "check latest detections" submission of the published amd64 bytes is
+  filed at release time to preempt a delayed FastPath verdict; the published
+  exe is re-scanned locally around T+3d.
+
+## Verification
+
+VirusTotal scans of the published artifacts for v2.11.2 (run 2026-08-28):
+
+| Asset | SHA256 | Detections | Report |
+|---|---|---|---|
+| `wintui_2.11.2_windows_amd64.exe` (7.6 MB) | `7b6b20aff8ad…` | 2/71 | [VT report](https://www.virustotal.com/gui/file/7b6b20aff8ad2a647a3df2a958b01efdd4172bd41ddf82fa384ffcd5dd3e0cc1) |
+| `wintui_2.11.2_windows_amd64.zip` (2.7 MB) | `eeae59b7ffe2…` | 1/68 | [VT report](https://www.virustotal.com/gui/file/eeae59b7ffe24a072485f03ea16ac650c021eb7bda23eaac87ef82944c1de60a) |
+| `wintui_2.11.2_windows_arm64.exe` (7 MB) | `e36701160cd3…` | 0/69 | [VT report](https://www.virustotal.com/gui/file/e36701160cd3ff0d21e7b50a692db765d831c6fb4d09d9624cf1ab0ede976a9b) |
+| `wintui_2.11.2_windows_arm64.zip` (2.5 MB) | `bf307bdded0e…` | 0/67 | [VT report](https://www.virustotal.com/gui/file/bf307bdded0e168b97cd0c1d5099952e7f6d0e1fbbe41a9dc7ce0dd3f6318377) |
+
+Detections at scan time were single-vendor low-signal ML/reputation noise. Microsoft Defender returned clean across all artifacts.
+
+Full SHA256 hashes:
+
+- `wintui_2.11.2_windows_amd64.exe`: `7b6b20aff8ad2a647a3df2a958b01efdd4172bd41ddf82fa384ffcd5dd3e0cc1`
+- `wintui_2.11.2_windows_amd64.zip`: `eeae59b7ffe24a072485f03ea16ac650c021eb7bda23eaac87ef82944c1de60a`
+- `wintui_2.11.2_windows_arm64.exe`: `e36701160cd3ff0d21e7b50a692db765d831c6fb4d09d9624cf1ab0ede976a9b`
+- `wintui_2.11.2_windows_arm64.zip`: `bf307bdded0e168b97cd0c1d5099952e7f6d0e1fbbe41a9dc7ce0dd3f6318377`
+
