@@ -1,8 +1,14 @@
 package main
 
 import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 // captureToast wires sendToastFn to a stub and returns a getter for the
@@ -288,7 +294,7 @@ func TestEscapeToastXMLHandlesAllSpecialChars(t *testing.T) {
 }
 
 func TestRenderToastScriptInjectsEscapedFields(t *testing.T) {
-	script := renderToastScript("Build <X>", "OK & done")
+	script := renderToastScript("Build <X> 'Δ'", "OK & done $5 ` now")
 	if !strings.Contains(script, "&lt;X&gt;") {
 		t.Errorf("script missing escaped title: %s", script)
 	}
@@ -297,5 +303,70 @@ func TestRenderToastScriptInjectsEscapedFields(t *testing.T) {
 	}
 	if !strings.Contains(script, "CreateToastNotifier('"+toastAppID+"')") {
 		t.Errorf("script does not call CreateToastNotifier with toastAppID")
+	}
+	if strings.Contains(script, "$PSCommandPath") {
+		t.Errorf("inline toast script still references $PSCommandPath: %s", script)
+	}
+}
+
+func TestToastPowerShellHostArgsUseInlineCommand(t *testing.T) {
+	script := "Write-Output 'toast $value ` Δ'\nWrite-Output \"quoted\""
+	args := toastPowerShellHostArgs(script)
+
+	for _, want := range []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command"} {
+		if !containsArg(args, want) {
+			t.Fatalf("toastPowerShellHostArgs() = %#v, missing %q", args, want)
+		}
+	}
+	for _, unwanted := range []string{"-ExecutionPolicy", "Bypass", "-File"} {
+		if containsArg(args, unwanted) {
+			t.Fatalf("toastPowerShellHostArgs() = %#v, unexpectedly contains %q", args, unwanted)
+		}
+	}
+	if args[len(args)-2] != "-Command" || args[len(args)-1] != script {
+		t.Fatalf("toastPowerShellHostArgs() = %#v, expected trailing -Command <script>", args)
+	}
+	cmd := exec.Command(powershellExePath(), args...)
+	if got := cmd.Args[len(cmd.Args)-1]; got != script {
+		t.Fatalf("exec.Cmd last arg = %q, want script preserved verbatim %q", got, script)
+	}
+}
+
+func TestConfigureToastScriptHostPreservesWindowFlags(t *testing.T) {
+	cmd := exec.Command("cmd")
+	configureToastScriptHost(cmd)
+	if cmd.SysProcAttr == nil {
+		t.Fatal("SysProcAttr = nil")
+	}
+	if !cmd.SysProcAttr.HideWindow {
+		t.Fatal("HideWindow = false")
+	}
+	if cmd.SysProcAttr.CreationFlags&windows.CREATE_NO_WINDOW == 0 {
+		t.Fatal("CREATE_NO_WINDOW flag missing")
+	}
+	if cmd.SysProcAttr.CreationFlags&windows.DETACHED_PROCESS != 0 {
+		t.Fatal("DETACHED_PROCESS must remain disabled for WinRT toast loading")
+	}
+}
+
+func TestAppendToastErrorLogNamesInlineOperationWithoutCommand(t *testing.T) {
+	dir := t.TempDir()
+	origCacheDir := userCacheDirPath
+	userCacheDirPath = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { userCacheDirPath = origCacheDir })
+
+	appendToastErrorLog("shortcut-ensure", errors.New("boom"), "synthetic stderr")
+	data, err := os.ReadFile(filepath.Join(dir, "wintui", "toast", "error.log"))
+	if err != nil {
+		t.Fatalf("ReadFile(error.log): %v", err)
+	}
+	logText := string(data)
+	for _, want := range []string{"operation=shortcut-ensure", "transport=inline", "synthetic stderr"} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("error log missing %q: %s", want, logText)
+		}
+	}
+	if strings.Contains(logText, "script=") || strings.Contains(logText, "-Command") {
+		t.Fatalf("error log leaked command/script metadata: %s", logText)
 	}
 }

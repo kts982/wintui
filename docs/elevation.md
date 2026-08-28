@@ -96,9 +96,10 @@ Ctrl+E also retries these items. The label changes to `ctrl+e retry` when only p
 
 WinTUI's own WinGet upgrade path is handled outside the running TUI process:
 
-- **WinTUI Auto Update** is on by default. When WinTUI is running from its winget install, startup checks `kts982.WinTUI` before the TUI starts. If an update is available, WinTUI launches a local handoff script and exits.
+- **WinTUI Auto Update** is on by default. When WinTUI is running from its winget install, startup checks `kts982.WinTUI` before the TUI starts. If an update is available, WinTUI launches an inline PowerShell handoff and exits.
 - Manual self-upgrade from the Updates list uses the same handoff: press `Enter` on the result modal to close WinTUI and let winget upgrade the released binary.
-- The handoff uses a local PowerShell script in WinTUI's cache directory instead of dropping a temporary helper EXE into `%TEMP%`
+- The handoff passes its PowerShell command inline: it drops neither a `.ps1` file in WinTUI's cache directory nor a temporary helper EXE in `%TEMP%`.
+- Visibility tradeoff of the inline transport (also used for toast delivery): while the short-lived PowerShell helper runs, its full command line — including package-derived text such as package names, versions, and toast content — is readable by anything on the machine that can enumerate processes (Task Manager, WMI, command-line auditing, EDR telemetry). The previous transport exposed the same content as a transient world-readable `.ps1` under the user profile, so neither variant hides it from the local machine; nothing beyond package metadata is included, and WinTUI's own error log records only a fixed operation name.
 - After the handoff finishes, WinTUI does not reopen itself automatically; start `wintui` again manually
 
 ## Recommended Usage

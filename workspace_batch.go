@@ -413,8 +413,8 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 
 	if isSelfUpgradeBatchItem(*current) {
 		current.status = batchPendingRestart
-		current.output = "WinTUI will close now. A local handoff script will run winget after this process exits. Start wintui again after it completes."
-		s.exec.appendLine("WinTUI will close now. A local handoff script will run winget after this process exits. Start wintui again after it completes.")
+		current.output = "WinTUI will close now. An inline PowerShell handoff will run winget after this process exits. Start wintui again after it completes."
+		s.exec.appendLine("WinTUI will close now. An inline PowerShell handoff will run winget after this process exits. Start wintui again after it completes.")
 		s.modal.idx++
 		return s.processNextBatchItem()
 	}

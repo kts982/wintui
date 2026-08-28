@@ -68,13 +68,21 @@ func startSelfUpgradeHandoff(source, version string) error {
 		return fmt.Errorf("self-upgrade requires the installed WinTUI binary")
 	}
 
-	scriptPath, err := writeSelfUpdateScript(os.Getpid(), source, version)
+	wingetArgs := selfUpgradeCommandArgs(source, version)
+	script, err := buildSelfUpdateScript(os.Getpid(), wingetArgs)
 	if err != nil {
 		return err
 	}
 
-	appendSelfUpdateLogf("launching handoff script: %s", scriptPath)
-	cmd := exec.Command(powershellExePath(), powerShellHostArgs(scriptPath)...)
+	args := powerShellHostArgs(script)
+	if err := validatePowerShellCommandLine(powershellExePath(), args); err != nil {
+		return err
+	}
+	// Log the winget command before launch: if the inline host dies before the
+	// script's own "winget start" log line, this is the only record of what
+	// was attempted (the pre-v2.11.2 script file used to serve that role).
+	appendSelfUpdateLogf("launching inline handoff: winget %s", strings.Join(wingetArgs, " "))
+	cmd := exec.Command(powershellExePath(), args...)
 	if err := startSelfUpdateHost(cmd); err != nil {
 		return err
 	}
@@ -179,18 +187,11 @@ func runUpgradeSelf() error {
 	return upgradeSelf(os.Stdout)
 }
 
-func powerShellHostArgs(scriptPath string) []string {
-	return []string{
-		"-NoLogo",
-		"-NoProfile",
-		"-NonInteractive",
-		"-ExecutionPolicy", "Bypass",
-		"-WindowStyle", "Minimized",
-		"-File", scriptPath,
-	}
+func powerShellHostArgs(script string) []string {
+	return inlinePowerShellHostArgs("Minimized", script)
 }
 
-func writeSelfUpdateScript(parentPID int, source, version string) (string, error) {
+func buildSelfUpdateScript(parentPID int, wingetArgs []string) (string, error) {
 	// Fail closed: the handoff replaces the running binary with elevated
 	// winget, so it must resolve to the same validated absolute path the TUI
 	// uses — never fall back to a bare name that PowerShell would re-resolve
@@ -200,12 +201,7 @@ func writeSelfUpdateScript(parentPID int, source, version string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("cannot start self-upgrade: %w; reinstall winget (App Installer) from the Microsoft Store or repair its WindowsApps execution alias", err)
 	}
-	scriptPath := selfUpdateScriptPath(parentPID)
-	script := renderSelfUpdateScript(parentPID, wingetExe, selfUpgradeCommandArgs(source, version))
-	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
-		return "", err
-	}
-	return scriptPath, nil
+	return renderSelfUpdateScript(parentPID, wingetExe, wingetArgs), nil
 }
 
 // selfUpdateWingetResolver is the seam tests override so the handoff path can
@@ -263,9 +259,6 @@ try {
 } catch {
   Write-Log ("winget self-upgrade failed: {0}" -f $_.Exception.Message)
 }
-
-Start-Sleep -Seconds 2
-Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 `)
 	return b.String()
 }
@@ -308,6 +301,8 @@ func cleanupStaleSelfUpdateExeHelpers() {
 }
 
 func cleanupStaleSelfUpdateScripts() {
+	// Legacy cleanup for script-file handoffs created by WinTUI versions before
+	// v2.11.2. Keep this for at least two releases after the inline transition.
 	baseDir, err := userCacheDirPath()
 	if err != nil || strings.TrimSpace(baseDir) == "" {
 		return
@@ -345,14 +340,6 @@ func selfUpdateStateDir() string {
 	dir := filepath.Join(baseDir, "wintui", "self-update")
 	recordStateDirResult("self-update dir", os.MkdirAll(dir, 0755))
 	return dir
-}
-
-func selfUpdateScriptPath(parentPID int) string {
-	name := "handoff.ps1"
-	if parentPID > 0 {
-		name = fmt.Sprintf("%s%d.ps1", selfUpdateScriptPrefix, parentPID)
-	}
-	return filepath.Join(selfUpdateStateDir(), name)
 }
 
 func selfUpdateLogPath() string {

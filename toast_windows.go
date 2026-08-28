@@ -72,28 +72,22 @@ func sendToastWindows(title, body string) {
 	_ = ensureToastShortcut()
 
 	script := renderToastScript(title, body)
-	scriptPath, err := writeToastScript(script)
-	if err != nil {
+	args := toastPowerShellHostArgs(script)
+	if err := validatePowerShellCommandLine(powershellExePath(), args); err != nil {
+		appendToastErrorLog("toast-send", err, "")
 		return
 	}
 
-	cmd := exec.Command(powershellExePath(), toastPowerShellHostArgs(scriptPath)...)
+	cmd := exec.Command(powershellExePath(), args...)
 	configureToastScriptHost(cmd)
 	_ = cmd.Start()
 }
 
 // toastPowerShellHostArgs returns the PowerShell args used for both the
-// shortcut-ensure and the toast-send scripts. -WindowStyle Hidden keeps the
-// console invisible; ExecutionPolicy Bypass survives stricter user policies.
-func toastPowerShellHostArgs(scriptPath string) []string {
-	return []string{
-		"-NoLogo",
-		"-NoProfile",
-		"-NonInteractive",
-		"-ExecutionPolicy", "Bypass",
-		"-WindowStyle", "Hidden",
-		"-File", scriptPath,
-	}
+// shortcut-ensure and toast-send commands. -Command must remain the final
+// switch so the rendered script is passed as one final argv item.
+func toastPowerShellHostArgs(script string) []string {
+	return inlinePowerShellHostArgs("Hidden", script)
 }
 
 // configureToastScriptHost hides the helper console. CREATE_NO_WINDOW alone
@@ -108,7 +102,8 @@ func configureToastScriptHost(cmd *exec.Cmd) {
 }
 
 // toastStateDir returns %LOCALAPPDATA%\wintui\toast, creating it on demand.
-// Used for transient PS scripts.
+// Inline transport no longer drops scripts here; the directory is retained
+// for the shortcut/toast error log.
 func toastStateDir() (string, error) {
 	cacheDir, err := userCacheDirPath()
 	if err != nil {
@@ -119,21 +114,6 @@ func toastStateDir() (string, error) {
 		return "", err
 	}
 	return dir, nil
-}
-
-// writeToastScript drops the PS script under the toast state dir with a
-// PID-based suffix so concurrent toasts don't collide. The script self-deletes
-// at the end so we don't leak files even if cleanup never runs.
-func writeToastScript(script string) (string, error) {
-	dir, err := toastStateDir()
-	if err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, fmt.Sprintf("toast-%d.ps1", os.Getpid()))
-	if err := os.WriteFile(path, []byte(script), 0644); err != nil {
-		return "", err
-	}
-	return path, nil
 }
 
 // shortcutPath returns the per-user Start Menu .lnk we drop on first toast.
@@ -186,24 +166,23 @@ func ensureToastShortcut() error {
 	// on an already-correct property is a no-op).
 	lnkExists := lnkErr == nil
 	script := renderShortcutScript(path, exePath, lnkExists)
-	scriptPath, err := writeToastScript(script)
-	if err != nil {
+	args := toastPowerShellHostArgs(script)
+	if err := validatePowerShellCommandLine(powershellExePath(), args); err != nil {
+		appendToastErrorLog("shortcut-ensure", err, "")
 		return err
 	}
 
-	cmd := exec.Command(powershellExePath(), toastPowerShellHostArgs(scriptPath)...)
+	cmd := exec.Command(powershellExePath(), args...)
 	configureToastScriptHost(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
 	if runErr != nil || stderr.Len() > 0 {
-		appendToastErrorLog(scriptPath, runErr, stderr.String())
+		appendToastErrorLog("shortcut-ensure", runErr, stderr.String())
 		if runErr != nil {
 			return fmt.Errorf("shortcut-ensure: %w", runErr)
 		}
 	}
-	_ = os.Remove(scriptPath)
-
 	// Marker write happens AFTER the script returns clean. If we crashed
 	// between Save() and SetAppId, the marker stays absent and the next call
 	// re-runs to repair the AUMID.
@@ -227,9 +206,10 @@ func aumidMarkerPath(lnkPath string) string {
 	return strings.TrimSuffix(lnkPath, ".lnk") + ".aumid"
 }
 
-// appendToastErrorLog writes failures from the shortcut-ensure or toast-send
-// PowerShell handoff to a per-user log file so silent breakage is debuggable.
-func appendToastErrorLog(scriptPath string, runErr error, stderr string) {
+// appendToastErrorLog writes failures from an inline shortcut/toast operation
+// to a per-user log. It deliberately records only the fixed operation name,
+// never the full command or rendered script (toast text can be package-derived).
+func appendToastErrorLog(operation string, runErr error, stderr string) {
 	dir, err := toastStateDir()
 	if err != nil {
 		return
@@ -239,8 +219,8 @@ func appendToastErrorLog(scriptPath string, runErr error, stderr string) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "[%s] script=%s err=%v\nstderr:\n%s\n---\n",
-		time.Now().Format(time.RFC3339), scriptPath, runErr, stderr)
+	fmt.Fprintf(f, "[%s] operation=%s transport=inline err=%v\nstderr:\n%s\n---\n",
+		time.Now().Format(time.RFC3339), operation, runErr, stderr)
 }
 
 // renderToastScript builds the PS script that fires a single text-only toast
@@ -266,8 +246,6 @@ $xml.LoadXml(@'
 
 $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('%s').Show($toast)
-
-Remove-Item -LiteralPath $PSCommandPath -ErrorAction SilentlyContinue
 `, escapeToastXML(title), escapeToastXML(body), toastAppID)
 }
 

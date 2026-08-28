@@ -21,9 +21,9 @@ const (
 	cleanupGroupWinTUI    cleanupGroup = "wintui"
 )
 
-// cleanupSelfUpdateHandoffMinAge keeps a self-update kicked off mid-cleanup
-// safe: a handoff script generated in the last 24 hours might still be the
-// one running. Anything older has either finished or been abandoned.
+// cleanupSelfUpdateHandoffMinAge protects legacy pre-v2.11.2 script-file
+// handoffs during the migration window. Anything older than 24 hours has
+// either finished or been abandoned.
 const cleanupSelfUpdateHandoffMinAge = 24 * time.Hour
 
 // cleanupMode controls how the engine processes a target's resolved path.
@@ -264,9 +264,9 @@ func cleanupTargetRegistry() []cleanupTargetDef {
 		},
 		{
 			id:    "wintui_self_update_handoffs",
-			label: "WinTUI self-update handoff scripts",
-			description: "Leftover PowerShell handoff scripts under %LOCALAPPDATA%\\wintui\\self-update. " +
-				"Stale scripts older than 24 hours; in-flight handoffs are kept.",
+			label: "Legacy WinTUI handoff scripts",
+			description: "Leftover PowerShell handoff scripts created by WinTUI versions before v2.11.2. " +
+				"Stale scripts older than 24 hours; retained temporarily for migration cleanup.",
 			group:  cleanupGroupWinTUI,
 			pathFn: selfUpdateStateDir,
 			mode:   cleanupModeGlob,

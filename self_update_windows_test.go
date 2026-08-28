@@ -176,7 +176,11 @@ func TestStartSelfUpgradeHandoffClearsManifestOverrideAfterLaunch(t *testing.T) 
 	evalSymlinksPath = func(path string) (string, error) { return path, nil }
 	isElevated = func() bool { return true }
 	userCacheDirPath = func() (string, error) { return dir, nil }
-	startSelfUpdateHost = func(cmd *exec.Cmd) error { return nil }
+	var startedCmd *exec.Cmd
+	startSelfUpdateHost = func(cmd *exec.Cmd) error {
+		startedCmd = cmd
+		return nil
+	}
 	selfUpdateWingetResolver = func() (string, error) {
 		return `C:\Users\ktsio\AppData\Local\Microsoft\WindowsApps\winget.exe`, nil
 	}
@@ -199,6 +203,26 @@ func TestStartSelfUpgradeHandoffClearsManifestOverrideAfterLaunch(t *testing.T) 
 	}
 	if _, err := os.Stat(overridePath); !os.IsNotExist(err) {
 		t.Fatalf("expected manifest override to be cleared after successful launch, got err=%v", err)
+	}
+	if startedCmd == nil {
+		t.Fatal("startSelfUpdateHost did not receive the inline command")
+	}
+	if got := startedCmd.Args[len(startedCmd.Args)-1]; !strings.Contains(got, "& $WingetExe @WingetArgs") {
+		t.Fatalf("last command arg does not contain the rendered handoff script: %q", got)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, "wintui", "self-update", selfUpdateScriptPrefix+"*.ps1"))
+	if err != nil {
+		t.Fatalf("Glob handoff scripts: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("inline handoff created script files: %#v", matches)
+	}
+	logData, err := os.ReadFile(filepath.Join(dir, "wintui", "self-update", selfUpdateLogName))
+	if err != nil {
+		t.Fatalf("ReadFile(self-update log): %v", err)
+	}
+	if !strings.Contains(string(logData), "launching inline handoff: winget upgrade") {
+		t.Fatalf("self-update log missing the pre-launch winget command record:\n%s", logData)
 	}
 }
 
@@ -234,7 +258,7 @@ func TestStartSelfUpgradeHandoffDoesNotRequireAdmin(t *testing.T) {
 }
 
 // When winget can't be resolved to a validated absolute path, the handoff
-// must fail closed (actionable error, no script written, host never started)
+// must fail closed (actionable error, no inline command launched)
 // rather than fall back to a bare name PowerShell would re-resolve off PATH.
 func TestStartSelfUpgradeHandoffFailsClosedWhenWingetUnresolved(t *testing.T) {
 	origExe := currentExecutablePath
@@ -268,7 +292,7 @@ func TestStartSelfUpgradeHandoffFailsClosedWhenWingetUnresolved(t *testing.T) {
 		t.Fatalf("startSelfUpgradeHandoff() err = %v, want a fail-closed self-upgrade error", err)
 	}
 	if hostStarted {
-		t.Fatal("script host was started despite winget resolution failing — must fail closed")
+		t.Fatal("PowerShell host was started despite winget resolution failing — must fail closed")
 	}
 }
 
@@ -395,13 +419,12 @@ func TestRenderSelfUpdateScriptIncludesExpectedCommands(t *testing.T) {
 		"'--accept-source-agreements'",
 		"'--force'",
 		"manual relaunch required: start wintui again",
-		"$PSCommandPath",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("renderSelfUpdateScript() missing %q\nscript:\n%s", want, script)
 		}
 	}
-	for _, unwanted := range []string{"Start-Process -FilePath $RelaunchExe", "$RelaunchExe = "} {
+	for _, unwanted := range []string{"Start-Process -FilePath $RelaunchExe", "$RelaunchExe = ", "$PSCommandPath", "Start-Sleep -Seconds 2"} {
 		if strings.Contains(script, unwanted) {
 			t.Fatalf("renderSelfUpdateScript() unexpectedly contains %q\nscript:\n%s", unwanted, script)
 		}
@@ -431,16 +454,12 @@ func TestRenderSelfUpdateScriptParsesInPowerShell(t *testing.T) {
 		`C:\Users\ktsio\AppData\Local\Microsoft\WindowsApps\winget.exe`,
 		selfUpgradeManifestArgs(`C:\TEST\canary-build\manifests\k\kts982\WinTUI.Canary\0.0.2`),
 	)
-	scriptPath := filepath.Join(t.TempDir(), "handoff.ps1")
-	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
-		t.Fatalf("WriteFile(%s): %v", scriptPath, err)
-	}
-
 	cmd := exec.Command(
 		powershellPath,
 		"-NoProfile",
+		"-NonInteractive",
 		"-Command",
-		"[void][scriptblock]::Create((Get-Content -Raw -LiteralPath '"+scriptPath+"'))",
+		"[void][scriptblock]::Create("+quotePowerShellLiteral(script)+")",
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -448,17 +467,26 @@ func TestRenderSelfUpdateScriptParsesInPowerShell(t *testing.T) {
 	}
 }
 
-func TestPowerShellHostArgsIncludesExecutionPolicyBypass(t *testing.T) {
-	scriptPath := `C:\Users\ktsio\AppData\Local\wintui\self-update\handoff-42.ps1`
-	args := powerShellHostArgs(scriptPath)
+func TestPowerShellHostArgsUseInlineCommand(t *testing.T) {
+	script := "Write-Output 'handoff $value ` Δ'\nWrite-Output \"quoted\""
+	args := powerShellHostArgs(script)
 
-	for _, want := range []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Minimized", "-File"} {
+	for _, want := range []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Minimized", "-Command"} {
 		if !containsArg(args, want) {
 			t.Fatalf("powerShellHostArgs() = %#v, missing %q", args, want)
 		}
 	}
-	if args[len(args)-2] != "-File" || args[len(args)-1] != scriptPath {
-		t.Fatalf("powerShellHostArgs() = %#v, expected trailing -File <path>", args)
+	for _, unwanted := range []string{"-ExecutionPolicy", "Bypass", "-File"} {
+		if containsArg(args, unwanted) {
+			t.Fatalf("powerShellHostArgs() = %#v, unexpectedly contains %q", args, unwanted)
+		}
+	}
+	if args[len(args)-2] != "-Command" || args[len(args)-1] != script {
+		t.Fatalf("powerShellHostArgs() = %#v, expected trailing -Command <script>", args)
+	}
+	cmd := exec.Command(powershellExePath(), args...)
+	if got := cmd.Args[len(cmd.Args)-1]; got != script {
+		t.Fatalf("exec.Cmd last arg = %q, want script preserved verbatim %q", got, script)
 	}
 }
 
