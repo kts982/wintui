@@ -41,11 +41,13 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		discard()
 		return err
 	}
-	// CreateTemp creates 0600; restore the permission the callers always used.
-	// On Windows this only toggles the read-only attribute and is harmless.
-	if perm != 0 {
-		_ = os.Chmod(tmp, perm)
-	}
+	// perm is documentation only. os.CreateTemp opens the file 0600, which on
+	// Windows means "not read-only" (the file inherits the directory ACL, like
+	// the 0644 os.WriteFile the callers used before), so no chmod is needed —
+	// and deliberately none is made: os.Chmod would link syscall.Chmod, a new
+	// symbol in the binary, and the release gate keeps the syscall surface
+	// identical between releases.
+	_ = perm
 	if err := renameWithRetry(tmp, path); err != nil {
 		discard()
 		return err
