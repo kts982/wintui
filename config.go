@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 )
 
 // InstallScope constrains the install/upgrade scope.
@@ -488,34 +490,102 @@ func configPath() string {
 	return filepath.Join(dir, "settings.json")
 }
 
-// LoadSettings reads settings from disk, falling back to defaults.
-func LoadSettings() Settings {
-	data, err := os.ReadFile(configPath())
+// settingsFileState remembers what this process last read from or wrote to
+// settings.json, so `wintui doctor` / the Health tab can warn when the file
+// was changed by another writer (a CLI command while the TUI runs, or vice
+// versa) or could not be parsed. Guarded by its own mutex because LoadSettings
+// and SaveSettings run on the Update goroutine while doctor rows may be built
+// inside a tea.Cmd.
+var (
+	settingsFileMu    sync.Mutex
+	settingsFileSeen  bool      // a stat succeeded at least once
+	settingsFileMtime time.Time // mtime at the last load/save by this process
+	settingsFileErr   error     // parse error from the last load, nil when clean
+)
+
+func recordSettingsFileState(path string, parseErr error) {
+	fi, statErr := os.Stat(path)
+	settingsFileMu.Lock()
+	defer settingsFileMu.Unlock()
+	settingsFileErr = parseErr
+	if statErr != nil {
+		settingsFileSeen = false
+		settingsFileMtime = time.Time{}
+		return
+	}
+	settingsFileSeen = true
+	settingsFileMtime = fi.ModTime()
+}
+
+// settingsFileWarning reports a doctor-level problem with settings.json: an
+// unparseable file (defaults are in use for the unreadable part) or a change
+// on disk since this process last loaded or saved it. Empty when all is well.
+func settingsFileWarning() (detail, recommendation string) {
+	settingsFileMu.Lock()
+	seen, mtime, parseErr := settingsFileSeen, settingsFileMtime, settingsFileErr
+	settingsFileMu.Unlock()
+	if parseErr != nil {
+		return "settings.json has invalid JSON (defaults used for the unreadable part)",
+			"Fix the JSON in settings.json or delete the file to start from defaults."
+	}
+	if !seen {
+		return "", ""
+	}
+	fi, err := os.Stat(configPath())
+	if err != nil || fi.ModTime().Equal(mtime) {
+		return "", ""
+	}
+	return "settings.json changed on disk since this process started",
+		"Restart WinTUI (or re-run the command) to pick up changes made by another WinTUI process."
+}
+
+// loadSettingsFile reads and parses settings.json. The returned Settings are
+// always usable: defaults when the file is missing, and — by design — whatever
+// fields parsed before a type error plus defaults for the rest when the file is
+// corrupt, rather than discarding all settings. The error tells callers that
+// the file was not clean; LoadSettings records it for doctor.
+func loadSettingsFile() (Settings, error) {
+	data, err := readFileWithRetry(configPath())
 	if err != nil {
-		return DefaultSettings()
+		return DefaultSettings(), err
 	}
 	s := DefaultSettings()
-	// Best-effort by design: a corrupt file keeps whatever fields parsed
-	// before the error and falls back to defaults for the rest, rather than
-	// discarding all settings.
-	_ = json.Unmarshal(data, &s)
+	if err := json.Unmarshal(data, &s); err != nil {
+		return s, fmt.Errorf("settings.json: %w", err)
+	}
+	return s, nil
+}
+
+// LoadSettings reads settings from disk, falling back to defaults.
+func LoadSettings() Settings {
+	s, err := loadSettingsFile()
+	if err != nil && os.IsNotExist(err) {
+		err = nil
+	}
+	recordSettingsFileState(configPath(), err)
 	return s
 }
 
-// SaveSettings writes settings to disk atomically via temp file + rename.
+// SaveSettings writes settings to disk atomically via a unique temp file +
+// rename (see writeFileAtomic). It is a full-snapshot write: callers that hold
+// a possibly stale copy of the file must go through updateSettings instead.
 func SaveSettings(s Settings) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
 	path := configPath()
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := writeFileAtomic(path, data, 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	recordSettingsFileState(path, nil)
+	return nil
 }
 
+// persistSettings publishes a complete next snapshot to disk and memory. It is
+// the TUI's write path for edits made against the live appSettings value
+// (settings screen, cleanup toggles, version-ignore expiry), where the
+// in-memory snapshot IS the source of truth for this session.
 func persistSettings(next Settings) error {
 	if err := SaveSettings(next); err != nil {
 		return err
@@ -524,10 +594,39 @@ func persistSettings(next Settings) error {
 	return nil
 }
 
+// updateSettings is the write path for delta mutations — CLI commands and
+// per-package override edits. It never persists the process-global snapshot:
+// settings.json is re-read immediately before the write, mutate is applied to
+// that fresh copy, and the result is saved; then the same mutate is applied to
+// the in-memory settings so unsaved edits held by a running TUI survive. Two
+// WinTUI processes changing disjoint keys therefore both land on disk instead
+// of the later one clobbering the earlier one with its stale view.
+//
+// This is the cheap two-writer path (no cross-process lock, no new Win32
+// surface): a concurrent write to the SAME key between the reload and the
+// rename is still last-writer-wins, which is acceptable for hand-driven
+// settings edits. What it must never do is turn a file it could not read into
+// a defaults-plus-delta write: an unreadable or unparseable settings.json makes
+// the mutation fail explicitly instead.
+func updateSettings(mutate func(*Settings)) error {
+	disk, err := loadSettingsFile()
+	if err != nil && !os.IsNotExist(err) {
+		recordSettingsFileState(configPath(), err)
+		return fmt.Errorf("refusing to change settings: %w (fix or delete the file, then retry)", err)
+	}
+	recordSettingsFileState(configPath(), nil)
+	mutate(&disk)
+	if err := SaveSettings(disk); err != nil {
+		return err
+	}
+	mem := currentSettings().clone()
+	mutate(&mem)
+	setAppSettings(mem)
+	return nil
+}
+
 func persistPackageOverride(pkgID, source string, o PackageOverride) error {
-	next := appSettings.clone()
-	next.setOverride(pkgID, source, o)
-	return persistSettings(next)
+	return updateSettings(func(s *Settings) { s.setOverride(pkgID, source, o) })
 }
 
 // BuildInstallArgs returns extra winget flags based on current settings.

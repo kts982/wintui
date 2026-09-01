@@ -270,18 +270,16 @@ func boundHistoryRecords(env *historyEnvelope) {
 	env.Records = trimmed
 }
 
-// writeHistoryEnvelope marshals and writes atomically (temp + rename), matching
-// cache.go. Indented because history.json is an audit log users may inspect.
+// writeHistoryEnvelope marshals and writes atomically (unique temp + rename via
+// writeFileAtomic, matching settings and cache — history is unrecoverable user
+// state, so it must never be published half-written). Indented because
+// history.json is an audit log users may inspect.
 func writeHistoryEnvelope(path string, env historyEnvelope) error {
 	b, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeFileAtomic(path, b, 0644)
 }
 
 // ── Record builders (write-point seam) ─────────────────────────────

@@ -201,12 +201,21 @@ func checkSettingsSummary() healthCheck {
 	if mode == "" {
 		mode = "default"
 	}
-	return healthCheck{
+	check := healthCheck{
 		Check:  "Settings",
 		Status: "INFO",
 		Details: fmt.Sprintf("Auto Elevate: %s · Self Update: %s · Action Mode: %s · Source: %s",
 			onOff(settings.AutoElevate), onOff(settings.AutoSelfUpdate), mode, source),
 	}
+	// Two-writer safety: the CLI is a routine second writer of settings.json
+	// alongside a running TUI. Flag a file that changed under this process,
+	// or one that did not parse, so nobody debugs "my setting didn't stick".
+	if detail, rec := settingsFileWarning(); detail != "" {
+		check.Status = "WARN"
+		check.Details += " · " + detail
+		check.Recommendation = rec
+	}
+	return check
 }
 
 // checkThemeSummary reports the active palette and OSC 11 background mode as a

@@ -184,12 +184,7 @@ func (c *packageCache) saveToDiskLocked() {
 	if err != nil {
 		return
 	}
-	target := diskCachePath()
-	tmp := target + ".tmp"
-	if err := os.WriteFile(tmp, b, 0644); err != nil {
-		return
-	}
-	_ = os.Rename(tmp, target)
+	_ = writeFileAtomic(diskCachePath(), b, 0644)
 }
 
 // loadFromDisk reads the disk cache. Returns ok=false if missing, corrupt, or expired.

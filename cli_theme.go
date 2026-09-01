@@ -56,11 +56,11 @@ func runTheme(name string, list bool, out io.Writer) error {
 	}
 
 	// setValue mirrors the settings-UI normalization (persists "" for the
-	// default slot rather than a literal "default").
-	next := appSettings
-	next.setValue("theme", requested)
-	setAppSettings(next)
-	if err := SaveSettings(next); err != nil {
+	// default slot rather than a literal "default"). updateSettings writes the
+	// theme as a delta over the file on disk and only publishes to memory
+	// after the save succeeds — a CLI command must not clobber keys another
+	// WinTUI process changed since this one started.
+	if err := updateSettings(func(s *Settings) { s.setValue("theme", requested) }); err != nil {
 		return fmt.Errorf("could not save settings: %w", err)
 	}
 	fmt.Fprintf(out, "Theme set to %s.\n", lookupTheme(requested).Label)
