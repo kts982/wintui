@@ -20,6 +20,7 @@ type cleanupTargetResult struct {
 	freedBytes   int64 // bytes actually removed; populated only by cleanupDelete
 	files        int   // top-level entries considered for removal
 	failed       int   // top-level entries we could not remove
+	unreadable   int   // entries the size walk could not read (access denied, vanished): sizeBytes is a lower bound when > 0
 	errors       []error
 	skipped      cleanupSkipReason
 }
@@ -142,9 +143,10 @@ func cleanupRun(ctx context.Context, def cleanupTargetDef, doDelete bool) cleanu
 			continue
 		}
 
-		size := cleanupEntrySize(ctx, path, entryInfo)
+		size, unreadable := cleanupEntrySize(ctx, path, entryInfo)
 		res.files++
 		res.sizeBytes += size
+		res.unreadable += unreadable
 
 		if !doDelete {
 			continue
@@ -162,18 +164,24 @@ func cleanupRun(ctx context.Context, def cleanupTargetDef, doDelete bool) cleanu
 
 // cleanupEntrySize sums the file bytes under path. For directories it walks
 // recursively but never follows reparse points; ctx cancellation aborts the
-// walk and returns whatever was tallied so far.
-func cleanupEntrySize(ctx context.Context, path string, info os.FileInfo) int64 {
+// walk and returns whatever was tallied so far. unreadable counts the entries
+// the walk could not read (access denied, vanished mid-walk): the walk stays
+// best-effort, but callers get bounded evidence that total is a LOWER bound
+// rather than a false "0 B, all good".
+func cleanupEntrySize(ctx context.Context, path string, info os.FileInfo) (total int64, unreadable int) {
 	if !info.IsDir() {
-		return info.Size()
+		return info.Size(), 0
 	}
-	var total int64
 	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil || d == nil {
-			return nil //nolint:nilerr // best-effort size walk: unreadable entries are skipped, not fatal
+			unreadable++
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil //nolint:nilerr // best-effort size walk: unreadable entries are counted, not fatal
 		}
 		if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
 			if d.IsDir() {
@@ -186,12 +194,13 @@ func cleanupEntrySize(ctx context.Context, path string, info os.FileInfo) int64 
 		}
 		fi, err := d.Info()
 		if err != nil {
-			return nil //nolint:nilerr // entry vanished mid-walk: skip it, keep the tally
+			unreadable++
+			return nil //nolint:nilerr // entry vanished mid-walk: count it, keep the tally
 		}
 		total += fi.Size()
 		return nil
 	})
-	return total
+	return total, unreadable
 }
 
 func cleanupMatchesAnyGlob(name string, globs []string) bool {

@@ -20,6 +20,7 @@ run headlessly and exit.
 | `wintui theme [name] [--list]` | Show, list, or set the color theme |
 | `wintui config list\|get <key>\|set <key> <value>\|unset <key> [--json]` | Show or change any global setting in `settings.json` with validated, human-readable values |
 | `wintui rules list\|show <id>\|set <id> --policy … \|clear <id> [field…] [--source winget\|msstore] [--json]` | Show or change per-package rules (update policy, version holds, scope, architecture, elevation), with explicit and effective values side by side |
+| `wintui cleanup scan [--enabled] [--target <id>…] [--json]` | Measure what each Cleanup-tab target would reclaim, read-only; deletion stays in the TUI |
 | `wintui export [--output PATH] [--with-versions]` | Write the installed package list to a portable JSON file (stdout by default) |
 | `wintui import <path> [--dry-run] [--all] [--json]` | Install packages from a `wintui export` file (with optional preflight) |
 | `wintui history [id] [--limit N] [--since DUR] [--failed-only] [--json]` | Show WinTUI-originated install/upgrade/uninstall operations; with an id, that package's timeline |
@@ -293,6 +294,40 @@ Rule edits are settings changes, not actions: they do not appear in
 `wintui history`. `wintui show <id>` remains the argv-level diagnosis (the
 exact `winget` arguments) and its output is unchanged.
 
+### cleanup scan
+
+`wintui cleanup scan` is the read-only half of the Cleanup tab: it measures
+what every registered target would reclaim and prints TARGET / GROUP /
+ENABLED / SIZE / ITEMS / ADMIN / STATUS. It never deletes anything and never
+routes through the elevated helper — deleting stays in the TUI, where each
+removal is reviewed and confirmed.
+
+| Form | Behavior |
+|---|---|
+| `wintui cleanup scan` | Every registered target, present or not, so `missing` / `unresolved` reasons are visible |
+| `wintui cleanup scan --enabled` | Only the targets that start **checked** in the TUI (default-checked plus the ones you opted in) — the set a TUI deletion would act on |
+| `wintui cleanup scan --target <id>` | Only the named target(s); repeatable, IDs complete in the shell |
+
+Statuses: `ok` (reclaimable entries found), `empty`, `missing` (path not on
+disk), `unresolved` (environment variable missing), `needs_admin` (the target
+requires elevation and this process is not elevated — it is **not** walked,
+because a non-elevated walk would report a partial, wrong size; run the same
+command from an elevated terminal to measure it), `partial` (scanned, but
+some entries were unreadable — the size is a lower bound, shown as `≥`),
+`skipped` (engine guard, e.g. a reparse-point root), `error`.
+
+Targets are walked with bounded concurrency; a one-line progress note goes to
+stderr so stdout stays pipeable. Exit code is 0 — this is a report, not a
+predicate.
+
+`--json` is `{"elevated", "selection", "count", "scanned", "needs_admin",
+"total_size_bytes", "targets": [...]}`. Each target carries `id`, `label`,
+`group`, `group_label`, `path`, `mode`, `globs`, `min_age_seconds`,
+`requires_admin`, `default_checked`, `enabled`, `present`, `scanned`,
+`status`, `size_bytes`, `items`, `unreadable`, `errors`. Unmeasured
+`size_bytes` / `items` are an explicit `null` (never omitted); measured zeros
+are `0`; arrays are never `null`.
+
 ### history
 
 `wintui history` lists the operations WinTUI itself has run — TUI batches and
@@ -408,6 +443,11 @@ wintui rules set Mozilla.Firefox --ignore-version 155.0   # hold just this versi
 wintui rules set Anthropic.ClaudeCode --elevate never
 wintui rules clear Git.Git scope
 wintui rules clear Git.Git                                # remove the whole rule
+
+# How much junk has piled up? (read-only; deleting stays in the TUI)
+wintui cleanup scan
+wintui cleanup scan --enabled
+wintui cleanup scan --target user_temp --target npm_cache --json
 
 # Show WinTUI's action history (and one package's timeline)
 wintui history

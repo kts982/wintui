@@ -166,7 +166,7 @@ func init() {
 	showCmd.ValidArgsFunction = completeInstalledIDs
 	_ = upgradeCmd.RegisterFlagCompletionFunc("id", completeUpgradeableIDs)
 
-	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd, exportCmd, importCmd, themeCmd, notesCmd, historyCmd, fixCmd, configCmd, rulesCmd)
+	rootCmd.AddCommand(checkCmd, listCmd, showCmd, upgradeCmd, doctorCmd, exportCmd, importCmd, themeCmd, notesCmd, historyCmd, fixCmd, configCmd, rulesCmd, cleanupCmd)
 }
 
 func main() {

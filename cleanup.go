@@ -120,18 +120,39 @@ func (s cleanupScreen) applyTheme() screen {
 func (s *cleanupScreen) computeVisible() {
 	s.visible = s.visible[:0]
 	for i, def := range s.targets {
-		if def.detectIfPresent {
-			path := def.pathFn()
-			if path == "" {
-				continue
-			}
-			info, err := os.Lstat(path)
-			if err != nil || !info.IsDir() {
-				continue
-			}
+		if !cleanupTargetVisible(def) {
+			continue
 		}
 		s.visible = append(s.visible, i)
 	}
+}
+
+// cleanupTargetVisible is the ONE present-filter shared by the TUI rows and
+// `wintui cleanup scan`: detect-if-present targets are hidden unless their
+// path resolves to an existing directory; everything else is always listed.
+func cleanupTargetVisible(def cleanupTargetDef) bool {
+	if !def.detectIfPresent {
+		return true
+	}
+	path, exists := cleanupResolveTarget(def)
+	return path != "" && exists
+}
+
+// cleanupResolveTarget resolves a target root without walking it: the path
+// ("" when the env var is missing) and whether it exists as a directory.
+func cleanupResolveTarget(def cleanupTargetDef) (path string, exists bool) {
+	if def.pathFn == nil {
+		return "", false
+	}
+	path = def.pathFn()
+	if path == "" {
+		return "", false
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() {
+		return path, false
+	}
+	return path, true
 }
 
 func (s cleanupScreen) init() tea.Cmd {
