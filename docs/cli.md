@@ -19,6 +19,7 @@ run headlessly and exit.
 | `wintui notes <id> [--source winget\|msstore] [--json]` | Show a package's release notes (rendered markdown), when the winget manifest has them |
 | `wintui theme [name] [--list]` | Show, list, or set the color theme |
 | `wintui config list\|get <key>\|set <key> <value>\|unset <key> [--json]` | Show or change any global setting in `settings.json` with validated, human-readable values |
+| `wintui rules list\|show <id>\|set <id> --policy … \|clear <id> [field…] [--source winget\|msstore] [--json]` | Show or change per-package rules (update policy, version holds, scope, architecture, elevation), with explicit and effective values side by side |
 | `wintui export [--output PATH] [--with-versions]` | Write the installed package list to a portable JSON file (stdout by default) |
 | `wintui import <path> [--dry-run] [--all] [--json]` | Install packages from a `wintui export` file (with optional preflight) |
 | `wintui history [id] [--limit N] [--since DUR] [--failed-only] [--json]` | Show WinTUI-originated install/upgrade/uninstall operations; with an id, that package's timeline |
@@ -245,8 +246,52 @@ return one element:
 ```
 
 Booleans are JSON booleans. Per-package rules are not part of `config`; see
-`wintui show <id>` (and, from v2.12, `wintui rules`). Keys and values complete
-in the shell once completions are enabled.
+`wintui rules`. Keys and values complete in the shell once completions are
+enabled.
+
+### rules
+
+`wintui rules` manages the per-package rules the TUI's detail panel edits
+(`p` / `t` / `i`): update policy, version-specific holds, install scope,
+architecture, and elevation. Package IDs are case-insensitive; `--source`
+defaults to `winget`.
+
+| Form | Behavior |
+|---|---|
+| `wintui rules list` | Every explicit rule: ID / SOURCE / POLICY / HOLD / SCOPE / ARCH / ELEVATE (`(any)` = a legacy rule without a source) |
+| `wintui rules show <id>` | The explicit rule **and** the effective value for each field, so inheritance from the global settings is visible. No rule is not an error (exit 0) |
+| `wintui rules set <id> [--policy ask\|auto\|hold] [--scope inherit\|user\|machine] [--architecture inherit\|x64\|x86\|arm64] [--elevate inherit\|always\|never] [--ignore-version <v>]` | Change only the fields you pass, in one write; everything else on the rule is untouched |
+| `wintui rules clear <id> [policy\|scope\|architecture\|elevate\|ignore-version …]` | Remove the whole rule (no fields) or just the named fields |
+
+Holds are one explicit state: **none**, **all** (`--policy hold`), or
+**version=X** (`--ignore-version X`, held only while that exact version is
+the available one). `--policy` never touches a version hold and
+`--ignore-version` never touches the policy, so a version-scoped hold cannot
+silently become a permanent one. A legacy `ignore: true` in `settings.json`
+reads as policy `hold` / hold `all` and is rewritten in the canonical form the
+next time the rule is edited (by the CLI or the TUI).
+
+`rules show` evaluates a version hold against the available version in the
+read-only package cache when it is warm (`active` / `inactive`) and says so
+honestly when it cannot (`cannot evaluate` — open the TUI or run
+`wintui check` to refresh the cache). It never calls winget.
+
+Invalid values are errors and write nothing; a typo in `--elevate` never
+means "never". New rules take winget's ID casing from the cache; an existing
+rule keeps its key. If `settings.json` contains conflicting duplicate keys for
+one package (`winget:Git.Git` and `winget:git.git` with different values —
+only possible by hand editing), `set` and field-level `clear` refuse with the
+keys listed, `rules clear <id>` removes them all, and `wintui doctor` warns.
+
+`--json`: `list` is `{"count": N, "rules": [...]}`; `show`/`set`/`clear` return
+one object with `rule` (the explicit rule, `null` when none), `effective`, and
+`conflicts` (`[]` when clean). `hold` is `{"kind": "none|all|version",
+"version": "…", "active": true|false|null}` — `null` when the cache cannot
+evaluate it; `available_version` is likewise `null` when unknown.
+
+Rule edits are settings changes, not actions: they do not appear in
+`wintui history`. `wintui show <id>` remains the argv-level diagnosis (the
+exact `winget` arguments) and its output is unchanged.
 
 ### history
 
@@ -354,6 +399,15 @@ wintui config set install_mode silent
 wintui config set auto_elevate off
 wintui config unset source
 wintui config get scope --json
+
+# Per-package rules: what applies, and why
+wintui rules list
+wintui rules show Git.Git
+wintui rules set Git.Git --policy auto --scope user
+wintui rules set Mozilla.Firefox --ignore-version 155.0   # hold just this version
+wintui rules set Anthropic.ClaudeCode --elevate never
+wintui rules clear Git.Git scope
+wintui rules clear Git.Git                                # remove the whole rule
 
 # Show WinTUI's action history (and one package's timeline)
 wintui history
