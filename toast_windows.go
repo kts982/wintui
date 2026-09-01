@@ -72,13 +72,11 @@ func sendToastWindows(title, body string) {
 	_ = ensureToastShortcut()
 
 	script := renderToastScript(title, body)
-	args := toastPowerShellHostArgs(script)
-	if err := validatePowerShellCommandLine(powershellExePath(), args); err != nil {
+	cmd, err := newInlinePowerShellCmd(toastWindowStyle, script)
+	if err != nil {
 		appendToastErrorLog("toast-send", err, "")
 		return
 	}
-
-	cmd := exec.Command(powershellExePath(), args...)
 	configureToastScriptHost(cmd)
 	_ = cmd.Start()
 }
@@ -87,7 +85,7 @@ func sendToastWindows(title, body string) {
 // shortcut-ensure and toast-send commands. -Command must remain the final
 // switch so the rendered script is passed as one final argv item.
 func toastPowerShellHostArgs(script string) []string {
-	return inlinePowerShellHostArgs("Hidden", script)
+	return inlinePowerShellHostArgs(toastWindowStyle, script)
 }
 
 // configureToastScriptHost hides the helper console. CREATE_NO_WINDOW alone
@@ -166,13 +164,11 @@ func ensureToastShortcut() error {
 	// on an already-correct property is a no-op).
 	lnkExists := lnkErr == nil
 	script := renderShortcutScript(path, exePath, lnkExists)
-	args := toastPowerShellHostArgs(script)
-	if err := validatePowerShellCommandLine(powershellExePath(), args); err != nil {
+	cmd, err := newInlinePowerShellCmd(toastWindowStyle, script)
+	if err != nil {
 		appendToastErrorLog("shortcut-ensure", err, "")
 		return err
 	}
-
-	cmd := exec.Command(powershellExePath(), args...)
 	configureToastScriptHost(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

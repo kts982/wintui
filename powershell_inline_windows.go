@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"syscall"
 	"unicode/utf16"
@@ -12,6 +13,29 @@ import (
 // kept well below this ceiling; validating it here makes future template growth
 // fail clearly instead of turning into a silent toast or handoff failure.
 const windowsCommandLineLimitUTF16 = 32767
+
+// Window styles of the three inline launch sites. Toasts and the shortcut
+// ensure run hidden; the self-update handoff is minimized so a user who
+// looks for it can find the window.
+const (
+	toastWindowStyle      = "Hidden"
+	selfUpdateWindowStyle = "Minimized"
+)
+
+// newInlinePowerShellCmd is the ONE constructor for inline PowerShell
+// launches (toast send, toast shortcut-ensure, self-update handoff). It
+// builds the host args, enforces the CreateProcess command-line ceiling, and
+// returns the command with the absolute Windows PowerShell 5.1 path — so no
+// call site can forget the length check or fall back to PATH resolution.
+// Callers still own process flags (window hiding, console creation).
+func newInlinePowerShellCmd(windowStyle, script string) (*exec.Cmd, error) {
+	exe := powershellExePath()
+	args := inlinePowerShellHostArgs(windowStyle, script)
+	if err := validatePowerShellCommandLine(exe, args); err != nil {
+		return nil, err
+	}
+	return exec.Command(exe, args...), nil
+}
 
 func inlinePowerShellHostArgs(windowStyle, script string) []string {
 	return []string{

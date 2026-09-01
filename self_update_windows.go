@@ -74,15 +74,14 @@ func startSelfUpgradeHandoff(source, version string) error {
 		return err
 	}
 
-	args := powerShellHostArgs(script)
-	if err := validatePowerShellCommandLine(powershellExePath(), args); err != nil {
+	cmd, err := newInlinePowerShellCmd(selfUpdateWindowStyle, script)
+	if err != nil {
 		return err
 	}
 	// Log the winget command before launch: if the inline host dies before the
 	// script's own "winget start" log line, this is the only record of what
 	// was attempted (the pre-v2.11.2 script file used to serve that role).
 	appendSelfUpdateLogf("launching inline handoff: winget %s", strings.Join(wingetArgs, " "))
-	cmd := exec.Command(powershellExePath(), args...)
 	if err := startSelfUpdateHost(cmd); err != nil {
 		return err
 	}
@@ -188,7 +187,7 @@ func runUpgradeSelf() error {
 }
 
 func powerShellHostArgs(script string) []string {
-	return inlinePowerShellHostArgs("Minimized", script)
+	return inlinePowerShellHostArgs(selfUpdateWindowStyle, script)
 }
 
 func buildSelfUpdateScript(parentPID int, wingetArgs []string) (string, error) {
