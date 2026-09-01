@@ -264,7 +264,7 @@ func TestRulesShowJSONGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `{
-  "id": "git.git",
+  "id": "Git.Git",
   "source": "winget",
   "key": "winget:Git.Git",
   "has_rule": true,
