@@ -842,9 +842,13 @@ func (p detailPanel) renderVersionPicker(panelStyle lipgloss.Style, height int) 
 func (p detailPanel) toggleIgnore() (detailPanel, tea.Cmd, bool) {
 	o := appSettings.getOverride(p.pkgID, p.source)
 	switch {
-	case o.Ignore:
+	case o.Ignore || normalizeUpdatePolicy(o.UpdatePolicy) == PolicyHold:
+		// A permanent hold — whether written as legacy `ignore: true` or as
+		// the canonical `update_policy: hold` the write layer migrates it to —
+		// toggles back to "ask".
 		o.Ignore = false
 		o.IgnoreVersion = ""
+		o.UpdatePolicy = PolicyAsk
 	case o.IgnoreVersion != "":
 		o.IgnoreVersion = ""
 	case p.installedVersion != "" && p.latestVersion != "":

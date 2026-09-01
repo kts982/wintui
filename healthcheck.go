@@ -215,6 +215,20 @@ func checkSettingsSummary() healthCheck {
 		check.Details += " · " + detail
 		check.Recommendation = rec
 	}
+	// Case-variant duplicate package rules that disagree cannot be collapsed
+	// automatically; lookups still answer deterministically, but the user
+	// should pick one.
+	if conflicts := settings.overrideConflicts(); len(conflicts) > 0 {
+		groups := make([]string, 0, len(conflicts))
+		for _, g := range conflicts {
+			groups = append(groups, strings.Join(g, " / "))
+		}
+		check.Status = "WARN"
+		check.Details += " · conflicting duplicate package rules: " + strings.Join(groups, "; ")
+		if check.Recommendation == "" {
+			check.Recommendation = "Keep one key per package in settings.json \"packages\" (IDs are case-insensitive) and delete the others."
+		}
+	}
 	return check
 }
 

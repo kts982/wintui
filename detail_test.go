@@ -799,8 +799,10 @@ func TestDetailIgnoreToggleSetsIgnoreAllWhenNotUpgradeable(t *testing.T) {
 	p.update(keyMsg("i"))
 
 	o := appSettings.getOverride("Installed.Pkg", "winget")
-	if !o.Ignore {
-		t.Fatal("expected Ignore = true for non-upgradeable package")
+	// The toggle requests the legacy "ignore all"; the shared write layer
+	// stores it in its canonical form (update_policy: hold, ignore: false).
+	if o.Ignore || o.UpdatePolicy != PolicyHold || o.displayedUpdatePolicy() != PolicyHold {
+		t.Fatalf("expected canonical permanent hold for non-upgradeable package, got %+v", o)
 	}
 }
 

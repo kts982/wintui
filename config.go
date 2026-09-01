@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -330,23 +331,17 @@ func packageRuleKey(pkgID, source string) string {
 	return source + ":" + pkgID
 }
 
-func packageRuleKeys(pkgID, source string) []string {
-	if source == "" {
-		return []string{pkgID}
-	}
-	return []string{packageRuleKey(pkgID, source), pkgID}
-}
-
+// lookupOverride returns the map key and rule that answer for pkgID/source.
+// Resolution is case-insensitive under the total precedence documented in
+// override_keys.go (exact qualified → exact bare → case-insensitive qualified
+// → case-insensitive bare, sorted ties), so `git.git` finds `Git.Git` and the
+// answer is identical across runs even when case-variant duplicates exist.
 func (s Settings) lookupOverride(pkgID, source string) (string, PackageOverride, bool) {
-	if s.Packages == nil {
+	key, ok := s.resolveOverrideKey(pkgID, source)
+	if !ok {
 		return "", PackageOverride{}, false
 	}
-	for _, key := range packageRuleKeys(pkgID, source) {
-		if o, ok := s.Packages[key]; ok {
-			return key, o, true
-		}
-	}
-	return "", PackageOverride{}, false
+	return key, s.Packages[key], true
 }
 
 // effectiveSettings returns a copy of s with per-package overrides applied.
@@ -376,28 +371,43 @@ func (s Settings) packageElevateOverride(pkgID, source string) *bool {
 	return o.Elevate
 }
 
+// setOverride is the shared write layer for per-package rules. It:
+//   - canonicalizes the rule (legacy `ignore: true` → `update_policy: hold`),
+//   - keys the rule under the qualified "source:ID" form, reusing the casing
+//     of an existing qualified key (exact first, else the sorted-first case
+//     variant) so the file is never re-keyed by a differently typed ID,
+//   - removes every other alias of the rule — the legacy bare key (editing a
+//     legacy rule makes it source-specific, as before) and any case-variant
+//     duplicates — so a write always leaves exactly one key for the package,
+//   - deletes all aliases when the rule is empty.
 func (s *Settings) setOverride(pkgID, source string, o PackageOverride) {
-	primaryKey := packageRuleKey(pkgID, source)
-	legacyKey := pkgID
+	o = o.canonical()
+	aliases := s.overrideKeyAliases(pkgID, source)
 	if o.isEmpty() {
-		if s.Packages != nil {
-			delete(s.Packages, primaryKey)
-			if primaryKey != legacyKey {
-				delete(s.Packages, legacyKey)
-			}
-			if len(s.Packages) == 0 {
-				s.Packages = nil
-			}
+		for _, k := range aliases {
+			delete(s.Packages, k)
+		}
+		if len(s.Packages) == 0 {
+			s.Packages = nil
 		}
 		return
 	}
 	if s.Packages == nil {
 		s.Packages = make(map[string]PackageOverride)
 	}
-	if primaryKey != legacyKey {
-		delete(s.Packages, legacyKey)
+	target := packageRuleKey(pkgID, source)
+	for _, k := range aliases {
+		if strings.EqualFold(k, target) {
+			target = k
+			break
+		}
 	}
-	s.Packages[primaryKey] = o
+	for _, k := range aliases {
+		if k != target {
+			delete(s.Packages, k)
+		}
+	}
+	s.Packages[target] = o
 }
 
 func (s Settings) getOverride(pkgID, source string) PackageOverride {
@@ -553,6 +563,10 @@ func loadSettingsFile() (Settings, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return s, fmt.Errorf("settings.json: %w", err)
 	}
+	// One-shot migration: fold value-equivalent case-variant duplicate rule
+	// keys (hand edits, pre-fix CLI writes) into one. Conflicting duplicates
+	// are left alone; doctor warns and mutating commands refuse on them.
+	s.collapseOverrideAliases()
 	return s, nil
 }
 
