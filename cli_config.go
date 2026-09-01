@@ -199,7 +199,7 @@ func runConfigSet(out io.Writer, key, value string, asJSON bool) error {
 		return fmt.Errorf("could not save settings: %w", err)
 	}
 	if asJSON {
-		return writeJSON(out, configEntryFor(currentSettings(), d))
+		return writeJSON(out, configEntryFor(settingsAfterWrite(), d))
 	}
 	fmt.Fprintf(out, "%s set to %s.\n", d.key, d.cliName(stored))
 	return nil
@@ -215,7 +215,7 @@ func runConfigUnset(out io.Writer, key string, asJSON bool) error {
 		return fmt.Errorf("could not save settings: %w", err)
 	}
 	if asJSON {
-		return writeJSON(out, configEntryFor(currentSettings(), d))
+		return writeJSON(out, configEntryFor(settingsAfterWrite(), d))
 	}
 	fmt.Fprintf(out, "%s reset to its default (%s).\n", d.key, d.cliName(def))
 	return nil

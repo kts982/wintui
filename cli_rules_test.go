@@ -88,7 +88,7 @@ func TestRulesSetInvalidValuesNeverWrite(t *testing.T) {
 		{Policy: strPtr("maybe")},
 		{Scope: strPtr("global")},
 		{Architecture: strPtr("arm")},
-		{Elevate: strPtr("yes")}, // a typo must not mean "never"
+		{Elevate: strPtr("nevr")}, // a typo must not mean "never"
 		{IgnoreVersion: strPtr("  ")},
 		{}, // nothing to set
 	} {
@@ -186,7 +186,7 @@ func TestRulesConflictsRefuseSetButClearAllResolves(t *testing.T) {
 // rule disappears entirely.
 func TestRulesClearFields(t *testing.T) {
 	setupRulesTest(t)
-	if err := runRulesSet(&bytes.Buffer{}, "Git.Git", "", rulesSetOptions{Policy: strPtr("hold"), Scope: strPtr("user"), IgnoreVersion: strPtr("1.0"), Elevate: strPtr("always"), Architecture: strPtr("x64")}, false); err != nil {
+	if err := runRulesSet(&bytes.Buffer{}, "Git.Git", "", rulesSetOptions{Policy: strPtr("auto"), Scope: strPtr("user"), IgnoreVersion: strPtr("1.0"), Elevate: strPtr("always"), Architecture: strPtr("x64")}, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := runRulesClear(&bytes.Buffer{}, "Git.Git", "", []string{"policy", "ignore-version"}, false); err != nil {

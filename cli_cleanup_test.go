@@ -202,6 +202,7 @@ func TestCleanupScanJSONGolden(t *testing.T) {
   "scanned": 1,
   "needs_admin": 1,
   "total_size_bytes": 0,
+  "partial": false,
   "targets": [
     {
       "id": "empty_target",

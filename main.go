@@ -70,6 +70,7 @@ wintui check --json`,
 		// (when defined) once the terminal replies.
 		setActiveTheme(normalizeTheme(appSettings.Theme), true)
 		cleanupStaleSelfUpdateHelpers()
+		sweepStaleStateTemps()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var req *retryRequest

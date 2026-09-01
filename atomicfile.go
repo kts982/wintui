@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -18,13 +19,14 @@ import (
 // and a CLI command both saving settings.json, for instance — collide on
 // Windows (sharing violations on the rename) or, worse, one renames the
 // other's half-written temp into place. On any failure the temp file is
-// removed so nothing accumulates in the state directory.
+// removed so nothing accumulates in the state directory; sweepStaleAtomicTemps
+// handles the one case this cannot (the process dying mid-write).
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir, base := filepath.Split(path)
 	if dir == "" {
 		dir = "."
 	}
-	f, err := os.CreateTemp(dir, "."+base+"-*.tmp")
+	f, err := os.CreateTemp(dir, atomicTempPattern(base))
 	if err != nil {
 		return err
 	}
@@ -51,43 +53,98 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
-// Windows ERROR_SHARING_VIOLATION. Spelled numerically so this file builds on
-// every GOOS; the constant only ever matches on Windows.
-const errnoSharingViolation = syscall.Errno(32)
+// atomicTempPattern is the os.CreateTemp pattern for base: ".<base>-*.tmp".
+func atomicTempPattern(base string) string { return "." + base + "-*.tmp" }
 
-// isTransientFSError reports whether err is the kind of momentary Windows
-// contention that a retry resolves: ERROR_ACCESS_DENIED (fs.ErrPermission) or
-// ERROR_SHARING_VIOLATION raised because another process has the file open
-// for the few microseconds of its own read or replace-rename.
-func isTransientFSError(err error) bool {
-	if errors.Is(err, fs.ErrPermission) {
-		return true
+// sweepStaleAtomicTemps removes temp files that a crashed or killed writer
+// left behind in dir for the given base names (e.g. "settings.json"), if they
+// are older than maxAge. Only files matching our own ".<base>-*.tmp" pattern
+// are touched; a temp younger than maxAge may belong to a writer that is
+// mid-publish right now. Returns the number removed.
+func sweepStaleAtomicTemps(dir string, bases []string, maxAge time.Duration) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
 	}
-	var errno syscall.Errno
-	return errors.As(err, &errno) && errno == errnoSharingViolation
+	cutoff := time.Now().Add(-maxAge)
+	removed := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		matched := false
+		for _, base := range bases {
+			if strings.HasPrefix(name, "."+base+"-") && strings.HasSuffix(name, ".tmp") {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if os.Remove(filepath.Join(dir, name)) == nil {
+			removed++
+		}
+	}
+	return removed
 }
 
-// fsRetryBackoff yields the sleep before retry attempt n (0-based): 2, 4, 6…
-// ms, totalling well under a second across fsRetryAttempts. Long enough to
-// outlast a concurrent WinTUI process reading or replacing the same file,
-// short enough that a genuinely locked file (an editor holding settings.json
-// without share-delete) still fails promptly with the real error.
-const fsRetryAttempts = 25
+// Windows sharing errors that a retry resolves. Spelled numerically so this
+// file builds on every GOOS; they only ever match on Windows.
+const (
+	errnoSharingViolation = syscall.Errno(32) // ERROR_SHARING_VIOLATION
+	errnoLockViolation    = syscall.Errno(33) // ERROR_LOCK_VIOLATION
+)
 
-func fsRetryBackoff(n int) time.Duration { return time.Duration(2+2*n) * time.Millisecond }
+func isSharingError(err error) bool {
+	var errno syscall.Errno
+	return errors.As(err, &errno) && (errno == errnoSharingViolation || errno == errnoLockViolation)
+}
+
+// isTransientReadError: a read blocked by a concurrent writer surfaces as a
+// sharing/lock violation. ERROR_ACCESS_DENIED on a read is an ACL problem and
+// will not go away — retrying it would only stall the caller (the TUI Update
+// goroutine, for the per-package rule editors).
+func isTransientReadError(err error) bool { return isSharingError(err) }
+
+// isTransientRenameError: besides sharing violations, a replace-rename onto
+// a file another process momentarily has open fails with ERROR_ACCESS_DENIED
+// even though it succeeds a millisecond later, so ACCESS_DENIED must be
+// retried here. The price is that a genuinely permanent denial (read-only
+// target, ACL) burns the bounded budget before erroring.
+func isTransientRenameError(err error) bool {
+	return isSharingError(err) || errors.Is(err, fs.ErrPermission)
+}
+
+// fsRetryAttempts / fsRetryBackoff bound the retry budget: 2, 4, 8, 16, 32 ms
+// then 50 ms, over 12 attempts ≈ 410 ms total. Contention from a concurrent
+// WinTUI process normally lasts milliseconds; a file another program keeps
+// open still surfaces as an error well under half a second.
+const fsRetryAttempts = 12
+
+func fsRetryBackoff(n int) time.Duration {
+	d := time.Duration(2<<uint(n)) * time.Millisecond
+	if d > 50*time.Millisecond {
+		d = 50 * time.Millisecond
+	}
+	return d
+}
 
 // renameWithRetry is os.Rename with a bounded retry on transient Windows
-// sharing errors. A replace-rename onto a file another process currently has
-// open fails with ERROR_ACCESS_DENIED even though the operation would succeed
-// a millisecond later; without the retry, two WinTUI processes saving state at
-// the same moment would surface spurious "Access is denied" save errors.
+// sharing errors; without it two WinTUI processes saving state at the same
+// moment would surface spurious "Access is denied" save errors.
 func renameWithRetry(oldpath, newpath string) error {
 	var err error
 	for n := 0; n < fsRetryAttempts; n++ {
 		if err = os.Rename(oldpath, newpath); err == nil {
 			return nil
 		}
-		if !isTransientFSError(err) {
+		if !isTransientRenameError(err) {
 			return err
 		}
 		time.Sleep(fsRetryBackoff(n))
@@ -96,9 +153,9 @@ func renameWithRetry(oldpath, newpath string) error {
 }
 
 // readFileWithRetry is os.ReadFile with the same bounded retry for transient
-// sharing errors. Missing files are returned immediately (callers treat
-// fs.ErrNotExist as "use defaults"); a read that keeps failing returns the
-// last error so the caller can refuse to act on data it never saw.
+// sharing errors. Missing files and permanent errors are returned
+// immediately; a read that keeps failing returns the last error so the caller
+// can refuse to act on data it never saw.
 func readFileWithRetry(path string) ([]byte, error) {
 	var (
 		b   []byte
@@ -108,7 +165,7 @@ func readFileWithRetry(path string) ([]byte, error) {
 		if b, err = os.ReadFile(path); err == nil {
 			return b, nil
 		}
-		if errors.Is(err, fs.ErrNotExist) || !isTransientFSError(err) {
+		if !isTransientReadError(err) {
 			return nil, err
 		}
 		time.Sleep(fsRetryBackoff(n))

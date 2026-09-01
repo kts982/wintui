@@ -11,7 +11,7 @@ import (
 
 // TestMain backs up the user's real settings and cache files before any tests
 // run, and restores them afterwards. This prevents tests that call
-// persistSettings or cache.saveToDiskLocked from overwriting real user data.
+// updateSettings / SaveSettings or cache.saveToDiskLocked from overwriting real user data.
 func TestMain(m *testing.M) {
 	settingsPath := configPath()
 	cachePath := diskCachePath()

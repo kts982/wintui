@@ -125,7 +125,9 @@ var rulesClearCmd = &cobra.Command{
 
 func init() {
 	rulesCmd.PersistentFlags().BoolVar(&rulesJSONFlag, "json", false, "Output JSON")
-	rulesCmd.PersistentFlags().StringVar(&rulesSourceFlag, "source", "", "Package source: winget (default) or msstore")
+	for _, c := range []*cobra.Command{rulesShowCmd, rulesSetCmd, rulesClearCmd} {
+		c.Flags().StringVar(&rulesSourceFlag, "source", "", "Package source: winget (default) or msstore")
+	}
 	rulesSetCmd.Flags().StringVar(&rulesPolicyFlag, "policy", "", "Update policy: ask, auto, or hold")
 	rulesSetCmd.Flags().StringVar(&rulesScopeFlag, "scope", "", "Install scope: inherit, user, or machine")
 	rulesSetCmd.Flags().StringVar(&rulesArchitectureFlag, "architecture", "", "Architecture: inherit, x64, x86, or arm64")
@@ -190,15 +192,16 @@ func parseRuleArchitecture(in string) (CPUArchitecture, error) {
 }
 
 // parseRuleElevate returns nil for inherit. A typo must never mean "never":
-// only the listed words (and true/false) are accepted.
+// only the listed words and the same boolean aliases `wintui config` accepts
+// (true/false, yes/no, on/off, 1/0) are accepted.
 func parseRuleElevate(in string) (*bool, error) {
 	switch strings.ToLower(strings.TrimSpace(in)) {
 	case ruleInherit, "":
 		return nil, nil
-	case "always", "true":
+	case "always", "true", "yes", "on", "1":
 		b := true
 		return &b, nil
-	case "never", "false":
+	case "never", "false", "no", "off", "0":
 		b := false
 		return &b, nil
 	}
@@ -595,14 +598,26 @@ func runRulesSet(out io.Writer, id, source string, opts rulesSetOptions, asJSON 
 		return fmt.Errorf("--ignore-version needs a version; use \"wintui rules clear %s ignore-version\" to remove a version hold", id)
 	}
 
+	// Hold is ONE explicit state: none, all, or version. The two flags may
+	// not produce "all + version" in one write, and a version hold on top of
+	// an existing permanent hold would be invisible (holdOf reports all), so
+	// that is refused rather than silently stored.
+	if opts.Policy != nil && opts.IgnoreVersion != nil && policy == PolicyHold {
+		return fmt.Errorf("--policy hold and --ignore-version are mutually exclusive: a permanent hold already covers every version")
+	}
+
 	s := currentSettings()
 	if group, ok := s.overrideConflictFor(id, source); ok {
 		return conflictError(id, group)
 	}
-	if _, _, exists := s.lookupOverride(id, source); !exists {
+	_, existing, exists := s.lookupOverride(id, source)
+	if !exists {
 		if canonical, ok := canonicalPackageID(id); ok {
 			id = canonical
 		}
+	}
+	if opts.IgnoreVersion != nil && opts.Policy == nil && exists && holdOf(existing).Kind == ruleHoldAll {
+		return fmt.Errorf("%s is on a permanent hold, so a version hold would have no effect; pass --policy ask (or auto) together with --ignore-version, or clear the hold first", id)
 	}
 
 	apply := func(st *Settings) {
@@ -623,12 +638,17 @@ func runRulesSet(out io.Writer, id, source string, opts rulesSetOptions, asJSON 
 		if opts.IgnoreVersion != nil {
 			o.IgnoreVersion = strings.TrimSpace(*opts.IgnoreVersion)
 		}
+		// A permanent hold supersedes a version hold: `--policy hold` drops
+		// the version so a later `--policy ask` cannot resurrect it.
+		if normalizeUpdatePolicy(o.UpdatePolicy) == PolicyHold {
+			o.IgnoreVersion = ""
+		}
 		st.setOverride(id, source, o)
 	}
 	if err := updateSettings(apply); err != nil {
 		return fmt.Errorf("could not save settings: %w", err)
 	}
-	return printRuleView(out, currentSettings(), id, source, asJSON, fmt.Sprintf("Rule for %s (%s) updated.", id, source))
+	return printRuleView(out, settingsAfterWrite(), id, source, asJSON, fmt.Sprintf("Rule for %s (%s) updated.", id, source))
 }
 
 func runRulesClear(out io.Writer, id, source string, fields []string, asJSON bool) error {
@@ -648,6 +668,9 @@ func runRulesClear(out io.Writer, id, source string, fields []string, asJSON boo
 		// Whole-rule clear deletes every alias, including a conflicting
 		// group — it IS the resolution path for conflicts.
 		if !exists {
+			if asJSON {
+				return printRuleView(out, s, id, source, true, "")
+			}
 			fmt.Fprintf(out, "No rule for %s (%s); nothing to clear.\n", id, source)
 			return nil
 		}
@@ -655,7 +678,7 @@ func runRulesClear(out io.Writer, id, source string, fields []string, asJSON boo
 			return fmt.Errorf("could not save settings: %w", err)
 		}
 		if asJSON {
-			return printRuleView(out, currentSettings(), id, source, true, "")
+			return printRuleView(out, settingsAfterWrite(), id, source, true, "")
 		}
 		fmt.Fprintf(out, "Rule for %s (%s) removed.\n", id, source)
 		return nil
@@ -665,6 +688,9 @@ func runRulesClear(out io.Writer, id, source string, fields []string, asJSON boo
 		return conflictError(id, group)
 	}
 	if !exists {
+		if asJSON {
+			return printRuleView(out, s, id, source, true, "")
+		}
 		fmt.Fprintf(out, "No rule for %s (%s); nothing to clear.\n", id, source)
 		return nil
 	}
@@ -690,7 +716,7 @@ func runRulesClear(out io.Writer, id, source string, fields []string, asJSON boo
 	if err := updateSettings(apply); err != nil {
 		return fmt.Errorf("could not save settings: %w", err)
 	}
-	return printRuleView(out, currentSettings(), id, source, asJSON, fmt.Sprintf("Rule for %s (%s) updated.", id, source))
+	return printRuleView(out, settingsAfterWrite(), id, source, asJSON, fmt.Sprintf("Rule for %s (%s) updated.", id, source))
 }
 
 // ── Completions ────────────────────────────────────────────────────

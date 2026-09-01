@@ -509,10 +509,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if msg.fromDisk {
 			cache.prime(msg.installed, msg.upgradeable, msg.savedAt)
 		}
-		nextSettings := appSettings.clone()
-		if nextSettings.expireVersionIgnores(msg.upgradeable) {
-			_ = persistSettings(nextSettings)
-		}
+		expireVersionIgnoresPersist(msg.upgradeable)
 		s.items, s.hiddenUpgrades = buildItems(msg.installed, msg.upgradeable)
 		if s.modal != nil {
 			if msg.fromDisk {
@@ -547,10 +544,7 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		// Don't overwrite state if a modal/execution is active — just update the data.
 		// The state transition will happen when the modal is dismissed.
-		nextSettings := appSettings.clone()
-		if nextSettings.expireVersionIgnores(msg.upgradeable) {
-			_ = persistSettings(nextSettings)
-		}
+		expireVersionIgnoresPersist(msg.upgradeable)
 		if s.state == workspaceConfirm || s.state == workspaceExecuting {
 			s.items, s.hiddenUpgrades = buildItems(msg.installed, msg.upgradeable)
 			s.cacheAge = time.Time{}

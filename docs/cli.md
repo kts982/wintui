@@ -80,6 +80,13 @@ those names contain the substring "git".
 
 ### `show`
 
+Note on rule values in `show --json`: the `override` object is the rule as
+stored. Since v2.12 the shared write layer stores a legacy `ignore: true` as
+`update_policy: hold` the next time that rule is edited (by the CLI or the
+TUI), so a migrated rule reports `"update_policy": "hold"` where it used to
+report `"ignore": true` — same meaning, same field names, different
+representation. `wintui rules show <id>` is the semantic view.
+
 `show` exits with `0` on success and non-zero on argument errors
 (missing id, unsupported `--source`).
 
@@ -266,9 +273,13 @@ defaults to `winget`.
 
 Holds are one explicit state: **none**, **all** (`--policy hold`), or
 **version=X** (`--ignore-version X`, held only while that exact version is
-the available one). `--policy` never touches a version hold and
-`--ignore-version` never touches the policy, so a version-scoped hold cannot
-silently become a permanent one. A legacy `ignore: true` in `settings.json`
+the available one). `--policy auto` and `--policy ask` never touch a version
+hold, so a version-scoped hold cannot silently become a permanent one;
+`--policy hold` replaces it (a permanent hold covers every version, and a
+later `--policy ask` will not resurrect the old version hold). Asking for
+`--ignore-version` on a package that is already on a permanent hold is
+refused rather than stored invisibly — pass `--policy ask --ignore-version X`
+to demote it in one write. A legacy `ignore: true` in `settings.json`
 reads as policy `hold` / hold `all` and is rewritten in the canonical form the
 next time the rule is edited (by the CLI or the TUI).
 
@@ -305,7 +316,7 @@ removal is reviewed and confirmed.
 | Form | Behavior |
 |---|---|
 | `wintui cleanup scan` | Every registered target, present or not, so `missing` / `unresolved` reasons are visible |
-| `wintui cleanup scan --enabled` | Only the targets that start **checked** in the TUI (default-checked plus the ones you opted in) — the set a TUI deletion would act on |
+| `wintui cleanup scan --enabled` | Only the targets that start **checked** in the TUI (default-checked plus the ones you opted in) — the set a TUI deletion would act on. This is deliberately not the set the Cleanup tab *auto-scans* on open: the default `safe` auto-scan measures every present target outside the Developer group, including GPU caches that are not checked by default, so a GPU cache can show `enabled: no` here while the TUI still shows its size |
 | `wintui cleanup scan --target <id>` | Only the named target(s); repeatable, IDs complete in the shell |
 
 Statuses: `ok` (reclaimable entries found), `empty`, `missing` (path not on

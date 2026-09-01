@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -532,11 +533,15 @@ func recordSettingsFileState(path string, parseErr error) {
 // on disk since this process last loaded or saved it. Empty when all is well.
 func settingsFileWarning() (detail, recommendation string) {
 	settingsFileMu.Lock()
-	seen, mtime, parseErr := settingsFileSeen, settingsFileMtime, settingsFileErr
+	seen, mtime, loadErr := settingsFileSeen, settingsFileMtime, settingsFileErr
 	settingsFileMu.Unlock()
-	if parseErr != nil {
+	switch {
+	case errors.Is(loadErr, errSettingsParse):
 		return "settings.json has invalid JSON (defaults used for the unreadable part)",
 			"Fix the JSON in settings.json or delete the file to start from defaults."
+	case loadErr != nil:
+		return "settings.json could not be read: " + loadErr.Error() + " (defaults in use)",
+			"Check the file's permissions and whether another program holds it open."
 	}
 	if !seen {
 		return "", ""
@@ -548,6 +553,10 @@ func settingsFileWarning() (detail, recommendation string) {
 	return "settings.json changed on disk since this process started",
 		"Restart WinTUI (or re-run the command) to pick up changes made by another WinTUI process."
 }
+
+// errSettingsParse marks a settings.json that was read but did not parse, so
+// doctor can tell "fix your JSON" apart from "the file could not be read".
+var errSettingsParse = errors.New("settings.json is not valid JSON")
 
 // loadSettingsFile reads and parses settings.json. The returned Settings are
 // always usable: defaults when the file is missing, and — by design — whatever
@@ -561,7 +570,7 @@ func loadSettingsFile() (Settings, error) {
 	}
 	s := DefaultSettings()
 	if err := json.Unmarshal(data, &s); err != nil {
-		return s, fmt.Errorf("settings.json: %w", err)
+		return s, fmt.Errorf("%w: %v", errSettingsParse, err)
 	}
 	// One-shot migration: fold value-equivalent case-variant duplicate rule
 	// keys (hand edits, pre-fix CLI writes) into one. Conflicting duplicates
@@ -593,18 +602,6 @@ func SaveSettings(s Settings) error {
 		return err
 	}
 	recordSettingsFileState(path, nil)
-	return nil
-}
-
-// persistSettings publishes a complete next snapshot to disk and memory. It is
-// the TUI's write path for edits made against the live appSettings value
-// (settings screen, cleanup toggles, version-ignore expiry), where the
-// in-memory snapshot IS the source of truth for this session.
-func persistSettings(next Settings) error {
-	if err := SaveSettings(next); err != nil {
-		return err
-	}
-	setAppSettings(next)
 	return nil
 }
 
@@ -641,6 +638,50 @@ func updateSettings(mutate func(*Settings)) error {
 
 func persistPackageOverride(pkgID, source string, o PackageOverride) error {
 	return updateSettings(func(s *Settings) { s.setOverride(pkgID, source, o) })
+}
+
+// expireVersionIgnoresPersist clears version holds that the refreshed
+// upgrade list has moved past, as a DELTA write: a TUI session that has been
+// open for hours must not flush its whole stale snapshot on a refresh and
+// silently revert a key a CLI command changed meanwhile. The mutation is
+// idempotent, so applying it to the disk copy and the in-memory copy
+// separately is safe. Nothing is written when there is nothing to expire.
+func expireVersionIgnoresPersist(upgradeable []Package) {
+	probe := currentSettings().clone()
+	if !probe.expireVersionIgnores(upgradeable) {
+		return
+	}
+	_ = updateSettings(func(s *Settings) { s.expireVersionIgnores(upgradeable) })
+}
+
+// sweepStaleStateTemps removes temp files a crashed or killed writer left in
+// the state dir (settings / cache / history). Runs once per invocation from
+// PersistentPreRun; only our own ".<file>-*.tmp" names older than an hour
+// are touched, so a writer that is publishing right now is never disturbed.
+func sweepStaleStateTemps() {
+	dir := wintuiConfigDir()
+	if dir == "" {
+		return
+	}
+	_ = sweepStaleAtomicTemps(dir, []string{"settings.json", "cache.json", historyFileName}, time.Hour)
+}
+
+// settingsAfterWrite is what a mutating CLI command echoes back: the file as
+// it is on disk right after the write (the source of truth another process
+// will read), falling back to memory only if the re-read fails.
+func settingsAfterWrite() Settings {
+	if disk, err := loadSettingsFile(); err == nil {
+		return disk
+	}
+	return currentSettings()
+}
+
+// persistCleanupTargetEnabled persists one cleanup opt-in toggle as a delta
+// write, for the same reason as expireVersionIgnoresPersist: the Cleanup tab
+// is the biweekly TUI visit, and a full-snapshot save there would undo any
+// setting changed from the CLI since the TUI started.
+func persistCleanupTargetEnabled(def cleanupTargetDef, enabled bool) error {
+	return updateSettings(func(s *Settings) { s.setCleanupTargetEnabled(def, enabled) })
 }
 
 // BuildInstallArgs returns extra winget flags based on current settings.

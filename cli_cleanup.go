@@ -134,6 +134,7 @@ type cleanupScanJSON struct {
 	Scanned        int                     `json:"scanned"`
 	NeedsAdmin     int                     `json:"needs_admin"`
 	TotalSizeBytes int64                   `json:"total_size_bytes"`
+	Partial        bool                    `json:"partial"` // a scanned target was only partly readable: the total is a lower bound
 	Targets        []cleanupScanTargetJSON `json:"targets"`
 }
 
@@ -296,6 +297,9 @@ func runCleanupScan(ctx context.Context, out, errOut io.Writer, opts cleanupScan
 		if r.SizeBytes != nil {
 			report.TotalSizeBytes += *r.SizeBytes
 		}
+		if r.Status == cleanupStatusPartial {
+			report.Partial = true
+		}
 	}
 	if asJSON {
 		return writeJSON(out, report)
@@ -337,7 +341,11 @@ func printCleanupScanTable(out io.Writer, report cleanupScanJSON) {
 	}
 	_ = tw.Flush()
 
-	summary := fmt.Sprintf("%s scanned, %s reclaimable", pluralize(report.Scanned, "target"), formatBytes(report.TotalSizeBytes))
+	total := formatBytes(report.TotalSizeBytes)
+	if report.Partial {
+		total = "≥ " + total + " (some targets were only partly readable)"
+	}
+	summary := fmt.Sprintf("%s scanned, %s reclaimable", pluralize(report.Scanned, "target"), total)
 	if report.NeedsAdmin > 0 {
 		summary += fmt.Sprintf(" · %d need admin (run elevated to measure)", report.NeedsAdmin)
 	}

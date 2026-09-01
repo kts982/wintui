@@ -98,6 +98,10 @@ func TestSaveSettingsConcurrentWritersNeverPublishPartial(t *testing.T) {
 			if err != nil {
 				continue
 			}
+			// A real reader (another WinTUI process starting up) reads once;
+			// yield between reads so this loop models contention, not a
+			// handle held open continuously.
+			time.Sleep(200 * time.Microsecond)
 			if got := string(b); got != want[0] && got != want[1] {
 				errs <- fmt.Errorf("reader observed a file that is not a complete snapshot (%d bytes): %.80q…", len(b), got)
 				return

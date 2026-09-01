@@ -379,9 +379,7 @@ func (s cleanupScreen) toggleFocused() (screen, tea.Cmd) {
 	} else {
 		delete(s.checked, def.id)
 	}
-	next := appSettings.clone()
-	next.setCleanupTargetEnabled(def, now)
-	_ = persistSettings(next)
+	_ = persistCleanupTargetEnabled(def, now)
 	return s, nil
 }
 
@@ -408,7 +406,7 @@ func (s cleanupScreen) toggleFocusedGroup() (screen, tea.Cmd) {
 	}
 	target := !allChecked
 
-	next := appSettings.clone()
+	var toggled []cleanupTargetDef
 	for _, idx := range s.visible {
 		d := s.targets[idx]
 		if d.group != group {
@@ -419,9 +417,14 @@ func (s cleanupScreen) toggleFocusedGroup() (screen, tea.Cmd) {
 		} else {
 			delete(s.checked, d.id)
 		}
-		next.setCleanupTargetEnabled(d, target)
+		toggled = append(toggled, d)
 	}
-	_ = persistSettings(next)
+	// One delta write for the whole group; see persistCleanupTargetEnabled.
+	_ = updateSettings(func(st *Settings) {
+		for _, d := range toggled {
+			st.setCleanupTargetEnabled(d, target)
+		}
+	})
 	return s, nil
 }
 
