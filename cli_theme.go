@@ -50,20 +50,22 @@ func runTheme(name string, list bool, out io.Writer) error {
 		return nil
 	}
 
-	requested := strings.ToLower(strings.TrimSpace(name))
-	if _, ok := themes[requested]; !ok {
+	// One validator for themes: the settings registry (`config set theme`
+	// goes through the same check). Accepts IDs and picker labels,
+	// case-insensitively; anything else errors rather than normalizing.
+	def, _ := settingDefByKey("theme")
+	stored, err := def.parseCLIValue(name)
+	if err != nil {
 		return fmt.Errorf("unknown theme %q; run \"wintui theme --list\" to see the available themes", name)
 	}
 
-	// setValue mirrors the settings-UI normalization (persists "" for the
-	// default slot rather than a literal "default"). updateSettings writes the
-	// theme as a delta over the file on disk and only publishes to memory
-	// after the save succeeds — a CLI command must not clobber keys another
-	// WinTUI process changed since this one started.
-	if err := updateSettings(func(s *Settings) { s.setValue("theme", requested) }); err != nil {
+	// updateSettings writes the theme as a delta over the file on disk and only
+	// publishes to memory after the save succeeds — a CLI command must not
+	// clobber keys another WinTUI process changed since this one started.
+	if err := updateSettings(func(s *Settings) { s.setValue("theme", stored) }); err != nil {
 		return fmt.Errorf("could not save settings: %w", err)
 	}
-	fmt.Fprintf(out, "Theme set to %s.\n", lookupTheme(requested).Label)
+	fmt.Fprintf(out, "Theme set to %s.\n", lookupTheme(normalizeTheme(stored)).Label)
 	return nil
 }
 

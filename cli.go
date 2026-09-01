@@ -745,7 +745,13 @@ func streamUpgradeOutput(out io.Writer, outChan <-chan string, errChan <-chan er
 }
 
 func printJSON(data interface{}) error {
-	enc := json.NewEncoder(os.Stdout)
+	return writeJSON(os.Stdout, data)
+}
+
+// writeJSON is the one JSON encoder for CLI output: 2-space indent, trailing
+// newline, on an explicit writer so command runners are testable.
+func writeJSON(w io.Writer, data interface{}) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(data)
 }

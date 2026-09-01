@@ -18,6 +18,7 @@ run headlessly and exit.
 | `wintui doctor [--verbose] [--full] [--dev-tools] [--json]` | Verdict-first readiness check: `OK` / `WARN: N issues` / `FAIL: N issues` and exit 0/1/2 |
 | `wintui notes <id> [--source winget\|msstore] [--json]` | Show a package's release notes (rendered markdown), when the winget manifest has them |
 | `wintui theme [name] [--list]` | Show, list, or set the color theme |
+| `wintui config list\|get <key>\|set <key> <value>\|unset <key> [--json]` | Show or change any global setting in `settings.json` with validated, human-readable values |
 | `wintui export [--output PATH] [--with-versions]` | Write the installed package list to a portable JSON file (stdout by default) |
 | `wintui import <path> [--dry-run] [--all] [--json]` | Install packages from a `wintui export` file (with optional preflight) |
 | `wintui history [id] [--limit N] [--since DUR] [--failed-only] [--json]` | Show WinTUI-originated install/upgrade/uninstall operations; with an id, that package's timeline |
@@ -199,6 +200,54 @@ up on the next run. An unknown name is an error — run `wintui theme --list`
 to see valid IDs. The active theme also appears as an INFO row in
 `wintui doctor`.
 
+### config
+
+`wintui config` is the CLI's control plane for the global settings the TUI's
+Settings tab edits — the same 15 keys, the same vocabulary, one registry.
+
+| Form | Behavior |
+|---|---|
+| `wintui config list` | Every key with its current value, grouped Common / Advanced / Appearance / Cleanup |
+| `wintui config get <key>` | Print one value (`--json`: a self-describing object, never a bare scalar) |
+| `wintui config set <key> <value>` | Validate and persist one value; invalid values are an error and write nothing |
+| `wintui config unset <key>` | Restore WinTUI's default for the key (not always empty — `source` defaults to `winget`) |
+
+Values are gh/git-style positionals with human-readable names, case-insensitive
+on input: `scope default|user|machine`, `install_mode default|silent|interactive`,
+`architecture auto|x64|x86|arm64`, `source all|winget|msstore`,
+`cleanup_auto_scan safe|all|off`, `theme_background terminal|theme`,
+`theme <id>` (same names as `wintui theme`), and `true|false` for switches
+(`on`/`off`, `yes`/`no`, `1`/`0` accepted as input). Anything else is
+rejected — nothing is normalized silently. `set` and `unset` write a delta
+over the file on disk rather than a whole snapshot, so a TUI running in
+another window does not lose unrelated keys, and never overwrite a
+`settings.json` they cannot parse.
+
+An unrecognised value already on disk (a hand edit) is shown raw with
+`"valid": false` in `--json` and `(invalid)` in the table, and turns the
+`wintui doctor` Settings row to WARN; `set` or `unset` clears it.
+
+`--json` for `list` is `{"count": N, "settings": [...]}`; `get`/`set`/`unset`
+return one element:
+
+```json
+{
+  "key": "install_mode",
+  "value": "silent",
+  "default": "default",
+  "is_default": false,
+  "valid": true,
+  "type": "enum",
+  "values": ["default", "silent", "interactive"],
+  "group": "common",
+  "description": "UI behavior for install, upgrade, uninstall"
+}
+```
+
+Booleans are JSON booleans. Per-package rules are not part of `config`; see
+`wintui show <id>` (and, from v2.12, `wintui rules`). Keys and values complete
+in the shell once completions are enabled.
+
 ### history
 
 `wintui history` lists the operations WinTUI itself has run — TUI batches and
@@ -298,6 +347,13 @@ wintui notes Git.Git --json
 wintui theme
 wintui theme --list
 wintui theme nord
+
+# Show or change global settings without opening the TUI
+wintui config list
+wintui config set install_mode silent
+wintui config set auto_elevate off
+wintui config unset source
+wintui config get scope --json
 
 # Show WinTUI's action history (and one package's timeline)
 wintui history

@@ -715,16 +715,27 @@ type settingDef struct {
 	desc         string
 	detail       string
 	stype        settingType
-	choices      []string // for settingChoice
+	choices      []string // for settingChoice; order is load-bearing (TUI cycle walk)
 	choiceLabels map[string]string
 	choiceHints  map[string]string
 	enabledHint  string
 	disabledHint string
+
+	// Semantic registry fields (v2.12, settings_registry.go). settingDefs is
+	// the ONE table behind the TUI settings screen, `wintui config`, and the
+	// doctor rows — never a second table.
+	group settingGroup
+	// cliValues maps a stored value to its CLI name when choiceLabels are
+	// display labels rather than the CLI vocabulary (theme). For every
+	// other choice setting choiceLabels already ARE the CLI vocabulary
+	// ("" → default / auto / all / safe / terminal).
+	cliValues map[string]string
 }
 
 var settingDefs = []settingDef{
 	{
 		key:     "scope",
+		group:   settingGroupCommon,
 		label:   "Install Scope",
 		desc:    "Default, user-only, or machine-wide",
 		detail:  "Scope affects install and upgrade actions.\nMachine scope may require administrator privileges.",
@@ -743,6 +754,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:     "install_mode",
+		group:   settingGroupCommon,
 		label:   "Action Mode",
 		desc:    "UI behavior for install, upgrade, uninstall",
 		detail:  "Default uses the package's normal flow.\nSilent requests no installer UI.\nInteractive allows prompts and windows.\nPackages may ignore the request if their installer does not support it.",
@@ -761,6 +773,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:     "architecture",
+		group:   settingGroupAdvanced,
 		label:   "Architecture",
 		desc:    "Preferred CPU architecture",
 		detail:  "Auto lets winget choose the best installer for this machine.\nOnly change this when you intentionally need a non-default architecture.",
@@ -781,6 +794,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:     "source",
+		group:   settingGroupCommon,
 		label:   "Default Source",
 		desc:    "Preferred source for search and install",
 		detail:  "This affects searches and installs.\nUpgrades query all sources; uninstall works from the installed package database and does not depend on this setting.",
@@ -799,6 +813,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:          "force",
+		group:        settingGroupAdvanced,
 		label:        "Force",
 		desc:         "Continue past non-security warnings",
 		detail:       "Useful for stubborn packages, but it can bypass normal guardrails.\nLeave this off unless you know why a package needs it.",
@@ -808,6 +823,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:          "allow_reboot",
+		group:        settingGroupAdvanced,
 		label:        "Allow Reboot",
 		desc:         "Permit package-triggered reboots",
 		detail:       "Some installers request a reboot to finish.\nKeep this off unless you are okay with WinTUI allowing that automatically.",
@@ -817,6 +833,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:          "skip_dependencies",
+		group:        settingGroupAdvanced,
 		label:        "Skip Dependencies",
 		desc:         "Do not install package dependencies",
 		detail:       "This is mainly for advanced cases.\nTurning it on can leave packages partially installed or unusable.",
@@ -826,6 +843,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:          "purge_on_uninstall",
+		group:        settingGroupAdvanced,
 		label:        "Purge on Uninstall",
 		desc:         "Delete package files for portable apps",
 		detail:       "This is most useful for portable packages.\nMany normal installers ignore purge, and WinTUI will retry without it if purge causes a failure.",
@@ -835,6 +853,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:          "include_unknown",
+		group:        settingGroupCommon,
 		label:        "Include Unknown Versions",
 		desc:         "Show unknown-version packages in upgrades",
 		detail:       "Some packages do not report a local version cleanly.\nTurn this on if you still want those entries in the upgrade list.",
@@ -844,6 +863,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:          "auto_elevate",
+		group:        settingGroupCommon,
 		label:        "Auto Elevate",
 		desc:         "Automatically request administrator rights",
 		detail:       "When enabled, WinTUI automatically handles elevation.\nIn silent mode, all actions run elevated upfront to avoid UAC popups.\nIn other modes, elevation is retried automatically on failure.\nTurn this off to stay non-elevated and use Ctrl+E manually.",
@@ -853,6 +873,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:          "auto_self_update",
+		group:        settingGroupCommon,
 		label:        "WinTUI Auto Update",
 		desc:         "Update WinTUI before launch",
 		detail:       "When enabled and WinTUI is running from its winget install, startup checks for a WinTUI update and closes to let winget apply it before the TUI starts.",
@@ -862,6 +883,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:          "toast_notifications",
+		group:        settingGroupCommon,
 		label:        "Toast Notifications",
 		desc:         "Windows toast on batch / scheduled run finish",
 		detail:       "When enabled, WinTUI sends a single Windows toast on TUI batch finish, on `wintui upgrade --auto/--all` finish, and when `wintui check` finds updates. A minimal Start Menu shortcut is dropped on first toast so notifications attribute as WinTUI rather than PowerShell. Skipped when running in CI or when WINTUI_DISABLE_TOAST is set.",
@@ -871,6 +893,7 @@ var settingDefs = []settingDef{
 	},
 	{
 		key:     "cleanup_auto_scan",
+		group:   settingGroupCleanup,
 		label:   "Cleanup Auto-Scan",
 		desc:    "What the Cleanup tab scans on open",
 		detail:  "Controls which cleanup targets are sized automatically when you open the Cleanup tab.\nSafe scans the default-checked safe set and any GPU vendor caches present, leaving developer caches alone until you check them.\nAll scans every present target on tab open — slower but gives you a complete picture.\nOff disables auto-scan; press s to size the focused target or r to rescan.",
@@ -890,6 +913,7 @@ var settingDefs = []settingDef{
 	themeSettingDef,
 	{
 		key:     "theme_background",
+		group:   settingGroupAppearance,
 		label:   "Theme Background",
 		desc:    "Tint the terminal background from the active theme",
 		detail:  "When set to \"theme\", WinTUI tints the terminal background with the active palette's color via OSC 11.\nDefault \"terminal\" leaves your terminal background untouched (recommended on most terminals).\nThe default Sweet Pink theme does not define a background — switch to WinTUI Midnight, Catppuccin, Nord, Dracula, Tokyo Night, Ember, or Monochrome before enabling.\nSupport varies across terminals; if your terminal doesn't honor OSC 11, this setting is a no-op.",
@@ -929,6 +953,16 @@ func buildThemeSettingDef() settingDef {
 		labels[key] = t.Label
 		hints[key] = "Use the " + t.Label + " palette."
 	}
+	// CLI vocabulary = theme IDs ("default", "nord", …), matching `wintui
+	// theme <name>`; labels remain what the TUI picker shows.
+	cliValues := make(map[string]string, len(choices))
+	for _, c := range choices {
+		if c == "" {
+			cliValues[c] = "default"
+		} else {
+			cliValues[c] = c
+		}
+	}
 	return settingDef{
 		key:          "theme",
 		label:        "Color Theme",
@@ -938,7 +972,28 @@ func buildThemeSettingDef() settingDef {
 		choices:      choices,
 		choiceLabels: labels,
 		choiceHints:  hints,
+		group:        settingGroupAppearance,
+		cliValues:    cliValues,
 	}
+}
+
+// rawValue returns the stored value for key WITHOUT the normalization getValue
+// applies, so `wintui config` and doctor can surface an invalid on-disk value
+// ("purple") instead of silently presenting the default it falls back to.
+// Legacy "default" for theme is the same stored state as "".
+func (s Settings) rawValue(key string) string {
+	switch key {
+	case "cleanup_auto_scan":
+		return string(s.CleanupAutoScan)
+	case "theme":
+		if s.Theme == "default" {
+			return ""
+		}
+		return s.Theme
+	case "theme_background":
+		return string(s.ThemeBackground)
+	}
+	return s.getValue(key)
 }
 
 // getValue returns the current value for a setting key.

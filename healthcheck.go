@@ -193,19 +193,20 @@ func checkSystemDrive() healthCheck {
 
 func checkSettingsSummary() healthCheck {
 	settings := currentSettings()
-	source := settings.Source
-	if source == "" {
-		source = "all"
-	}
-	mode := string(settings.InstallMode)
-	if mode == "" {
-		mode = "default"
-	}
+	// Enum vocabulary comes from the settings registry (the same table
+	// `wintui config` speaks), so "" renders as default / all here exactly as
+	// it does there — no hand-rolled mapping to drift.
 	check := healthCheck{
 		Check:  "Settings",
 		Status: "INFO",
 		Details: fmt.Sprintf("Auto Elevate: %s · Self Update: %s · Action Mode: %s · Source: %s",
-			onOff(settings.AutoElevate), onOff(settings.AutoSelfUpdate), mode, source),
+			onOff(settings.AutoElevate), onOff(settings.AutoSelfUpdate),
+			settingCLIValue(settings, "install_mode"), settingCLIValue(settings, "source")),
+	}
+	if invalid := invalidStoredSettings(settings); len(invalid) > 0 {
+		check.Status = "WARN"
+		check.Details += " · invalid value(s) in settings.json: " + strings.Join(invalid, ", ")
+		check.Recommendation = "Run \"wintui config set <key> <value>\" (or \"wintui config unset <key>\") to replace the invalid value; defaults are in effect meanwhile."
 	}
 	// Two-writer safety: the CLI is a routine second writer of settings.json
 	// alongside a running TUI. Flag a file that changed under this process,
@@ -237,14 +238,10 @@ func checkSettingsSummary() healthCheck {
 func checkThemeSummary() healthCheck {
 	settings := currentSettings()
 	id := normalizeTheme(settings.Theme)
-	bg := "terminal"
-	if normalizeThemeBackground(settings.ThemeBackground) == ThemeBackgroundTheme {
-		bg = "theme"
-	}
 	return healthCheck{
 		Check:   "Theme",
 		Status:  "INFO",
-		Details: fmt.Sprintf("%s · background: %s", lookupTheme(id).Label, bg),
+		Details: fmt.Sprintf("%s · background: %s", lookupTheme(id).Label, settingCLIValue(settings, "theme_background")),
 	}
 }
 
