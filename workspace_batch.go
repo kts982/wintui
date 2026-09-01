@@ -251,6 +251,11 @@ func (s *workspaceScreen) rebuildItemsAfterPolicyChange() {
 
 // resetAndReload creates a fresh context and reloads package data.
 func (s *workspaceScreen) resetAndReload() (workspaceScreen, tea.Cmd) {
+	// An explicit refresh is the natural "re-read everything" gesture: pick
+	// up settings.json changes another process (a CLI command) made since
+	// this TUI loaded it, so the rebuilt list honours new rules and policies
+	// without a restart. Skipped while the Settings tab has unsaved edits.
+	reloaded := reloadSettingsIfChangedOnDisk()
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -275,7 +280,11 @@ func (s *workspaceScreen) resetAndReload() (workspaceScreen, tea.Cmd) {
 	s.exec.reset()
 	cache.invalidate()
 	cache.deleteDiskCache()
-	return *s, s.init()
+	cmd := s.init()
+	if reloaded {
+		cmd = tea.Batch(cmd, emitSettingsReloaded)
+	}
+	return *s, cmd
 }
 
 // applyIncrementalUpdate patches the item list in-place after a single package action.

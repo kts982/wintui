@@ -232,6 +232,12 @@ over the file on disk rather than a whole snapshot, so a TUI running in
 another window does not lose unrelated keys, and never overwrite a
 `settings.json` they cannot parse.
 
+A TUI that is already running picks up `config` and `rules` changes made
+from the CLI on its next explicit refresh (`r` on the Packages tab) and when
+the Settings tab is first opened — unless the Settings tab holds unsaved
+edits, in which case the change waits until they are saved or the TUI is
+restarted. The Health tab's Settings row warns while a change is pending.
+
 An unrecognised value already on disk (a hand edit) is shown raw with
 `"valid": false` in `--json` and `(invalid)` in the table, and turns the
 `wintui doctor` Settings row to WARN; `set` or `unset` clears it.

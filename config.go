@@ -558,6 +558,44 @@ func settingsFileWarning() (detail, recommendation string) {
 // doctor can tell "fix your JSON" apart from "the file could not be read".
 var errSettingsParse = errors.New("settings.json is not valid JSON")
 
+// settingsFileChangedOnDisk reports whether settings.json has a different
+// mtime than the one this process last loaded or saved — i.e. another WinTUI
+// process (typically a CLI command) wrote it since.
+func settingsFileChangedOnDisk() bool {
+	settingsFileMu.Lock()
+	seen, mtime := settingsFileSeen, settingsFileMtime
+	settingsFileMu.Unlock()
+	if !seen {
+		return false
+	}
+	fi, err := os.Stat(configPath())
+	if err != nil {
+		return false
+	}
+	return !fi.ModTime().Equal(mtime)
+}
+
+// settingsScreenDirty is true while the TUI Settings screen holds edits that
+// have not been saved. It is written only by the Settings screen and read by
+// reloadSettingsIfChangedOnDisk, which must not discard those edits.
+var settingsScreenDirty bool
+
+// reloadSettingsIfChangedOnDisk re-reads settings.json into memory when
+// another process changed it since this one loaded it, so a running TUI picks
+// up `wintui config` / `wintui rules` changes on its next explicit refresh
+// instead of at its next start. Unsaved Settings-screen edits are the only
+// in-memory state that a reload would lose (rule edits, cleanup toggles and
+// theme changes all persist immediately), so the reload is skipped while
+// they exist. Returns true when a reload happened, so the caller can
+// re-apply the theme and reset the Settings screen's baseline.
+func reloadSettingsIfChangedOnDisk() bool {
+	if settingsScreenDirty || !settingsFileChangedOnDisk() {
+		return false
+	}
+	setAppSettings(LoadSettings())
+	return true
+}
+
 // loadSettingsFile reads and parses settings.json. The returned Settings are
 // always usable: defaults when the file is missing, and — by design — whatever
 // fields parsed before a type error plus defaults for the rest when the file is

@@ -19,11 +19,25 @@ type settingsScreen struct {
 }
 
 func newSettingsScreen() settingsScreen {
+	// No unsaved edits can exist before this screen exists, so a change
+	// another process made to settings.json since startup is safe to pick
+	// up now; otherwise the screen would misreport that change as edits.
+	reloadSettingsIfChangedOnDisk()
 	disk := LoadSettings()
-	return settingsScreen{
+	sc := settingsScreen{
 		diskState: disk,
 		dirty:     !settingsEqual(appSettings, disk),
 	}
+	settingsScreenDirty = sc.dirty
+	return sc
+}
+
+// markDirty updates the unsaved-edits flag and mirrors it into the
+// package-level settingsScreenDirty that reloadSettingsIfChangedOnDisk
+// consults.
+func (s *settingsScreen) markDirty(dirty bool) {
+	s.dirty = dirty
+	settingsScreenDirty = dirty
 }
 
 // applyTheme is a no-op for the settings screen — it holds no
@@ -38,6 +52,15 @@ func (s settingsScreen) init() tea.Cmd { return nil }
 func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case settingsReloadedMsg:
+		// Memory was just re-read from disk (no edits were pending, or the
+		// reload would not have happened): the disk snapshot IS the new
+		// baseline, so nothing is dirty.
+		s.diskState = appSettings
+		s.markDirty(false)
+		s.saved = false
+		s.errMsg = ""
+		return s, nil
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
@@ -57,14 +80,14 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.errMsg = "Save failed: " + err.Error()
 			} else {
 				s.saved = true
-				s.dirty = false
+				s.markDirty(false)
 				s.diskState = appSettings
 				s.errMsg = ""
 			}
 		case "r":
 			setAppSettings(DefaultSettings())
 			s.saved = false
-			s.dirty = !settingsEqual(appSettings, s.diskState)
+			s.markDirty(!settingsEqual(appSettings, s.diskState))
 			s.errMsg = ""
 			// Reset can change the active theme; always re-broadcast.
 			cmd = emitThemeChanged
@@ -131,7 +154,7 @@ func (s *settingsScreen) cycleForward() tea.Cmd {
 	}
 	setAppSettings(next)
 	s.saved = false
-	s.dirty = !settingsEqual(appSettings, s.diskState)
+	s.markDirty(!settingsEqual(appSettings, s.diskState))
 	cache.invalidate()
 	if isThemeKey(def.key) {
 		return emitThemeChanged
@@ -162,7 +185,7 @@ func (s *settingsScreen) cycleBackward() tea.Cmd {
 		setAppSettings(next)
 	}
 	s.saved = false
-	s.dirty = !settingsEqual(appSettings, s.diskState)
+	s.markDirty(!settingsEqual(appSettings, s.diskState))
 	cache.invalidate()
 	if isThemeKey(def.key) {
 		return emitThemeChanged

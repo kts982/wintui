@@ -113,6 +113,15 @@ type themeAware interface {
 // back to the originating screen.
 type themeChangedMsg struct{}
 
+// settingsReloadedMsg signals that settings.json was re-read into memory
+// because another process changed it (reloadSettingsIfChangedOnDisk). App
+// scope like themeChangedMsg: the theme is re-applied and every screen sees
+// it, so the Settings screen can reset its unsaved-edits baseline.
+type settingsReloadedMsg struct{}
+
+// emitSettingsReloaded is the tea.Cmd a screen returns after a reload.
+func emitSettingsReloaded() tea.Msg { return settingsReloadedMsg{} }
+
 // ── ASCII art header ───────────────────────────────────────────────
 
 var asciiLogo = []string{
@@ -350,6 +359,20 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		setActiveTheme(normalizeTheme(appSettings.Theme), a.bgIsDark)
 		restyleHelp(&a.help)
 		return a.rethemeScreens(), nil
+
+	case settingsReloadedMsg:
+		// Re-apply the (possibly changed) theme, then let every existing
+		// screen react — the Settings screen resets its baseline.
+		setActiveTheme(normalizeTheme(appSettings.Theme), a.bgIsDark)
+		restyleHelp(&a.help)
+		a = a.rethemeScreens()
+		var cmds []tea.Cmd
+		for id, sc := range a.screens {
+			next, cmd := sc.update(msg)
+			a.screens[id] = next
+			cmds = append(cmds, a.wrapScreenCmd(id, cmd))
+		}
+		return a, tea.Batch(cmds...)
 	}
 
 	return a.updateScreen(a.currentScreenID(), msg)
@@ -665,10 +688,10 @@ func (a app) wrapScreenCmd(id screenID, cmd tea.Cmd) tea.Cmd {
 			return msg
 		case packageDataChangedMsg:
 			return msg
-		case themeChangedMsg:
-			// Theme changes are app-scope; without this passthrough
-			// the Settings screen's emission would get wrapped into a
-			// screenCmdMsg and routed right back to itself.
+		case themeChangedMsg, settingsReloadedMsg:
+			// App-scope messages; without this passthrough a screen's
+			// emission would get wrapped into a screenCmdMsg and routed
+			// right back to itself.
 			return msg
 		case tea.QuitMsg:
 			return msg
