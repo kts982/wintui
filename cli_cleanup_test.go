@@ -198,10 +198,12 @@ func TestCleanupScanJSONGolden(t *testing.T) {
 	want := `{
   "elevated": false,
   "selection": "targets",
+  "cleanup_min_age": "1d",
   "count": 2,
   "scanned": 1,
   "needs_admin": 1,
   "total_size_bytes": 0,
+  "total_kept_bytes": 0,
   "partial": false,
   "targets": [
     {
@@ -221,6 +223,8 @@ func TestCleanupScanJSONGolden(t *testing.T) {
       "status": "empty",
       "size_bytes": 0,
       "items": 0,
+      "kept_items": 0,
+      "kept_bytes": 0,
       "unreadable": 0,
       "errors": []
     },
@@ -241,6 +245,8 @@ func TestCleanupScanJSONGolden(t *testing.T) {
       "status": "needs_admin",
       "size_bytes": null,
       "items": null,
+      "kept_items": null,
+      "kept_bytes": null,
       "unreadable": 0,
       "errors": []
     }
@@ -277,11 +283,11 @@ func TestCleanupScanTableAndProgress(t *testing.T) {
 	}
 	text := squashSpaces(out.String())
 	for _, want := range []string{
-		"TARGET GROUP ENABLED SIZE ITEMS ADMIN STATUS",
-		"full_target Core Temp yes ≥ 150 B 2 - partial",
-		"admin_target Core Temp yes - - needs admin needs_admin",
-		"missing_target Developer no - - - missing",
-		"unresolved_target GPU no - - - unresolved",
+		"TARGET GROUP ENABLED SIZE ITEMS KEPT ADMIN STATUS",
+		"full_target Core Temp yes ≥ 150 B 2 - - partial",
+		"admin_target Core Temp yes - - - needs admin needs_admin",
+		"missing_target Developer no - - - - missing",
+		"unresolved_target GPU no - - - - unresolved",
 		"1 need admin (run elevated to measure)",
 		"not elevated",
 		"Deletion stays in the TUI",
@@ -304,7 +310,9 @@ func TestCleanupScanStatusDerivation(t *testing.T) {
 		want string
 	}{
 		{"ok", cleanupTargetResult{files: 2, sizeBytes: 10}, cleanupStatusOK},
+		{"ok-with-kept", cleanupTargetResult{files: 2, sizeBytes: 10, kept: 5, keptBytes: 99}, cleanupStatusOK},
 		{"empty", cleanupTargetResult{}, cleanupStatusEmpty},
+		{"recent", cleanupTargetResult{kept: 3, keptBytes: 30}, cleanupStatusRecent},
 		{"partial-unreadable", cleanupTargetResult{files: 2, unreadable: 1}, cleanupStatusPartial},
 		{"partial-failed", cleanupTargetResult{files: 2, failed: 1}, cleanupStatusPartial},
 		{"error", cleanupTargetResult{errors: []error{os.ErrPermission}}, cleanupStatusError},
@@ -342,12 +350,12 @@ func TestCleanupEntrySizeCountsUnreadableAndWireRoundTrips(t *testing.T) {
 		t.Errorf("cancelled walk should not count unreadable entries, got %d", u)
 	}
 
-	w := cleanupResultToWire(cleanupTargetResult{id: "x", sizeBytes: 5, files: 1, unreadable: 2})
-	if w.Unreadable != 2 {
-		t.Errorf("wire lost unreadable: %+v", w)
+	w := cleanupResultToWire(cleanupTargetResult{id: "x", sizeBytes: 5, files: 1, unreadable: 2, kept: 4, keptBytes: 40})
+	if w.Unreadable != 2 || w.Kept != 4 || w.KeptBytes != 40 {
+		t.Errorf("wire lost unreadable/kept: %+v", w)
 	}
-	if back := cleanupResultFromWire(w); back.unreadable != 2 {
-		t.Errorf("wire round trip lost unreadable: %+v", back)
+	if back := cleanupResultFromWire(w); back.unreadable != 2 || back.kept != 4 || back.keptBytes != 40 {
+		t.Errorf("wire round trip lost unreadable/kept: %+v", back)
 	}
 }
 

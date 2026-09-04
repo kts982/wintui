@@ -459,6 +459,45 @@ func TestCleanupPartialFailureMentionsAdminRetry(t *testing.T) {
 	})
 }
 
+// A non-elevated TUI must not walk admin-only roots: the walk fails at
+// ReadDir and used to render as an honest-looking "0 B". startScan now
+// short-circuits to needs-admin, the row says so, and the detail pane
+// explains — the same answer `cleanup scan` gives.
+func TestCleanupStartScanShortCircuitsAdminTargetWhenNotElevated(t *testing.T) {
+	origIsElevated := isElevated
+	t.Cleanup(func() { isElevated = origIsElevated })
+	isElevated = func() bool { return false }
+
+	withAppSettings(t, DefaultSettings(), func() {
+		s := newCleanupScreen()
+		cmd := s.startScan("windows_temp")
+		if cmd == nil {
+			t.Fatal("startScan returned nil cmd")
+		}
+		msg, ok := cmd().(cleanupTargetScannedMsg)
+		if !ok || msg.id != "windows_temp" || msg.result.skipped != cleanupSkipNotElevated {
+			t.Fatalf("scan of an admin target while not elevated should short-circuit to needs-admin, got %#v", msg)
+		}
+		s, _ = updateExpectingScreen(t, s, msg)
+		if _, still := s.inflight["windows_temp"]; still {
+			t.Error("inflight entry must be cleared by the scanned-msg handler")
+		}
+		def, _ := cleanupTargetByID("windows_temp")
+		row := s.renderRow(def, false, 80)
+		if !strings.Contains(row, "needs admin") || strings.Contains(row, "0 B") {
+			t.Errorf("row should say needs admin, not 0 B:\n%s", row)
+		}
+		for i, idx := range s.visible {
+			if s.targets[idx].id == "windows_temp" {
+				s.cursor = i
+			}
+		}
+		if detail := s.renderDetailPane(60, 30); !strings.Contains(detail, "Needs admin to measure") {
+			t.Errorf("detail pane should explain the missing size:\n%s", detail)
+		}
+	})
+}
+
 func TestCleanupConfirmViewMentionsAVNoticeWhenAdminTargetIncluded(t *testing.T) {
 	// The AV-FP notice in viewConfirm only renders when admin targets are
 	// queued AND the current process isn't already elevated. GitHub

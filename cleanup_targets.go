@@ -44,24 +44,44 @@ const (
 // the registry didn't author. Settings persist user toggles by `id`, so IDs
 // are part of the on-disk contract and must not change once shipped.
 type cleanupTargetDef struct {
-	id              string
-	label           string
-	description     string
-	group           cleanupGroup
-	pathFn          func() string
-	mode            cleanupMode
-	globs           []string      // only consulted when mode == cleanupModeGlob
-	minAge          time.Duration // entries newer than this are kept; 0 = no age filter
-	requiresAdmin   bool
-	defaultChecked  bool
-	detectIfPresent bool   // when true, hide row when pathFn resolves to a missing dir
-	warning         string // optional caveat shown in the detail pane
+	id          string
+	label       string
+	description string
+	group       cleanupGroup
+	pathFn      func() string
+	mode        cleanupMode
+	globs       []string      // only consulted when mode == cleanupModeGlob
+	minAge      time.Duration // entries newer than this are kept; 0 = no age filter
+	// minAgeFromSettings lets the user's cleanup_min_age setting replace
+	// minAge at scan/delete time (effectiveMinAge). minAge stays populated
+	// as the fallback so a code path that forgets to resolve degrades to
+	// the conservative default, never to "no floor".
+	minAgeFromSettings bool
+	requiresAdmin      bool
+	defaultChecked     bool
+	detectIfPresent    bool   // when true, hide row when pathFn resolves to a missing dir
+	warning            string // optional caveat shown in the detail pane
 }
 
-// cleanupDefaultMinAge is the conservative cutoff we apply to anything that
-// looks like a scratch directory (temp, crash dumps). New files are likely
-// still in use; week-old ones almost never are.
-const cleanupDefaultMinAge = 7 * 24 * time.Hour
+// cleanupDefaultMinAge is the default age floor for anything that looks like
+// a scratch directory (temp, crash dumps) — the value behind the empty
+// cleanup_min_age setting and the static fallback on those registry entries.
+// One day covers the "installer closed its payload and will reopen it in a
+// later phase" window that file locking cannot; the seven-day floor WinTUI
+// shipped before v2.12 matched Disk Cleanup but left a full week of churn
+// behind for anyone who cleans often (CCleaner's 24-hour default is the
+// widely field-tested choice).
+const cleanupDefaultMinAge = 24 * time.Hour
+
+// effectiveMinAge is the age floor the engine applies to this target: the
+// user's cleanup_min_age setting for the Core Temp entries that opt into it,
+// the registry's static value for everything else.
+func (d cleanupTargetDef) effectiveMinAge(s Settings) time.Duration {
+	if d.minAgeFromSettings {
+		return s.cleanupMinAge()
+	}
+	return d.minAge
+}
 
 // cleanupTargetRegistry returns the immutable list of target definitions for
 // the current build. Order is the user-visible order within each group.
@@ -73,57 +93,62 @@ func cleanupTargetRegistry() []cleanupTargetDef {
 			label: "User temp directory",
 			description: "Per-user %TEMP%. Browsers, installers, and tools drop scratch " +
 				"files here; Windows does not auto-purge them.",
-			group:          cleanupGroupCoreTemp,
-			pathFn:         func() string { return os.TempDir() },
-			mode:           cleanupModePurgeContents,
-			minAge:         cleanupDefaultMinAge,
-			defaultChecked: true,
+			group:              cleanupGroupCoreTemp,
+			pathFn:             func() string { return os.TempDir() },
+			mode:               cleanupModePurgeContents,
+			minAge:             cleanupDefaultMinAge,
+			minAgeFromSettings: true,
+			defaultChecked:     true,
 		},
 		{
 			id:    "windows_temp",
 			label: "Windows temp directory",
 			description: "System-wide %WINDIR%\\Temp used by services and installers " +
 				"running as SYSTEM. Cleaning requires admin.",
-			group:          cleanupGroupCoreTemp,
-			pathFn:         func() string { return cleanupResolveEnvDir("WINDIR", "Temp") },
-			mode:           cleanupModePurgeContents,
-			minAge:         cleanupDefaultMinAge,
-			requiresAdmin:  true,
-			defaultChecked: true,
+			group:              cleanupGroupCoreTemp,
+			pathFn:             func() string { return cleanupResolveEnvDir("WINDIR", "Temp") },
+			mode:               cleanupModePurgeContents,
+			minAge:             cleanupDefaultMinAge,
+			minAgeFromSettings: true,
+			requiresAdmin:      true,
+			defaultChecked:     true,
 		},
 		{
 			id:    "crash_dumps",
 			label: "User crash dumps",
 			description: "Per-user crash dumps written by Windows Error Reporting. " +
 				"Useful only while actively debugging a recent crash.",
-			group:          cleanupGroupCoreTemp,
-			pathFn:         func() string { return cleanupResolveLocalAppData("CrashDumps") },
-			mode:           cleanupModePurgeContents,
-			minAge:         cleanupDefaultMinAge,
-			defaultChecked: true,
+			group:              cleanupGroupCoreTemp,
+			pathFn:             func() string { return cleanupResolveLocalAppData("CrashDumps") },
+			mode:               cleanupModePurgeContents,
+			minAge:             cleanupDefaultMinAge,
+			minAgeFromSettings: true,
+			defaultChecked:     true,
 		},
 		{
 			id:    "wer_reports",
 			label: "Windows Error Reporting queue",
 			description: "Queued and archived WER reports. Microsoft already received " +
 				"the ones it cared about.",
-			group:          cleanupGroupCoreTemp,
-			pathFn:         func() string { return cleanupResolveLocalAppData("Microsoft", "Windows", "WER") },
-			mode:           cleanupModePurgeContents,
-			minAge:         cleanupDefaultMinAge,
-			defaultChecked: true,
+			group:              cleanupGroupCoreTemp,
+			pathFn:             func() string { return cleanupResolveLocalAppData("Microsoft", "Windows", "WER") },
+			mode:               cleanupModePurgeContents,
+			minAge:             cleanupDefaultMinAge,
+			minAgeFromSettings: true,
+			defaultChecked:     true,
 		},
 		{
 			id:    "minidump",
 			label: "System minidumps",
 			description: "Kernel-mode crash dumps in %WINDIR%\\Minidump. Cleaning " +
 				"requires admin.",
-			group:          cleanupGroupCoreTemp,
-			pathFn:         func() string { return cleanupResolveEnvDir("WINDIR", "Minidump") },
-			mode:           cleanupModePurgeContents,
-			minAge:         cleanupDefaultMinAge,
-			requiresAdmin:  true,
-			defaultChecked: true,
+			group:              cleanupGroupCoreTemp,
+			pathFn:             func() string { return cleanupResolveEnvDir("WINDIR", "Minidump") },
+			mode:               cleanupModePurgeContents,
+			minAge:             cleanupDefaultMinAge,
+			minAgeFromSettings: true,
+			requiresAdmin:      true,
+			defaultChecked:     true,
 		},
 
 		// ── Caches ──────────────────────────────────────────────────────

@@ -126,6 +126,12 @@ func (m *elevationManager) cleanupTargetElevated(targetID string) (cleanupTarget
 	}
 
 	req := helperRequest{Action: "cleanup_delete", TargetID: targetID, Token: token}
+	if def, ok := cleanupTargetByID(targetID); ok {
+		// The helper must apply the age floor THIS user configured, not
+		// whatever settings.json the elevated account happens to have.
+		secs := int64(def.effectiveMinAge(currentSettings()).Seconds())
+		req.MinAgeSeconds = &secs
+	}
 	b, err := json.Marshal(req)
 	if err != nil {
 		return cleanupTargetResult{}, err

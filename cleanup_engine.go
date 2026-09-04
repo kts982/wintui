@@ -21,6 +21,8 @@ type cleanupTargetResult struct {
 	files        int   // top-level entries considered for removal
 	failed       int   // top-level entries we could not remove
 	unreadable   int   // entries the size walk could not read (access denied, vanished): sizeBytes is a lower bound when > 0
+	kept         int   // top-level entries left alone because they are newer than the age floor
+	keptBytes    int64 // bytes under those kept entries (best effort; informational, never a delete input)
 	errors       []error
 	skipped      cleanupSkipReason
 }
@@ -113,9 +115,13 @@ func cleanupRun(ctx context.Context, def cleanupTargetDef, doDelete bool) cleanu
 		return res
 	}
 
+	// The age floor comes from the user's cleanup_min_age setting for the
+	// targets that opt into it (Core Temp). currentSettings(): this runs on
+	// worker goroutines.
+	minAge := def.effectiveMinAge(currentSettings())
 	var cutoff time.Time
-	if def.minAge > 0 {
-		cutoff = time.Now().Add(-def.minAge)
+	if minAge > 0 {
+		cutoff = time.Now().Add(-minAge)
 	}
 
 	for _, e := range entries {
@@ -139,7 +145,15 @@ func cleanupRun(ctx context.Context, def cleanupTargetDef, doDelete bool) cleanu
 		if entryInfo.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
 			continue
 		}
-		if def.minAge > 0 && entryInfo.ModTime().After(cutoff) {
+		if minAge > 0 && entryInfo.ModTime().After(cutoff) {
+			// Newer than the floor: left alone, but still measured so the
+			// UI can say "0 B eligible · 491 entries (890 MB) kept" instead
+			// of a bare "0 B" that contradicts Explorer. Unreadable entries
+			// under a kept tree say nothing about the eligible tally, so
+			// they are not counted.
+			size, _ := cleanupEntrySize(ctx, path, entryInfo)
+			res.kept++
+			res.keptBytes += size
 			continue
 		}
 

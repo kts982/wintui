@@ -84,6 +84,60 @@ func normalizeCleanupAutoScan(c CleanupAutoScan) CleanupAutoScan {
 	}
 }
 
+// CleanupMinAge is the age floor the Core Temp cleanup targets apply: an
+// entry modified more recently than this is left alone by both the scan and
+// the delete. The floor exists because file locking only protects files a
+// process holds open right now — an installer that extracts a payload to
+// %TEMP%, closes it, and reopens it in a later phase has no lock during the
+// gap. One day covers that window; the old seven-day default matched Disk
+// Cleanup but left a week of churn behind for anyone who cleans often.
+// Unknown values normalize to the default so a hand-edited settings.json
+// can't silently turn the floor off.
+type CleanupMinAge string
+
+const (
+	CleanupMinAgeDefault CleanupMinAge = ""    // 1 day (cleanupDefaultMinAge)
+	CleanupMinAgeOff     CleanupMinAge = "off" // no age floor: everything eligible
+	CleanupMinAge3d      CleanupMinAge = "3d"
+	CleanupMinAge7d      CleanupMinAge = "7d" // the pre-v2.12 behavior
+)
+
+func normalizeCleanupMinAge(c CleanupMinAge) CleanupMinAge {
+	switch c {
+	case CleanupMinAgeOff, CleanupMinAge3d, CleanupMinAge7d:
+		return c
+	default:
+		return CleanupMinAgeDefault
+	}
+}
+
+// cleanupMinAge returns the configured age floor as a duration; 0 means off.
+func (s Settings) cleanupMinAge() time.Duration {
+	switch normalizeCleanupMinAge(s.CleanupMinAge) {
+	case CleanupMinAgeOff:
+		return 0
+	case CleanupMinAge3d:
+		return 3 * 24 * time.Hour
+	case CleanupMinAge7d:
+		return 7 * 24 * time.Hour
+	default:
+		return cleanupDefaultMinAge
+	}
+}
+
+// formatAgeFloor renders an age floor for humans: "1 day", "3 days",
+// "12 hours". Zero means no floor and renders as "off".
+func formatAgeFloor(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return "off"
+	case d%(24*time.Hour) == 0:
+		return pluralize(int(d/(24*time.Hour)), "day")
+	default:
+		return pluralize(int(d/time.Hour), "hour")
+	}
+}
+
 // ThemeBackground controls whether WinTUI paints the terminal
 // background from the active palette via tea.View.BackgroundColor
 // (OSC 11). Default is "terminal" — leave the user's terminal alone.
@@ -248,6 +302,10 @@ type Settings struct {
 	// CleanupAutoScan controls what the cleanup tab scans on open:
 	// "" (safe, default), "all", or "off". See CleanupAutoScan constants.
 	CleanupAutoScan CleanupAutoScan `json:"cleanup_auto_scan,omitempty"`
+
+	// CleanupMinAge is the age floor for the Core Temp cleanup targets:
+	// "" (1 day, default), "off", "3d", or "7d". See CleanupMinAge constants.
+	CleanupMinAge CleanupMinAge `json:"cleanup_min_age,omitempty"`
 
 	// Theme selects the active color palette. "" or "default" means the
 	// built-in Sweet Pink theme. Curated set: wintui, catppuccin, nord,
@@ -989,6 +1047,30 @@ var settingDefs = []settingDef{
 			"off": "Never auto-scan. Press s to size focused row, r to rescan.",
 		},
 	},
+	{
+		key:     "cleanup_min_age",
+		group:   settingGroupCleanup,
+		label:   "Cleanup Min Age",
+		desc:    "Keep Core Temp entries newer than this",
+		detail:  "The Core Temp targets (user and Windows temp, crash dumps, WER queue, minidumps) only remove entries older than this floor; newer ones are counted as kept, never deleted.\nFile locking only protects files a process holds open right now — an installer that extracts to %TEMP% and reopens the payload in a later phase has no lock in between, so 1 day is the safe default.\nOff removes everything the targets can reach. 7 days is the pre-v2.12 behavior.\nCaches and developer targets ignore this: their owners rebuild them on demand.",
+		stype:   settingChoice,
+		choices: []string{"off", "", "3d", "7d"},
+		// Labels ARE the CLI vocabulary (1d/3d/7d), like every non-theme
+		// choice: the Settings row stays compact next to single-word
+		// choices, and `wintui config` shows the same words.
+		choiceLabels: map[string]string{
+			"off": "off",
+			"":    "1d",
+			"3d":  "3d",
+			"7d":  "7d",
+		},
+		choiceHints: map[string]string{
+			"off": "No age floor: every reachable entry is eligible.",
+			"":    "Remove entries older than 1 day; keep today's scratch files.",
+			"3d":  "Remove entries older than 3 days.",
+			"7d":  "Remove entries older than 7 days (Disk Cleanup's rule).",
+		},
+	},
 	themeSettingDef,
 	{
 		key:     "theme_background",
@@ -1064,6 +1146,8 @@ func (s Settings) rawValue(key string) string {
 	switch key {
 	case "cleanup_auto_scan":
 		return string(s.CleanupAutoScan)
+	case "cleanup_min_age":
+		return string(s.CleanupMinAge)
 	case "theme":
 		if s.Theme == "default" {
 			return ""
@@ -1104,6 +1188,8 @@ func (s Settings) getValue(key string) string {
 		return boolStr(s.ToastNotifications)
 	case "cleanup_auto_scan":
 		return string(normalizeCleanupAutoScan(s.CleanupAutoScan))
+	case "cleanup_min_age":
+		return string(normalizeCleanupMinAge(s.CleanupMinAge))
 	case "theme":
 		// Normalize "default" back to "" so the picker shows the
 		// canonical default-slot label rather than a literal "default"
@@ -1148,6 +1234,8 @@ func (s *Settings) setValue(key, val string) {
 		s.ToastNotifications = val == "true"
 	case "cleanup_auto_scan":
 		s.CleanupAutoScan = normalizeCleanupAutoScan(CleanupAutoScan(val))
+	case "cleanup_min_age":
+		s.CleanupMinAge = normalizeCleanupMinAge(CleanupMinAge(val))
 	case "theme":
 		s.Theme = normalizeTheme(val)
 		if s.Theme == "default" {
@@ -1172,6 +1260,7 @@ func settingsEqual(a, b Settings) bool {
 		a.AutoSelfUpdate == b.AutoSelfUpdate &&
 		a.ToastNotifications == b.ToastNotifications &&
 		normalizeCleanupAutoScan(a.CleanupAutoScan) == normalizeCleanupAutoScan(b.CleanupAutoScan) &&
+		normalizeCleanupMinAge(a.CleanupMinAge) == normalizeCleanupMinAge(b.CleanupMinAge) &&
 		stringSetsEqual(a.CleanupEnabledTargets, b.CleanupEnabledTargets) &&
 		normalizeTheme(a.Theme) == normalizeTheme(b.Theme) &&
 		normalizeThemeBackground(a.ThemeBackground) == normalizeThemeBackground(b.ThemeBackground) &&

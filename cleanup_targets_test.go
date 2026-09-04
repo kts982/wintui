@@ -203,15 +203,19 @@ func TestCleanupValidateRootAcceptsNormalPaths(t *testing.T) {
 	}
 }
 
-// minAge defaults: Core Temp entries must filter by age (week-old cutoff).
+// minAge defaults: Core Temp entries must filter by age, with the floor
+// coming from the cleanup_min_age setting (static default as the fallback).
 // Caches and vendor caches are owned by the producing app — age filtering
-// adds no safety, just clutter.
+// adds no safety, just clutter — and they must NOT follow the setting.
 func TestCleanupRegistryMinAgePolicy(t *testing.T) {
 	for _, def := range cleanupTargetRegistry() {
 		switch def.group {
 		case cleanupGroupCoreTemp:
 			if def.minAge != cleanupDefaultMinAge {
 				t.Errorf("%s: core_temp must use the default min age (got %s)", def.id, def.minAge)
+			}
+			if !def.minAgeFromSettings {
+				t.Errorf("%s: core_temp must take its floor from cleanup_min_age", def.id)
 			}
 		case cleanupGroupCaches, cleanupGroupDeveloper, cleanupGroupGPU:
 			if def.minAge != 0 {
@@ -228,6 +232,9 @@ func TestCleanupRegistryMinAgePolicy(t *testing.T) {
 					t.Errorf("%s: unexpected min-age %s on wintui target", def.id, def.minAge)
 				}
 			}
+		}
+		if def.group != cleanupGroupCoreTemp && def.minAgeFromSettings {
+			t.Errorf("%s: only core_temp follows cleanup_min_age", def.id)
 		}
 	}
 
@@ -255,10 +262,56 @@ func TestCleanupRegistryHasKnownIDs(t *testing.T) {
 }
 
 // Locked default min-age value, asserted directly so a future tweak shows up
-// in the diff rather than slipping in silently.
-func TestCleanupDefaultMinAgeIsSevenDays(t *testing.T) {
-	if cleanupDefaultMinAge != 7*24*time.Hour {
-		t.Errorf("cleanupDefaultMinAge = %s, want 7 days", cleanupDefaultMinAge)
+// in the diff rather than slipping in silently. One day since v2.12.0 (was
+// seven): CCleaner's field-tested default, and the number that keeps a
+// frequently-run cleanup from leaving a week of churn behind.
+func TestCleanupDefaultMinAgeIsOneDay(t *testing.T) {
+	if cleanupDefaultMinAge != 24*time.Hour {
+		t.Errorf("cleanupDefaultMinAge = %s, want 1 day", cleanupDefaultMinAge)
+	}
+}
+
+// effectiveMinAge: Core Temp follows the setting through every choice; a
+// static target ignores it entirely.
+func TestCleanupEffectiveMinAgeFollowsSetting(t *testing.T) {
+	temp, _ := cleanupTargetByID("user_temp")
+	handoff, _ := cleanupTargetByID("wintui_self_update_handoffs")
+	cache, _ := cleanupTargetByID("d3dscache")
+	for _, tc := range []struct {
+		stored CleanupMinAge
+		want   time.Duration
+	}{
+		{CleanupMinAgeDefault, 24 * time.Hour},
+		{CleanupMinAgeOff, 0},
+		{CleanupMinAge3d, 3 * 24 * time.Hour},
+		{CleanupMinAge7d, 7 * 24 * time.Hour},
+		{"garbage", 24 * time.Hour}, // hand-edited settings.json can't switch the floor off
+	} {
+		s := DefaultSettings()
+		s.CleanupMinAge = tc.stored
+		if got := temp.effectiveMinAge(s); got != tc.want {
+			t.Errorf("user_temp with %q: %s, want %s", tc.stored, got, tc.want)
+		}
+		if got := handoff.effectiveMinAge(s); got != cleanupSelfUpdateHandoffMinAge {
+			t.Errorf("handoff target with %q: %s, want the static %s", tc.stored, got, cleanupSelfUpdateHandoffMinAge)
+		}
+		if got := cache.effectiveMinAge(s); got != 0 {
+			t.Errorf("d3dscache with %q: %s, want no floor", tc.stored, got)
+		}
+	}
+}
+
+func TestFormatAgeFloor(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		0:                  "off",
+		12 * time.Hour:     "12 hours",
+		24 * time.Hour:     "1 day",
+		3 * 24 * time.Hour: "3 days",
+		7 * 24 * time.Hour: "7 days",
+	} {
+		if got := formatAgeFloor(d); got != want {
+			t.Errorf("formatAgeFloor(%s) = %q, want %q", d, got, want)
+		}
 	}
 }
 

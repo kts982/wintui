@@ -25,8 +25,8 @@ func setupConfigTest(t *testing.T) {
 // every choice round-trips through the CLI vocabulary. A new key that
 // forgets any of this fails here, not in production.
 func TestSettingsRegistryIsCompleteAndSelfConsistent(t *testing.T) {
-	if len(settingDefs) != 15 {
-		t.Fatalf("registry has %d keys, want 15 (update this test AND the docs when adding one)", len(settingDefs))
+	if len(settingDefs) != 16 {
+		t.Fatalf("registry has %d keys, want 16 (update this test AND the docs when adding one)", len(settingDefs))
 	}
 	seen := map[settingGroup]int{}
 	for _, d := range settingDefs {
@@ -76,7 +76,7 @@ func TestSettingsRegistryIsCompleteAndSelfConsistent(t *testing.T) {
 		}
 	}
 	// The vocabulary the plan pinned for the empty stored value.
-	for key, want := range map[string]string{"scope": "default", "install_mode": "default", "architecture": "auto", "source": "all", "cleanup_auto_scan": "safe", "theme_background": "terminal", "theme": "default"} {
+	for key, want := range map[string]string{"scope": "default", "install_mode": "default", "architecture": "auto", "source": "all", "cleanup_auto_scan": "safe", "cleanup_min_age": "1d", "theme_background": "terminal", "theme": "default"} {
 		d, _ := settingDefByKey(key)
 		if got := d.cliName(""); got != want {
 			t.Errorf("%s: cliName(\"\") = %q, want %q", key, got, want)
@@ -131,6 +131,8 @@ func TestConfigSetInvalidValueNeverWrites(t *testing.T) {
 		{"theme", "purple"},
 		{"theme_background", "on"},
 		{"cleanup_auto_scan", "true"},
+		{"cleanup_min_age", "2d"}, // only the registry's choices, never an arbitrary duration
+		{"cleanup_min_age", "1"},
 	} {
 		var out bytes.Buffer
 		err := runConfigSet(&out, tc[0], tc[1], false)

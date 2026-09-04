@@ -212,7 +212,7 @@ to see valid IDs. The active theme also appears as an INFO row in
 ### config
 
 `wintui config` is the CLI's control plane for the global settings the TUI's
-Settings tab edits — the same 15 keys, the same vocabulary, one registry.
+Settings tab edits — the same 16 keys, the same vocabulary, one registry.
 
 | Form | Behavior |
 |---|---|
@@ -224,8 +224,10 @@ Settings tab edits — the same 15 keys, the same vocabulary, one registry.
 Values are gh/git-style positionals with human-readable names, case-insensitive
 on input: `scope default|user|machine`, `install_mode default|silent|interactive`,
 `architecture auto|x64|x86|arm64`, `source all|winget|msstore`,
-`cleanup_auto_scan safe|all|off`, `theme_background terminal|theme`,
-`theme <id>` (same names as `wintui theme`), and `true|false` for switches
+`cleanup_auto_scan safe|all|off`, `cleanup_min_age off|1d|3d|7d` (the age
+floor the Core Temp cleanup targets apply — entries newer than it are kept;
+`1d` is the default, `7d` the pre-v2.12 behavior), `theme_background
+terminal|theme`, `theme <id>` (same names as `wintui theme`), and `true|false` for switches
 (`on`/`off`, `yes`/`no`, `1`/`0` accepted as input). Anything else is
 rejected — nothing is normalized silently. `set` and `unset` write a delta
 over the file on disk rather than a whole snapshot, so a TUI running in
@@ -315,9 +317,17 @@ exact `winget` arguments) and its output is unchanged.
 
 `wintui cleanup scan` is the read-only half of the Cleanup tab: it measures
 what every registered target would reclaim and prints TARGET / GROUP /
-ENABLED / SIZE / ITEMS / ADMIN / STATUS. It never deletes anything and never
-routes through the elevated helper — deleting stays in the TUI, where each
-removal is reviewed and confirmed.
+ENABLED / SIZE / ITEMS / KEPT / ADMIN / STATUS. It never deletes anything and
+never routes through the elevated helper — deleting stays in the TUI, where
+each removal is reviewed and confirmed.
+
+SIZE and ITEMS are what a TUI cleanup would remove. The Core Temp targets
+only touch entries older than the `cleanup_min_age` floor (`1d` by default;
+see [config](#config)), so a Temp folder full of this week's scratch files
+legitimately scans as `0 B` — KEPT then shows what the floor left alone
+(`890.7 MB (491)`) and the summary line repeats it with the floor in words,
+so the number never silently contradicts Explorer. KEPT is `-` when nothing
+was kept or the target was not measured.
 
 | Form | Behavior |
 |---|---|
@@ -325,7 +335,9 @@ removal is reviewed and confirmed.
 | `wintui cleanup scan --enabled` | Only the targets that start **checked** in the TUI (default-checked plus the ones you opted in) — the set a TUI deletion would act on. This is deliberately not the set the Cleanup tab *auto-scans* on open: the default `safe` auto-scan measures every present target outside the Developer group, including GPU caches that are not checked by default, so a GPU cache can show `enabled: no` here while the TUI still shows its size |
 | `wintui cleanup scan --target <id>` | Only the named target(s); repeatable, IDs complete in the shell |
 
-Statuses: `ok` (reclaimable entries found), `empty`, `missing` (path not on
+Statuses: `ok` (reclaimable entries found), `empty` (nothing there at all),
+`recent` (scanned, nothing older than the age floor — KEPT says what was left
+alone), `missing` (path not on
 disk), `unresolved` (environment variable missing), `needs_admin` (the target
 requires elevation and this process is not elevated — it is **not** walked,
 because a non-elevated walk would report a partial, wrong size; run the same
@@ -337,13 +349,17 @@ Targets are walked with bounded concurrency; a one-line progress note goes to
 stderr so stdout stays pipeable. Exit code is 0 — this is a report, not a
 predicate.
 
-`--json` is `{"elevated", "selection", "count", "scanned", "needs_admin",
-"total_size_bytes", "targets": [...]}`. Each target carries `id`, `label`,
-`group`, `group_label`, `path`, `mode`, `globs`, `min_age_seconds`,
-`requires_admin`, `default_checked`, `enabled`, `present`, `scanned`,
-`status`, `size_bytes`, `items`, `unreadable`, `errors`. Unmeasured
-`size_bytes` / `items` are an explicit `null` (never omitted); measured zeros
-are `0`; arrays are never `null`.
+`--json` is `{"elevated", "selection", "cleanup_min_age", "count", "scanned",
+"needs_admin", "total_size_bytes", "total_kept_bytes", "partial",
+"targets": [...]}` — `cleanup_min_age` is the configured floor in the
+`config` vocabulary (`off` / `1d` / `3d` / `7d`). Each target carries `id`,
+`label`, `group`, `group_label`, `path`, `mode`, `globs`, `min_age_seconds`
+(the **effective** floor for that target: the setting for Core Temp, the
+registry's static value otherwise, `0` when there is none), `requires_admin`,
+`default_checked`, `enabled`, `present`, `scanned`, `status`, `size_bytes`,
+`items`, `kept_items`, `kept_bytes`, `unreadable`, `errors`. Unmeasured
+`size_bytes` / `items` / `kept_items` / `kept_bytes` are an explicit `null`
+(never omitted); measured zeros are `0`; arrays are never `null`.
 
 ### history
 

@@ -97,7 +97,8 @@ type cleanupScanOptions struct {
 // Status vocabulary (JSON string, table word).
 const (
 	cleanupStatusOK         = "ok"          // scanned, has reclaimable entries
-	cleanupStatusEmpty      = "empty"       // scanned, nothing to reclaim
+	cleanupStatusEmpty      = "empty"       // scanned, nothing there at all
+	cleanupStatusRecent     = "recent"      // scanned, nothing older than the age floor: kept_items says what was left alone
 	cleanupStatusMissing    = "missing"     // resolved path does not exist
 	cleanupStatusUnresolved = "unresolved"  // env var missing / no path
 	cleanupStatusPartial    = "partial"     // scanned, but some entries were unreadable: size is a lower bound
@@ -123,17 +124,21 @@ type cleanupScanTargetJSON struct {
 	Status         string   `json:"status"`
 	SizeBytes      *int64   `json:"size_bytes"`
 	Items          *int     `json:"items"`
+	KeptItems      *int     `json:"kept_items"` // entries newer than min_age_seconds, left alone; null when unmeasured
+	KeptBytes      *int64   `json:"kept_bytes"`
 	Unreadable     int      `json:"unreadable"`
 	Errors         []string `json:"errors"`
 }
 
 type cleanupScanJSON struct {
 	Elevated       bool                    `json:"elevated"`
-	Selection      string                  `json:"selection"` // all | enabled | targets
+	Selection      string                  `json:"selection"`       // all | enabled | targets
+	CleanupMinAge  string                  `json:"cleanup_min_age"` // the configured floor in CLI vocabulary (off | 1d | 3d | 7d)
 	Count          int                     `json:"count"`
 	Scanned        int                     `json:"scanned"`
 	NeedsAdmin     int                     `json:"needs_admin"`
 	TotalSizeBytes int64                   `json:"total_size_bytes"`
+	TotalKeptBytes int64                   `json:"total_kept_bytes"`
 	Partial        bool                    `json:"partial"` // a scanned target was only partly readable: the total is a lower bound
 	Targets        []cleanupScanTargetJSON `json:"targets"`
 }
@@ -162,6 +167,8 @@ func cleanupScanStatus(r cleanupTargetResult) string {
 		return cleanupStatusError
 	case r.unreadable > 0 || r.failed > 0 || len(r.errors) > 0:
 		return cleanupStatusPartial
+	case r.files == 0 && r.kept > 0:
+		return cleanupStatusRecent
 	case r.files == 0:
 		return cleanupStatusEmpty
 	}
@@ -233,7 +240,7 @@ func runCleanupScan(ctx context.Context, out, errOut io.Writer, opts cleanupScan
 			Path:           path,
 			Mode:           cleanupModeName(def.mode),
 			Globs:          append([]string{}, def.globs...),
-			MinAgeSeconds:  int64(def.minAge.Seconds()),
+			MinAgeSeconds:  int64(def.effectiveMinAge(settings).Seconds()),
 			RequiresAdmin:  def.requiresAdmin,
 			DefaultChecked: def.defaultChecked,
 			Enabled:        settings.cleanupTargetEnabled(def),
@@ -275,6 +282,9 @@ func runCleanupScan(ctx context.Context, out, errOut io.Writer, opts cleanupScan
 				size, items := res.sizeBytes, res.files
 				row.SizeBytes = &size
 				row.Items = &items
+				kept, keptBytes := res.kept, res.keptBytes
+				row.KeptItems = &kept
+				row.KeptBytes = &keptBytes
 			}
 			row.Unreadable = res.unreadable
 			for _, e := range res.errors {
@@ -286,7 +296,13 @@ func runCleanupScan(ctx context.Context, out, errOut io.Writer, opts cleanupScan
 	}
 	wg.Wait()
 
-	report := cleanupScanJSON{Elevated: elevated, Selection: selection, Count: len(rows), Targets: rows}
+	report := cleanupScanJSON{
+		Elevated:      elevated,
+		Selection:     selection,
+		CleanupMinAge: settingCLIValue(settings, "cleanup_min_age"),
+		Count:         len(rows),
+		Targets:       rows,
+	}
 	for _, r := range rows {
 		if r.Scanned {
 			report.Scanned++
@@ -297,6 +313,9 @@ func runCleanupScan(ctx context.Context, out, errOut io.Writer, opts cleanupScan
 		if r.SizeBytes != nil {
 			report.TotalSizeBytes += *r.SizeBytes
 		}
+		if r.KeptBytes != nil {
+			report.TotalKeptBytes += *r.KeptBytes
+		}
 		if r.Status == cleanupStatusPartial {
 			report.Partial = true
 		}
@@ -304,23 +323,26 @@ func runCleanupScan(ctx context.Context, out, errOut io.Writer, opts cleanupScan
 	if asJSON {
 		return writeJSON(out, report)
 	}
-	printCleanupScanTable(out, report)
+	printCleanupScanTable(out, report, formatAgeFloor(settings.cleanupMinAge()))
 	return nil
 }
 
-func printCleanupScanTable(out io.Writer, report cleanupScanJSON) {
+// printCleanupScanTable renders the human table. minAgeLabel is the
+// configured Core Temp floor in words ("1 day"), used by the kept summary.
+func printCleanupScanTable(out io.Writer, report cleanupScanJSON, minAgeLabel string) {
 	if len(report.Targets) == 0 {
 		fmt.Fprintln(out, "No cleanup targets selected.")
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TARGET\tGROUP\tENABLED\tSIZE\tITEMS\tADMIN\tSTATUS")
+	fmt.Fprintln(tw, "TARGET\tGROUP\tENABLED\tSIZE\tITEMS\tKEPT\tADMIN\tSTATUS")
+	var keptItems int
 	for _, r := range report.Targets {
 		enabled := "no"
 		if r.Enabled {
 			enabled = "yes"
 		}
-		size, items := "-", "-"
+		size, items, kept := "-", "-", "-"
 		if r.SizeBytes != nil {
 			size = formatBytes(*r.SizeBytes)
 			if r.Status == cleanupStatusPartial {
@@ -330,6 +352,10 @@ func printCleanupScanTable(out io.Writer, report cleanupScanJSON) {
 		if r.Items != nil {
 			items = fmt.Sprintf("%d", *r.Items)
 		}
+		if r.KeptItems != nil && *r.KeptItems > 0 {
+			kept = fmt.Sprintf("%s (%d)", formatBytes(*r.KeptBytes), *r.KeptItems)
+			keptItems += *r.KeptItems
+		}
 		admin := "-"
 		switch {
 		case r.RequiresAdmin && report.Elevated:
@@ -337,7 +363,7 @@ func printCleanupScanTable(out io.Writer, report cleanupScanJSON) {
 		case r.RequiresAdmin:
 			admin = "needs admin"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.GroupLabel, enabled, size, items, admin, r.Status)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.GroupLabel, enabled, size, items, kept, admin, r.Status)
 	}
 	_ = tw.Flush()
 
@@ -346,6 +372,10 @@ func printCleanupScanTable(out io.Writer, report cleanupScanJSON) {
 		total = "≥ " + total + " (some targets were only partly readable)"
 	}
 	summary := fmt.Sprintf("%s scanned, %s reclaimable", pluralize(report.Scanned, "target"), total)
+	if keptItems > 0 {
+		summary += fmt.Sprintf(" · %s in %s kept as newer than %s",
+			formatBytes(report.TotalKeptBytes), pluralize(keptItems, "entry", "entries"), minAgeLabel)
+	}
 	if report.NeedsAdmin > 0 {
 		summary += fmt.Sprintf(" · %d need admin (run elevated to measure)", report.NeedsAdmin)
 	}

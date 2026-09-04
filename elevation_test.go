@@ -173,6 +173,12 @@ func TestCleanupTargetElevatedSuccess(t *testing.T) {
 			sendHelperResponse(clientConn, "error", "unexpected request: "+line)
 			return
 		}
+		// The TUI ships the age floor it resolved (default 1 day) so the
+		// elevated process never falls back to another account's settings.
+		if req.MinAgeSeconds == nil || *req.MinAgeSeconds != 86400 {
+			sendHelperResponse(clientConn, "error", "missing/wrong min_age_seconds: "+line)
+			return
+		}
 		wire := cleanupTargetResultWire{
 			ID:           "windows_temp",
 			ResolvedPath: `C:\Windows\Temp`,

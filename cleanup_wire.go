@@ -14,6 +14,8 @@ type cleanupTargetResultWire struct {
 	Files        int      `json:"files,omitempty"`
 	Failed       int      `json:"failed,omitempty"`
 	Unreadable   int      `json:"unreadable,omitempty"`
+	Kept         int      `json:"kept,omitempty"`
+	KeptBytes    int64    `json:"kept_bytes,omitempty"`
 	Errors       []string `json:"errors,omitempty"`
 	Skipped      int      `json:"skipped,omitempty"`
 }
@@ -30,6 +32,8 @@ func cleanupResultToWire(r cleanupTargetResult) cleanupTargetResultWire {
 		Files:        r.files,
 		Failed:       r.failed,
 		Unreadable:   r.unreadable,
+		Kept:         r.kept,
+		KeptBytes:    r.keptBytes,
 		Skipped:      int(r.skipped),
 	}
 	if len(r.errors) > 0 {
@@ -55,6 +59,8 @@ func cleanupResultFromWire(w cleanupTargetResultWire) cleanupTargetResult {
 		files:        w.Files,
 		failed:       w.Failed,
 		unreadable:   w.Unreadable,
+		kept:         w.Kept,
+		keptBytes:    w.KeptBytes,
 		skipped:      cleanupSkipReason(w.Skipped),
 	}
 	if len(w.Errors) > 0 {

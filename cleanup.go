@@ -198,9 +198,24 @@ func (s cleanupScreen) startScan(id string) tea.Cmd {
 	if !ok {
 		return nil
 	}
+	gen := s.scanGen
+	if def.requiresAdmin && !isElevated() {
+		// A non-elevated walk of an admin-only root fails at ReadDir and
+		// used to surface as an honest-looking "0 B". Report "needs admin"
+		// the way `cleanup scan` does, without touching the disk. The
+		// no-op cancel keeps the inflight bookkeeping uniform for the
+		// scanned-msg handler.
+		s.inflight[id] = func() {}
+		return func() tea.Msg {
+			return cleanupTargetScannedMsg{id: id, gen: gen, result: cleanupTargetResult{
+				id:           id,
+				resolvedPath: def.pathFn(),
+				skipped:      cleanupSkipNotElevated,
+			}}
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: cancel is retained in s.inflight and called by cancelAllScans or the scanned-msg handler
 	s.inflight[id] = cancel
-	gen := s.scanGen
 	return func() tea.Msg {
 		res := cleanupScan(ctx, def)
 		return cleanupTargetScannedMsg{id: id, gen: gen, result: res}
@@ -772,9 +787,14 @@ func (s cleanupScreen) renderRow(def cleanupTargetDef, focused bool, innerW int)
 			case cleanupSkipGuarded:
 				rightChip = errorStyle.Render("guarded")
 			default:
-				if r.sizeBytes > 0 {
+				switch {
+				case r.sizeBytes > 0:
 					rightChip = stateStyle.Render(formatBytes(r.sizeBytes))
-				} else {
+				case r.kept > 0:
+					// Nothing old enough, but not empty either: say so on
+					// the row so "0 B" never contradicts Explorer.
+					rightChip = helpStyle.Render(fmt.Sprintf("0 B · %d recent", r.kept))
+				default:
 					rightChip = helpStyle.Render("0 B")
 				}
 			}
@@ -815,6 +835,11 @@ func (s cleanupScreen) renderDetailPane(width, _ int) string {
 	} else {
 		chips = append(chips, chipStyle.Render("[opt-in]"))
 	}
+	// View runs on the Update goroutine, so appSettings is safe to read.
+	ageFloor := def.effectiveMinAge(appSettings)
+	if ageFloor > 0 {
+		chips = append(chips, chipStyle.Render("[older than "+formatAgeFloor(ageFloor)+"]"))
+	}
 	b.WriteString(strings.Join(chips, " ") + "\n\n")
 
 	path := def.pathFn()
@@ -832,6 +857,15 @@ func (s cleanupScreen) renderDetailPane(width, _ int) string {
 		b.WriteString(helpStyle.Render(s.spinner.View()+" Scanning…") + "\n")
 	} else if r, ok := s.results[def.id]; ok {
 		b.WriteString(s.renderResultBlock(r, innerW))
+		if r.kept > 0 {
+			// The number the user will compare against Explorer: what the
+			// floor left alone, and where to change it.
+			b.WriteString("\n" + helpStyle.Render(wordWrap(fmt.Sprintf(
+				"Kept %s (%s) newer than %s. Only older entries are removed; "+
+					"change the floor in Settings → Cleanup Min Age.",
+				pluralize(r.kept, "entry", "entries"), formatBytes(r.keptBytes), formatAgeFloor(ageFloor)),
+				innerW)))
+		}
 	} else {
 		b.WriteString(helpStyle.Render("Press s to scan this target.") + "\n")
 	}
@@ -855,10 +889,10 @@ func (s cleanupScreen) renderResultBlock(r cleanupTargetResult, innerW int) stri
 	case cleanupSkipMissing:
 		return helpStyle.Render("(empty / not present)")
 	case cleanupSkipNotElevated:
-		return warnStyle.Render(wordWrap(
-			"Windows wouldn't let WinTUI clean here. Ctrl+E asks for admin and retries.",
-			innerW,
-		))
+		// Set by startScan for admin-only roots in a non-elevated TUI: the
+		// walk was never attempted, so there is no size to show. The
+		// admin caveat under the description says what to do about it.
+		return warnStyle.Render("Needs admin to measure and clean.")
 	case cleanupSkipGuarded:
 		return errorStyle.Render("Path is guarded against bulk delete.")
 	case cleanupSkipUnresolved:
@@ -1005,6 +1039,10 @@ func (s cleanupScreen) viewDone(width, height int) string {
 		case r.freedBytes > 0:
 			b.WriteString(successStyle.Render("  ✓ ") + def.label +
 				helpStyle.Render(fmt.Sprintf("  freed %s", formatBytes(r.freedBytes))) + "\n")
+		case r.kept > 0:
+			b.WriteString(helpStyle.Render("  · ") + def.label +
+				helpStyle.Render(fmt.Sprintf("  (nothing older than %s; %s kept)",
+					formatAgeFloor(def.effectiveMinAge(appSettings)), pluralize(r.kept, "entry", "entries"))) + "\n")
 		default:
 			b.WriteString(helpStyle.Render("  · ") + def.label + helpStyle.Render("  (nothing to free)") + "\n")
 		}

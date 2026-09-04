@@ -32,6 +32,13 @@ type helperRequest struct {
 	// The helper resolves the path from the registry on its side; the TUI
 	// never sends raw filesystem paths to the privileged process.
 	TargetID string `json:"target_id,omitempty"`
+	// MinAgeSeconds is the age floor the TUI resolved from the user's
+	// cleanup_min_age setting for action="cleanup_delete". Shipped
+	// explicitly because an over-the-shoulder UAC elevation runs the helper
+	// under a different account whose settings.json is not the user's; a
+	// pointer so "off" (0) is distinguishable from "not sent". Honored only
+	// for targets whose registry entry opts into the setting.
+	MinAgeSeconds *int64 `json:"min_age_seconds,omitempty"`
 }
 
 // helperResponse encodes one message on the pipe. Types:
@@ -124,6 +131,22 @@ func handleHelperConnection(conn net.Conn, token string) error {
 	}
 }
 
+// applyHelperMinAge applies the age floor the TUI resolved for this request.
+// Only targets whose registry entry opts into the setting take it; static
+// floors and ageless targets are the registry's call, not the caller's. A
+// negative value is a malformed request.
+func applyHelperMinAge(def cleanupTargetDef, req helperRequest) (cleanupTargetDef, error) {
+	if req.MinAgeSeconds == nil || !def.minAgeFromSettings {
+		return def, nil
+	}
+	if *req.MinAgeSeconds < 0 {
+		return def, fmt.Errorf("cleanup_delete: invalid min_age_seconds %d", *req.MinAgeSeconds)
+	}
+	def.minAge = time.Duration(*req.MinAgeSeconds) * time.Second
+	def.minAgeFromSettings = false
+	return def, nil
+}
+
 // executeCleanupDeleteForHelper performs an admin-only cleanup target delete
 // inside the elevated process. The helper resolves the target path itself
 // from the registry — the TUI only sends an ID — and refuses targets the
@@ -139,6 +162,10 @@ func executeCleanupDeleteForHelper(conn net.Conn, req helperRequest) error {
 	}
 	if !def.requiresAdmin {
 		return fmt.Errorf("cleanup target %q does not require admin", req.TargetID)
+	}
+	def, err := applyHelperMinAge(def, req)
+	if err != nil {
+		return err
 	}
 
 	res := cleanupDelete(context.Background(), def)
