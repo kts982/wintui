@@ -180,5 +180,55 @@ is identical to v2.11.2.
 
 ## Verification
 
-VirusTotal scans of the published artifacts are added here after the GoReleaser
-build, per `scripts/vt-scan.ps1` (pre-tag `-Path` + post-publish `-ReleaseTag`).
+Automated coverage for this release: concurrent-writer and stale-snapshot
+acceptance tests for `settings.json`; generated registry tests (every key has
+a group and a valid default, every choice round-trips, every CLI value
+persists); byte-golden JSON for `config`, `rules`, and `cleanup scan`;
+field-wise `rules set` reaching the real consumers; hold exclusivity in every
+flag order; case-insensitive lookup precedence and collapse; every cleanup
+scan status over temp-dir targets with the real engine; the TUI reload
+semantics; and the real-argv PowerShell transport round trip.
+
+The pre-release `go tool nm` comparison against v2.11.2 is identical: the same
+set of unique `syscall.` / `windows.` symbols before and after (438 under the
+release-playbook filter), with no additions or removals. The release build ran
+on Go 1.26.6 as pinned by `go.mod`.
+
+Post-build verification of the published artifacts (2026-09-12):
+
+- **Live Windows Defender clean** on both published exes: `MpCmdRun -Scan
+  -ScanType 3 -DisableRemediation`, engine 1.1.26080.3, signatures
+  1.459.171.0, exit 0 / "found no threats" for amd64 and arm64.
+- **Build provenance verified**: `gh attestation verify` exits 0 for both
+  published exes, and the `wintui_provenance.intoto.jsonl` subjects cover all
+  four artifacts with digests matching the downloaded bytes and
+  `checksums.txt`.
+- **VirusTotal**: arm64 exe and zip are 0 detections. The amd64 exe carries
+  the usual single-vendor ML noise plus a VirusTotal Microsoft-engine
+  `Wacatac.B!ml` verdict; VirusTotal runs that engine in a configuration that
+  differs from shipping Defender, and the live Defender scan of the identical
+  bytes above is clean, so it is treated as an engine false positive per the
+  release playbook. The published exe is re-scanned locally around T+3d.
+- A WDSI "check latest detections" submission of the published amd64 bytes is
+  filed at release time to preempt a delayed FastPath verdict.
+
+## Verification
+
+VirusTotal scans of the published artifacts for v2.12.0 (run 2026-09-12):
+
+| Asset | SHA256 | Detections | Report |
+|---|---|---|---|
+| `wintui_2.12.0_windows_amd64.exe` (7.8 MB) | `310743fd020c…` | 3/71 | [VT report](https://www.virustotal.com/gui/file/310743fd020c6861917fd64aee98790617e4f0b7962c13dc2431262170f1a079) |
+| `wintui_2.12.0_windows_amd64.zip` (2.8 MB) | `6e45f1f6f47a…` | 1/68 | [VT report](https://www.virustotal.com/gui/file/6e45f1f6f47ae0345a593361da1f0ef4ac30d15f6ebd6688024aa7490022d3b2) |
+| `wintui_2.12.0_windows_arm64.exe` (7.2 MB) | `5bc0c75c82de…` | 0/69 | [VT report](https://www.virustotal.com/gui/file/5bc0c75c82de885434559fec698930afe53798f7aa35efae2620d9ec5c5a2c5f) |
+| `wintui_2.12.0_windows_arm64.zip` (2.6 MB) | `11d8bcc953a6…` | 0/67 | [VT report](https://www.virustotal.com/gui/file/11d8bcc953a63774b2d167b3830187101048f1c38f98f7b9e65a0fae8741c6ef) |
+
+Detections at scan time were single-vendor low-signal ML/reputation noise plus a VirusTotal Microsoft-engine `Wacatac.B!ml` verdict on the amd64 exe only; live Windows Defender on the identical bytes is clean (see above), so it is treated as an engine false positive.
+
+Full SHA256 hashes:
+
+- `wintui_2.12.0_windows_amd64.exe`: `310743fd020c6861917fd64aee98790617e4f0b7962c13dc2431262170f1a079`
+- `wintui_2.12.0_windows_amd64.zip`: `6e45f1f6f47ae0345a593361da1f0ef4ac30d15f6ebd6688024aa7490022d3b2`
+- `wintui_2.12.0_windows_arm64.exe`: `5bc0c75c82de885434559fec698930afe53798f7aa35efae2620d9ec5c5a2c5f`
+- `wintui_2.12.0_windows_arm64.zip`: `11d8bcc953a63774b2d167b3830187101048f1c38f98f7b9e65a0fae8741c6ef`
+
