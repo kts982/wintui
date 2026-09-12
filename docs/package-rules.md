@@ -14,12 +14,21 @@ From the main package list:
 
 - `t` — cycle the focused installed/update package through Ask → Auto → Hold
 
+From the CLI, without launching the TUI:
+
+- `wintui rules list` — every explicit rule
+- `wintui rules show <id>` — the explicit rule next to the effective value of every field
+- `wintui rules set <id> --policy auto --scope user --ignore-version 155.0 …` — change only the fields you pass, in one write
+- `wintui rules clear <id> [field…]` — remove the whole rule or named fields
+
+Package IDs are case-insensitive on every surface. See [CLI reference → rules](cli.md#rules) for the full vocabulary, the hold semantics, and the `--json` shape.
+
 ## Rules
 
 | Rule | Values | Effect |
 |---|---|---|
 | `update_policy` | `ask`, `auto`, `hold` | Ask normally, upgrade automatically, or keep held |
-| `ignore` | `none`, `all versions` | Legacy hold for all versions |
+| `ignore` | `none`, `all versions` | Legacy hold for all versions (rewritten as `update_policy: hold` the next time the rule is edited) |
 | `ignore_version` | any version string | Legacy hold for a single version (e.g., skip the current latest) |
 | `scope` | `global`, `user`, `machine` | Override the install scope for this package |
 | `architecture` | `global`, `x64`, `x86`, `arm64` | Force a specific installer architecture |
@@ -73,6 +82,8 @@ To force `ignore = all` on a package that currently has an available update, use
 - **Held packages.** Packages marked `hold`, `ignore`, or a matching `ignore_version` are omitted from normal upgrade actions. The Updates Available section header shows an `(N held)` count.
 - **Automatic cleanup of `ignore_version`.** When a newer version than the ignored one becomes available, WinTUI drops the stale `ignore_version` so the new upgrade surfaces normally. You only ignore the version you told it to ignore — not everything after it.
 - **Source-qualified keys.** Rules are stored as `<source>:<id>`, so the same package ID in `winget` and `msstore` gets independent rules. Legacy plain-ID keys from earlier versions are still read.
+- **Case-insensitive keys.** winget IDs are case-insensitive, and so is the lookup: a typed `git.git` finds a stored `Git.Git` rule. A write keeps the casing of the key it finds (new rules take winget's own casing from the package cache) and leaves exactly one key per package, removing legacy bare-ID and case-variant aliases. Hand-edited duplicates that only differ in case are collapsed on load when their values agree; conflicting ones are listed by `wintui doctor`, refused by `rules set`, and removed together by `wintui rules clear <id>`.
+- **Two writers.** Rule edits from the CLI and the TUI are written as deltas over the file on disk, never as a whole snapshot, so a TUI open in another window does not lose a rule the CLI just set. The TUI picks up external changes on refresh (`r`) and when the Settings tab is opened.
 - **Overrides apply to install and upgrade.** `scope`, `architecture`, and `elevate` overrides are merged into the winget command line for both install and upgrade operations on that package.
 - **Atomic persistence.** Saves write to disk first; runtime state is only updated after the write succeeds, so a failed save never silently changes behavior.
 

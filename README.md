@@ -247,7 +247,7 @@ Further documentation:
 
 ## Settings
 
-Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
+Configurable from the Settings tab or from the CLI with `wintui config` (same keys, validated values, see [docs/cli.md → config](docs/cli.md#config)), stored in `%APPDATA%\wintui\settings.json`:
 
 | Setting | Options |
 |---|---|
@@ -265,6 +265,8 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 | Toast Notifications | Windows toast on TUI batch finish, scheduled `wintui upgrade --auto/--all`, and `wintui check` finding updates (off by default) |
 | Color Theme | Sweet Pink, WinTUI Midnight, Catppuccin, Nord, Dracula, Tokyo Night, Ember, or Monochrome |
 | Theme Background | terminal / theme background tinting |
+| Cleanup Auto Scan | safe / all / off — what the Cleanup tab measures when opened |
+| Cleanup Min Age | off / 1d / 3d / 7d — the Core Temp cleanup targets only remove entries older than this (1d by default; 7d was the pre-v2.12 rule) |
 
 **Action Mode: Silent + Auto Elevate** runs all install/upgrade/uninstall operations through the elevated helper upfront, avoiding UAC popups from installers that elevate themselves.
 
@@ -274,7 +276,7 @@ Configurable from the Settings tab, stored in `%APPDATA%\wintui\settings.json`:
 
 ### Per-Package Rules
 
-Any of the settings above can be overridden for a specific package, and winget/msstore-managed packages can be marked Ask, Auto, or Hold for updates. Press `t` from the package list to cycle the focused package through Ask → Auto → Hold, or open a package's detail view and press `p` for the full rules editor.
+Any of the settings above can be overridden for a specific package, and winget/msstore-managed packages can be marked Ask, Auto, or Hold for updates. Press `t` from the package list to cycle the focused package through Ask → Auto → Hold, or open a package's detail view and press `p` for the full rules editor. From the CLI, `wintui rules show <id>` prints the explicit rule next to the effective value and `wintui rules set <id> --policy auto --scope user` changes only the fields you pass; package IDs are case-insensitive.
 
 Supported rules: `update_policy`, `scope`, `architecture`, `elevate`, `ignore`, `ignore_version`. Auto and Hold packages show `[AUTO]` / `[HOLD]` badges in the package list. Held packages are omitted from normal upgrade actions with an `(N held)` count on the section header.
 
