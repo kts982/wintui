@@ -81,29 +81,43 @@ func TestTUIDeltaWritesKeepConcurrentCLIChanges(t *testing.T) {
 }
 
 // TestPermanentFSErrorsFailFast guards the retry budget: a permanent failure
-// must not stall the caller (the TUI Update goroutine) for long.
+// must not stall the caller (the TUI Update goroutine) for long. The sleep is
+// stubbed and the schedule asserted directly — a wall-clock ceiling was flaky
+// on CI runners, where scan-on-write in the temp dir alone can exceed it.
 func TestPermanentFSErrorsFailFast(t *testing.T) {
+	var slept []time.Duration
+	fsSleep = func(d time.Duration) { slept = append(slept, d) }
+	t.Cleanup(func() { fsSleep = time.Sleep })
+
 	dir := t.TempDir()
 	blocker := filepath.Join(dir, "blocked.json")
 	if err := os.Mkdir(blocker, 0755); err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
 	if err := writeFileAtomic(blocker, []byte("x"), 0644); err == nil {
 		t.Fatal("rename onto a directory must fail")
 	}
-	if d := time.Since(start); d > 500*time.Millisecond {
-		t.Errorf("permanent rename failure took %v; the bounded budget is ~156 ms", d)
+	// ACCESS_DENIED is retried on renames (replace onto an open file), so a
+	// permanent denial burns the whole budget — which must stay bounded.
+	if len(slept) != fsRetryAttempts {
+		t.Errorf("permanent rename failure slept %d times; want the full %d-attempt budget", len(slept), fsRetryAttempts)
+	}
+	var total time.Duration
+	for _, d := range slept {
+		total += d
+	}
+	if total > 500*time.Millisecond {
+		t.Errorf("rename retry budget sums to %v; must stay under half a second", total)
 	}
 
 	// A read that is denied for good (a directory is not readable as a file)
 	// must return immediately: ACCESS_DENIED is not retried on reads.
-	start = time.Now()
+	slept = nil
 	if _, err := readFileWithRetry(dir); err == nil {
 		t.Fatal("reading a directory as a file must fail")
 	}
-	if d := time.Since(start); d > 50*time.Millisecond {
-		t.Errorf("permanent read failure took %v; it must not be retried", d)
+	if len(slept) != 0 {
+		t.Errorf("permanent read failure was retried %d times; it must not be retried", len(slept))
 	}
 	if isTransientReadError(os.ErrPermission) {
 		t.Error("ACCESS_DENIED must not be a transient READ error")

@@ -129,6 +129,10 @@ func isTransientRenameError(err error) bool {
 // open still surfaces as an error well under half a second.
 const fsRetryAttempts = 12
 
+// fsSleep is time.Sleep behind a variable so tests can assert the schedule
+// (attempt count and summed backoff) instead of racing a wall clock.
+var fsSleep = time.Sleep
+
 func fsRetryBackoff(n int) time.Duration {
 	d := time.Duration(2<<uint(n)) * time.Millisecond
 	if d > 50*time.Millisecond {
@@ -149,7 +153,7 @@ func renameWithRetry(oldpath, newpath string) error {
 		if !isTransientRenameError(err) {
 			return err
 		}
-		time.Sleep(fsRetryBackoff(n))
+		fsSleep(fsRetryBackoff(n))
 	}
 	return err
 }
@@ -170,7 +174,7 @@ func readFileWithRetry(path string) ([]byte, error) {
 		if !isTransientReadError(err) {
 			return nil, err
 		}
-		time.Sleep(fsRetryBackoff(n))
+		fsSleep(fsRetryBackoff(n))
 	}
 	return nil, err
 }
