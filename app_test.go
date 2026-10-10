@@ -189,3 +189,24 @@ func TestWrapScreenCmdPassesThroughQuitMsg(t *testing.T) {
 		t.Fatalf("wrapped quit command produced %T, want tea.QuitMsg", msg)
 	}
 }
+
+// TestQuitViewKeepsScreenMode guards the "[?1u" prompt leak: if the final
+// frame leaves the alt screen, bubbletea re-pushes and re-queries the kitty
+// keyboard flags while shutting down, and the terminal's reply arrives after
+// input reading stopped. The quit frame must keep the running view's screen
+// mode and keyboard settings so no query is sent.
+func TestQuitViewKeepsScreenMode(t *testing.T) {
+	a := newApp(nil)
+	a.width = 80
+	a.height = 24
+	running := a.View()
+
+	a.quitting = true
+	quit := a.View()
+	if quit.AltScreen != running.AltScreen {
+		t.Errorf("quit view AltScreen = %v, want %v (same as the running view)", quit.AltScreen, running.AltScreen)
+	}
+	if quit.KeyboardEnhancements != running.KeyboardEnhancements {
+		t.Errorf("quit view KeyboardEnhancements = %+v, want %+v", quit.KeyboardEnhancements, running.KeyboardEnhancements)
+	}
+}

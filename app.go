@@ -421,7 +421,14 @@ func (a app) screenContentTop() int {
 
 func (a app) View() tea.View {
 	if a.quitting {
-		return tea.NewView("")
+		// Stay on the alt screen for the final frame and let the renderer's
+		// close leave it. A frame that switches screens makes bubbletea push
+		// the kitty keyboard flags again and query them (CSI ? u); during
+		// shutdown nothing reads the reply, so terminals that answer it
+		// (Windows Terminal 1.25+) leak "[?1u" into the shell prompt.
+		v := tea.NewView("")
+		v.AltScreen = true
+		return v
 	}
 
 	logo := a.renderLogo()
