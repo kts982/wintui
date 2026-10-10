@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -79,10 +80,15 @@ func rowByID(rep cleanupScanJSON, id string) cleanupScanTargetJSON {
 func TestCleanupScanListsEveryTargetWithHonestStatus(t *testing.T) {
 	setupConfigTest(t)
 	fakeCleanupRegistry(t, false)
+	// The scan runs targets concurrently, so the stub's bookkeeping needs a
+	// lock; walked is only read after scanReport has waited for every worker.
+	var walkedMu sync.Mutex
 	walked := map[string]bool{}
 	savedScan := cleanupScanFn
 	cleanupScanFn = func(ctx context.Context, def cleanupTargetDef) cleanupTargetResult {
+		walkedMu.Lock()
 		walked[def.id] = true
+		walkedMu.Unlock()
 		return cleanupScan(ctx, def)
 	}
 	t.Cleanup(func() { cleanupScanFn = savedScan })
