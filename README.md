@@ -96,7 +96,7 @@ without any configuration.
 
 ![WinTUI cycling through every theme](docs/themes/cycle.gif)
 
-Open **Settings** (tab `4`), arrow down to **Color Theme**, then use
+Open **Settings** (tab `5`), arrow down to **Color Theme**, then use
 `←` / `→` (or `Space`) to cycle. Changes apply live.
 
 <details>
@@ -247,7 +247,7 @@ Further documentation:
 
 ## Settings
 
-Configurable from the Settings tab or from the CLI with `wintui config` (same keys, validated values, see [docs/cli.md → config](docs/cli.md#config)), stored in `%APPDATA%\wintui\settings.json`:
+Configurable from the Settings tab or from the CLI with `wintui config` (same keys, validated values, see [docs/cli.md → config](docs/cli.md#config)), stored in `%APPDATA%\wintui\settings.json`. On the Settings tab, `s` saves and `R` (Shift+R) resets these settings to their defaults; per-package rules and cleanup opt-ins are kept:
 
 | Setting | Options |
 |---|---|

@@ -84,8 +84,15 @@ func (s settingsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.diskState = appSettings
 				s.errMsg = ""
 			}
-		case "r":
-			setAppSettings(DefaultSettings())
+		case "R":
+			// Reset only what this screen edits. Package rules and cleanup
+			// opt-ins are edited elsewhere and persist immediately; dropping
+			// them here would make every tab ignore holds and scope pins
+			// until restart, and a following "s" would erase them on disk.
+			next := DefaultSettings()
+			next.Packages = appSettings.Packages
+			next.CleanupEnabledTargets = appSettings.CleanupEnabledTargets
+			setAppSettings(next)
 			s.saved = false
 			s.markDirty(!settingsEqual(appSettings, s.diskState))
 			s.errMsg = ""

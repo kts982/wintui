@@ -33,9 +33,11 @@ var (
 		key.WithKeys("s"),
 		key.WithHelp("s", "save"),
 	)
+	// Shift+R, not r: every other tab binds r to refresh, and a habitual
+	// refresh press on the Settings tab must not reset anything.
 	keyReset = key.NewBinding(
-		key.WithKeys("r"),
-		key.WithHelp("r", "reset defaults"),
+		key.WithKeys("R"),
+		key.WithHelp("R", "reset defaults"),
 	)
 	keyCycle = key.NewBinding(
 		key.WithKeys("left", "right", "enter"),
