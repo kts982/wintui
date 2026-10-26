@@ -355,6 +355,9 @@ func buildTUIHistoryRecord(items []batchItem, trigger string, selectedVersions m
 		if bi.status == batchFailed && bi.err != nil {
 			it.Error = bi.err.Error()
 		}
+		if r, ok := asElevationRefusal(bi.err); ok && bi.status == batchSkipped {
+			it.Notes = r.note
+		}
 		hi = append(hi, it)
 	}
 	return newHistoryRecord(trigger, hi)
@@ -372,6 +375,14 @@ func cliUpgradeItem(pkg Package, status string) historyItem {
 		ToVersion:   pkg.Available,
 		Status:      status,
 	}
+}
+
+// cliRefusedItem is cliUpgradeItem for an elevation refusal: skipped, with
+// the refusal's note.
+func cliRefusedItem(pkg Package, r *elevationRefusal) historyItem {
+	item := cliUpgradeItem(pkg, historyStatusSkipped)
+	item.Notes = r.note
+	return item
 }
 
 // recordImportHistory records an install batch from the parallel id/source/
@@ -392,8 +403,13 @@ func recordImportHistory(trigger string, ids, sources, versions []string, errs [
 			it.ToVersion = versions[i]
 		}
 		if i < len(errs) && errs[i] != nil {
-			it.Status = historyStatusError
-			it.Error = errs[i].Error()
+			if r, ok := asElevationRefusal(errs[i]); ok {
+				it.Status = historyStatusSkipped
+				it.Notes = r.note
+			} else {
+				it.Status = historyStatusError
+				it.Error = errs[i].Error()
+			}
 		}
 		items = append(items, it)
 	}

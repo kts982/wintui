@@ -181,7 +181,7 @@ func TestPackageElevateRuleUnderSeparateAccount(t *testing.T) {
 			appSettings.Scope = tt.globalScope
 			appSettings.setOverride("Test.App", "winget", PackageOverride{Scope: tt.ruleScope, Elevate: &elevate})
 
-			lines, err := drainRoute(runActionStreamForPackage(context.Background(), "Test.App", "winget", "install", "--id", "Test.App"))
+			lines, err := drainRoute(runActionStreamForPackage(context.Background(), retryOpInstall, "Test.App", "winget", "install", "--id", "Test.App"))
 			if err != nil {
 				t.Fatalf("route err = %v", err)
 			}

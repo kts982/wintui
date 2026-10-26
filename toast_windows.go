@@ -251,7 +251,7 @@ $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
 // mixed batch doesn't claim "1 of 1 succeeded" while one item still needs
 // action. Skipped only if the entire batch had no meaningful outcomes.
 func notifyBatchFinish(items []batchItem) {
-	var done, failed, pending int
+	var done, failed, pending, skipped int
 	for _, bi := range items {
 		switch bi.status {
 		case batchDone:
@@ -260,15 +260,20 @@ func notifyBatchFinish(items []batchItem) {
 			failed++
 		case batchPendingRestart:
 			pending++
+		case batchSkipped:
+			skipped++
 		}
 	}
-	if done == 0 && failed == 0 && pending == 0 {
+	if done == 0 && failed == 0 && pending == 0 && skipped == 0 {
 		return
 	}
-	total := done + failed + pending
+	total := done + failed + pending + skipped
 	body := fmt.Sprintf("%d of %d %s", done, total, batchActionVerb(items))
 	if failed > 0 {
 		body += fmt.Sprintf(" · %d failed", failed)
+	}
+	if skipped > 0 {
+		body += fmt.Sprintf(" · %d skipped", skipped)
 	}
 	if pending > 0 {
 		body += fmt.Sprintf(" · %d awaiting restart", pending)

@@ -161,14 +161,15 @@ func wingetPortablePackageDirNames() []string {
 
 // isPortableInstalled reports whether pkgID has a portable package directory.
 // The trailing "_" before the source identifier prevents prefix collisions
-// (e.g. "Foo.Bar" must not match "Foo.BarBaz_...").
+// (e.g. "Foo.Bar" must not match "Foo.BarBaz_..."). Case-insensitive, like
+// the file system and winget IDs.
 func isPortableInstalled(pkgID string, dirNames []string) bool {
 	if pkgID == "" {
 		return false
 	}
 	prefix := pkgID + "_"
 	for _, n := range dirNames {
-		if strings.HasPrefix(n, prefix) {
+		if len(n) >= len(prefix) && strings.EqualFold(n[:len(prefix)], prefix) {
 			return true
 		}
 	}

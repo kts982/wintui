@@ -683,7 +683,11 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		// Don't advance if batch was cancelled (phase already set to complete).
 		if s.modal != nil && s.modal.phase == execPhaseRunning && s.modal.idx < len(s.modal.items) {
 			s.modal.items[s.modal.idx].output = s.exec.currentOutput()
-			if msg.err != nil {
+			if _, refused := asElevationRefusal(msg.err); refused {
+				s.exec.appendLine(msg.err.Error())
+				s.modal.items[s.modal.idx].status = batchSkipped
+				s.modal.items[s.modal.idx].err = msg.err
+			} else if msg.err != nil {
 				s.modal.items[s.modal.idx].status = batchFailed
 				s.modal.items[s.modal.idx].err = msg.err
 				s.modal.items[s.modal.idx].blockedByProc = isProcessInUseError(msg.err, s.modal.items[s.modal.idx].output)

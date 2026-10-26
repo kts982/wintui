@@ -939,13 +939,20 @@ func (m importModel) view(width, height int) string {
 		} else if m.statusMsg != "" {
 			b.WriteString("  " + m.statusMsg + "\n")
 		} else if m.batchTotal > 0 {
-			successCount, failCount := batchResultCounts(m.batchErrs)
-			if failCount == 0 {
+			successCount, failCount, skippedCount := batchResultCounts(m.batchErrs)
+			switch {
+			case failCount == 0 && skippedCount == 0:
 				fmt.Fprintf(&b, "  %s\n\n",
 					successStyle.Render(fmt.Sprintf("%d package(s) installed from this export.", successCount)))
-			} else {
+			case failCount == 0:
 				fmt.Fprintf(&b, "  %s\n\n",
-					warnStyle.Render(fmt.Sprintf("Import finished: %d succeeded, %d failed", successCount, failCount)))
+					warnStyle.Render(fmt.Sprintf("Import finished: %d succeeded, %d skipped (run WinTUI non-elevated)", successCount, skippedCount)))
+			default:
+				summary := fmt.Sprintf("Import finished: %d succeeded, %d failed", successCount, failCount)
+				if skippedCount > 0 {
+					summary += fmt.Sprintf(", %d skipped", skippedCount)
+				}
+				fmt.Fprintf(&b, "  %s\n\n", warnStyle.Render(summary))
 			}
 			output := formatBatchResults(m.batchIDs, m.batchErrs)
 			lines := strings.Split(output, "\n")

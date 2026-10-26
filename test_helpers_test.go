@@ -24,6 +24,11 @@ func TestMain(m *testing.M) {
 	// history.json; write-point tests override it locally to capture records.
 	historyRecordFn = func(historyRecord) (string, error) { return "", nil }
 
+	// Portable evidence reads the real %LOCALAPPDATA%; pin it to "not
+	// portable" so routing tests don't depend on what this machine has
+	// installed. Policy tests override it locally.
+	portableInstalled = func(string) bool { return false }
+
 	code := m.Run()
 
 	if settingsErr == nil {

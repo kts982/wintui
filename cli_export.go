@@ -291,7 +291,7 @@ func executeImport(out io.Writer, pkgs []importPkg) error {
 	fmt.Fprintf(out, "Installing %d package(s)...\n", len(pkgs))
 
 	ctx := context.Background()
-	var failures int
+	var failures, refused int
 	var histItems []historyItem
 	defer func() {
 		if len(histItems) > 0 {
@@ -307,7 +307,12 @@ func executeImport(out io.Writer, pkgs []importPkg) error {
 		// "version not found" error if it has aged out of the catalog.
 		_, err := importInstallFn(ctx, Package{ID: pkg.ID, Source: source}, pkg.Version)
 		item := historyItem{ID: pkg.ID, Name: pkg.Name, Source: source, Action: historyActionInstall, ToVersion: pkg.Version, Status: historyStatusOK}
-		if err != nil {
+		if r, ok := asElevationRefusal(err); ok {
+			refused++
+			fmt.Fprintf(out, "      • %v\n", r)
+			item.Status = historyStatusSkipped
+			item.Notes = r.note
+		} else if err != nil {
 			failures++
 			fmt.Fprintf(out, "      ✗ %v\n", err)
 			item.Status = historyStatusError
@@ -316,11 +321,15 @@ func executeImport(out io.Writer, pkgs []importPkg) error {
 		histItems = append(histItems, item)
 	}
 
+	skipped := ""
+	if refused > 0 {
+		skipped = fmt.Sprintf(", %d skipped (run WinTUI non-elevated)", refused)
+	}
 	if failures > 0 {
-		fmt.Fprintf(out, "\nDone — %d succeeded, %d failed.\n", len(pkgs)-failures, failures)
+		fmt.Fprintf(out, "\nDone — %d succeeded, %d failed%s.\n", len(pkgs)-failures-refused, failures, skipped)
 		cliExitCode = 1
 		return nil
 	}
-	fmt.Fprintf(out, "\nDone — %d package(s) installed.\n", len(pkgs))
+	fmt.Fprintf(out, "\nDone — %d package(s) installed%s.\n", len(pkgs)-refused, skipped)
 	return nil
 }

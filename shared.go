@@ -32,6 +32,9 @@ func formatBatchResults(ids []string, errs []error) string {
 		}
 		if errs[i] == nil {
 			b.WriteString(successStyle.Render("  ✓ ") + id + "\n")
+		} else if _, refused := asElevationRefusal(errs[i]); refused {
+			b.WriteString(warnStyle.Render("  – ") + id + "\n")
+			b.WriteString("    " + helpStyle.Render(errs[i].Error()) + "\n")
 		} else {
 			reason := errs[i].Error()
 			b.WriteString(errorStyle.Render("  ✗ ") + id + "\n")
@@ -41,15 +44,19 @@ func formatBatchResults(ids []string, errs []error) string {
 	return b.String()
 }
 
-func batchResultCounts(errs []error) (successCount, failCount int) {
+// batchResultCounts tallies a batch's per-item errors; an elevation refusal
+// counts as skipped, not failed.
+func batchResultCounts(errs []error) (successCount, failCount, skippedCount int) {
 	for _, err := range errs {
 		if err == nil {
 			successCount++
+		} else if _, refused := asElevationRefusal(err); refused {
+			skippedCount++
 		} else {
 			failCount++
 		}
 	}
-	return successCount, failCount
+	return successCount, failCount, skippedCount
 }
 
 // pluralize returns "1 thing" or "N things" without forcing the caller into

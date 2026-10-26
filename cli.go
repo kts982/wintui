@@ -522,6 +522,7 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 	var (
 		failures    []string
 		held        []string
+		refused     []string
 		notFound    []string
 		skippedSelf bool
 		upgraded    int
@@ -555,7 +556,13 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 			histItems = append(histItems, item)
 			continue
 		}
-		if err := streamUpgradeFn(ctx, pkg, out); err != nil {
+		err := streamUpgradeFn(ctx, pkg, out)
+		if r, ok := asElevationRefusal(err); ok {
+			// Like a hold: the named package was not upgraded, by policy.
+			fmt.Fprintln(out, "  "+cliDanger("✗ "+r.Error()))
+			refused = append(refused, pkg.ID)
+			histItems = append(histItems, cliRefusedItem(pkg, r))
+		} else if err != nil {
 			fmt.Fprintf(out, "  %s\n", cliDanger(fmt.Sprintf("✗ failed: %v", err)))
 			failures = append(failures, pkg.ID)
 			item := cliUpgradeItem(pkg, historyStatusError)
@@ -575,6 +582,10 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 	}
 	if len(held) > 0 {
 		fmt.Fprintf(out, " %s", cliDanger("Held: "+strings.Join(held, ", ")))
+		cliExitCode = 1
+	}
+	if len(refused) > 0 {
+		fmt.Fprintf(out, " %s", cliDanger("Not run elevated: "+strings.Join(refused, ", ")))
 		cliExitCode = 1
 	}
 	if len(notFound) > 0 {
@@ -645,7 +656,7 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 		}
 	}()
 
-	var failures []string
+	var failures, refused []string
 	var skippedSelf bool
 	for _, pkg := range pkgs {
 		fmt.Fprintf(out, "\n%s\n", cliAccent(fmt.Sprintf("→ %s (%s) %s → %s", pkg.Name, pkg.ID, pkg.Version, pkg.Available)))
@@ -657,7 +668,13 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 			histItems = append(histItems, item)
 			continue
 		}
-		if err := streamUpgradeFn(ctx, pkg, out); err != nil {
+		err := streamUpgradeFn(ctx, pkg, out)
+		if r, ok := asElevationRefusal(err); ok {
+			// A policy refusal, not a failure: a scheduled run stays exit 0.
+			fmt.Fprintln(out, "  • "+r.Error())
+			refused = append(refused, pkg.ID)
+			histItems = append(histItems, cliRefusedItem(pkg, r))
+		} else if err != nil {
 			fmt.Fprintf(out, "  %s\n", cliDanger(fmt.Sprintf("✗ failed: %v", err)))
 			failures = append(failures, pkg.ID)
 			item := cliUpgradeItem(pkg, historyStatusError)
@@ -669,15 +686,15 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 		}
 	}
 
-	// The skipped self-package is excluded from both sides of the summary:
-	// counting it in the denominator made a clean run read "0/1 succeeded"
-	// when WinTUI was the only pending update.
-	attempted := len(pkgs)
+	// Skipped packages (the self-package, elevation refusals) are excluded
+	// from both sides of the summary: counting them in the denominator made a
+	// clean run read "0/1 succeeded" when WinTUI was the only pending update.
+	attempted := len(pkgs) - len(refused)
 	if skippedSelf {
 		attempted--
 	}
 	upgraded := attempted - len(failures)
-	if attempted == 0 && skippedSelf {
+	if attempted == 0 && skippedSelf && len(refused) == 0 {
 		fmt.Fprintln(out, "\nNothing upgraded: only WinTUI itself had an update. Run 'wintui upgrade --self'.")
 		return nil
 	}
@@ -685,6 +702,9 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 	if len(failures) > 0 {
 		fmt.Fprintf(out, " %s", cliDanger("Failed: "+strings.Join(failures, ", ")))
 		cliExitCode = 1
+	}
+	if len(refused) > 0 {
+		fmt.Fprintf(out, " Skipped (run WinTUI non-elevated): %s", strings.Join(refused, ", "))
 	}
 	if skippedSelf {
 		fmt.Fprint(out, " (WinTUI self-upgrade skipped)")

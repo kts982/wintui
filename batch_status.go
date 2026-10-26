@@ -18,6 +18,7 @@ const (
 	batchDone
 	batchFailed
 	batchPendingRestart
+	batchSkipped // not run: refused by the package's elevation rules
 )
 
 // batchItem pairs a workspace item with its execution status.
@@ -48,6 +49,8 @@ func (b batchItem) statusIcon(sp spinner.Model) string {
 		return lipgloss.NewStyle().Foreground(danger).Bold(true).Render("✗")
 	case batchPendingRestart:
 		return lipgloss.NewStyle().Foreground(warning).Bold(true).Render("↺")
+	case batchSkipped:
+		return lipgloss.NewStyle().Foreground(warning).Bold(true).Render("–")
 	}
 	return " "
 }
@@ -68,6 +71,11 @@ func (b batchItem) statusText() string {
 		return errorStyle.Render("failed")
 	case batchPendingRestart:
 		return warnStyle.Render("restart to finish")
+	case batchSkipped:
+		if b.err != nil {
+			return warnStyle.Render(b.err.Error())
+		}
+		return warnStyle.Render("skipped")
 	}
 	return ""
 }
@@ -113,7 +121,7 @@ func batchCounters(items []batchItem) (completed, failed, total int) {
 		case batchFailed:
 			failed++
 			completed++
-		case batchPendingRestart:
+		case batchPendingRestart, batchSkipped:
 			completed++
 		}
 	}

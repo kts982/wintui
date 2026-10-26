@@ -220,12 +220,20 @@ func installPackageSourceCtx(ctx context.Context, pkg Package, version string) (
 	if err != nil {
 		return "", err
 	}
+	// Import never starts elevation, but an elevated WinTUI would install a
+	// user-scope package as administrator.
+	if err := elevationRefusalCheck(currentSettings(), retryOpInstall, resolved.ID, resolved.Source); err != nil {
+		return "", err
+	}
 	args := installCommandArgs(resolved.ID, resolved.Source, version)
 	return runWingetActionCtx(ctx, args...)
 }
 
 func shouldRetryUninstallWithoutPurge(err error, output string) bool {
 	if err == nil || !currentSettings().PurgeOnUninstall {
+		return false
+	}
+	if _, refused := asElevationRefusal(err); refused {
 		return false
 	}
 	lower := strings.ToLower(err.Error() + "\n" + output)
@@ -307,6 +315,7 @@ var wingetErrorCodes = []struct{ code, desc string }{
 	{"0x8a150052", "portable package could not replace files (close the running app before upgrading)"},
 	{"0x8a150056", "package requires administrator privileges to install"},
 	{"0x8a150066", "one or more versions failed to uninstall (close the app and retry)"},
+	{"0x8a15007d", "installed for user scope, so winget will not uninstall it as administrator (run WinTUI non-elevated)"},
 	{"0x80073d28", "installer requires administrator privileges (try running as admin)"},
 	{"0x80073cf3", "package install failed (conflicting package)"},
 	{"0x80073d02", "installation blocked by a running process"},
@@ -977,10 +986,6 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 	return outChan, errChan
 }
 
-func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string, <-chan error) {
-	return runActionSmartStreamCtxFor(ctx, currentSettings(), args...)
-}
-
 // upfrontHelperAllowed reports whether a silent action may go straight to the
 // elevated helper. When elevation runs as another account (Administrator
 // protection, over-the-shoulder UAC) only explicit machine scope may: that
@@ -1002,8 +1007,8 @@ func retryHelperAllowed(eff Settings, separate bool) bool {
 // route: the seam tests replace to assert routing without spawning winget.
 var actionWingetStream = runWingetStreamCtx
 
-// runActionSmartStreamCtxFor is runActionSmartStreamCtx with eff — the
-// package's effective settings — deciding the elevation routes.
+// runActionSmartStreamCtxFor runs a winget action with the auto-elevation
+// routes, with eff — the package's effective settings — deciding them.
 func runActionSmartStreamCtxFor(ctx context.Context, eff Settings, args ...string) (<-chan string, <-chan error) {
 	// When silent mode + auto-elevate are both on and we're not already
 	// elevated, run everything through the elevated helper upfront.
@@ -1063,31 +1068,53 @@ func runActionSmartStreamCtxFor(ctx context.Context, eff Settings, args ...strin
 // elevate: the helper would run as another account.
 const elevateRuleSkippedNote = "Not elevating despite elevate=true: elevation here runs as a different account; set scope=machine on this rule to elevate."
 
-func runActionStreamForPackage(ctx context.Context, pkgID, source string, args ...string) (<-chan string, <-chan error) {
+// runActionStreamForPackage runs one install/upgrade/uninstall with the
+// package's rules deciding elevation: a user-scope package (rule, setting or
+// portable install) or an elevate=false rule never starts elevation, and is
+// refused outright when WinTUI itself runs elevated and the package is
+// user-scope; an elevate=true rule elevates upfront.
+func runActionStreamForPackage(ctx context.Context, action retryOp, pkgID, source string, args ...string) (<-chan string, <-chan error) {
 	settings := currentSettings()
+	if err := elevationRefusalCheck(settings, action, pkgID, source); err != nil {
+		return closedStringChan(), errChanWith(err)
+	}
+	if noElevationReason(settings, action, pkgID, source) != "" {
+		return actionWingetStream(ctx, false, args...)
+	}
 	eff := settings.effectiveSettings(pkgID, source)
-	elev := settings.packageElevateOverride(pkgID, source)
-	if elev != nil {
-		if *elev && !isElevated() {
-			// elevate=true means "me, with admin rights". When elevation runs
-			// as another account that only holds for machine scope; anything
-			// else would land in that account's profile, so the action runs
-			// as the user and says why.
-			allowed := func(separate bool) bool { return upfrontHelperAllowed(eff, separate) }
-			out, errCh, initErr := globalElevator.runCommandElevatedIf(ctx, allowed, args...)
-			if initErr == nil {
-				return out, errCh
-			}
-			if errors.Is(initErr, errHelperOtherAccount) {
-				out, errCh := runActionSmartStreamCtxFor(ctx, eff, args...)
-				return prependLine(elevateRuleSkippedNote, out, errCh)
-			}
+	if elev := settings.packageElevateOverride(pkgID, source); elev != nil && *elev && !isElevated() {
+		// elevate=true means "me, with admin rights". When elevation runs as
+		// another account that only holds for machine scope; anything else
+		// would land in that account's profile, so the action runs as the
+		// user and says why.
+		allowed := func(separate bool) bool { return upfrontHelperAllowed(eff, separate) }
+		out, errCh, initErr := globalElevator.runCommandElevatedIf(ctx, allowed, args...)
+		if initErr == nil {
+			return out, errCh
 		}
-		if !*elev {
-			return actionWingetStream(ctx, false, args...)
+		if errors.Is(initErr, errHelperOtherAccount) {
+			out, errCh := runActionSmartStreamCtxFor(ctx, eff, args...)
+			return prependLine(elevateRuleSkippedNote, out, errCh)
 		}
 	}
 	return runActionSmartStreamCtxFor(ctx, eff, args...)
+}
+
+// runForcedElevated runs an explicit elevated retry (Ctrl+E) through the
+// helper unless forcedElevationBlockReason refuses it. A refusal comes back on
+// the error channel, so the batch records it as skipped.
+func runForcedElevated(ctx context.Context, action retryOp, pkgID, source string, args ...string) (<-chan string, <-chan error, error) {
+	settings := currentSettings()
+	if reason := forcedElevationBlockReason(settings, action, pkgID, source); reason != "" {
+		return closedStringChan(), errChanWith(refuseForcedElevation(reason)), nil
+	}
+	eff := settings.effectiveSettings(pkgID, source)
+	allowed := func(separate bool) bool { return retryHelperAllowed(eff, separate) }
+	out, errCh, initErr := globalElevator.runCommandElevatedIf(ctx, allowed, args...)
+	if errors.Is(initErr, errHelperOtherAccount) {
+		return closedStringChan(), errChanWith(refuseForcedElevation(otherAccountReason)), nil
+	}
+	return out, errCh, initErr
 }
 
 // prependLine returns the stream with line emitted before its own lines.
@@ -1109,7 +1136,7 @@ func installPackageStreamCtx(ctx context.Context, pkg Package, version string) (
 		return nil, closedStringChan(), errChanWith(err)
 	}
 	args := installCommandArgs(resolved.ID, resolved.Source, version)
-	out, errCh := runActionStreamForPackage(ctx, resolved.ID, resolved.Source, args...)
+	out, errCh := runActionStreamForPackage(ctx, retryOpInstall, resolved.ID, resolved.Source, args...)
 	return args, out, errCh
 }
 
@@ -1119,7 +1146,7 @@ func installPackageElevatedStreamCtx(ctx context.Context, pkg Package, version s
 		return nil, closedStringChan(), errChanWith(err), nil
 	}
 	args := installCommandArgs(resolved.ID, resolved.Source, version)
-	out, errCh, initErr := globalElevator.runCommandElevated(ctx, args...)
+	out, errCh, initErr := runForcedElevated(ctx, retryOpInstall, resolved.ID, resolved.Source, args...)
 	return args, out, errCh, initErr
 }
 
@@ -1129,7 +1156,7 @@ func upgradePackageStreamCtx(ctx context.Context, pkg Package, version string) (
 		return nil, closedStringChan(), errChanWith(err)
 	}
 	args := upgradeCommandArgs(resolved.ID, resolved.Source, version)
-	out, errCh := runActionStreamForPackage(ctx, resolved.ID, resolved.Source, args...)
+	out, errCh := runActionStreamForPackage(ctx, retryOpUpgrade, resolved.ID, resolved.Source, args...)
 	return args, out, errCh
 }
 
@@ -1139,7 +1166,7 @@ func upgradePackageElevatedStreamCtx(ctx context.Context, pkg Package, version s
 		return nil, closedStringChan(), errChanWith(err), nil
 	}
 	args := upgradeCommandArgs(resolved.ID, resolved.Source, version)
-	out, errCh, initErr := globalElevator.runCommandElevated(ctx, args...)
+	out, errCh, initErr := runForcedElevated(ctx, retryOpUpgrade, resolved.ID, resolved.Source, args...)
 	return args, out, errCh, initErr
 }
 
@@ -1177,7 +1204,7 @@ func uninstallPackageStreamCtx(ctx context.Context, pkg Package, allVersions boo
 		defer close(errChan)
 
 		runAttempt := func(includePurge bool) (string, error, bool) {
-			streamOut, streamErr := runActionSmartStreamCtx(ctx, uninstallCommandArgs(pkg, includePurge, allVersions)...)
+			streamOut, streamErr := runActionStreamForPackage(ctx, retryOpUninstall, pkg.ID, pkg.Source, uninstallCommandArgs(pkg, includePurge, allVersions)...)
 			var lines []string
 			for line := range streamOut {
 				lines = append(lines, line)
@@ -1229,7 +1256,7 @@ func uninstallPackageElevatedStreamCtx(ctx context.Context, pkg Package, allVers
 		defer close(errChan)
 
 		runAttempt := func(includePurge bool) (string, error, error) {
-			streamOut, streamErr, initErr := globalElevator.runCommandElevated(ctx, uninstallCommandArgs(pkg, includePurge, allVersions)...)
+			streamOut, streamErr, initErr := runForcedElevated(ctx, retryOpUninstall, pkg.ID, pkg.Source, uninstallCommandArgs(pkg, includePurge, allVersions)...)
 			if initErr != nil {
 				return "", nil, initErr
 			}

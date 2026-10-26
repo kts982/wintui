@@ -105,6 +105,16 @@ func (m execModal) pendingRestartCount() int {
 	return n
 }
 
+func (m execModal) skippedCount() int {
+	n := 0
+	for _, bi := range m.items {
+		if bi.status == batchSkipped {
+			n++
+		}
+	}
+	return n
+}
+
 func (m execModal) hasPendingSelfUpgrade() bool {
 	return m.pendingRestartCount() > 0
 }
@@ -379,7 +389,8 @@ func (m execModal) viewRunning() (string, []string, string) {
 func (m execModal) viewComplete() (string, []string, string) {
 	completed, failed, _ := batchCounters(m.items)
 	pending := m.pendingRestartCount()
-	succeeded := completed - failed
+	skipped := m.skippedCount()
+	succeeded := completed - failed - skipped
 
 	var title string
 	if failed == 0 {
@@ -395,10 +406,16 @@ func (m execModal) viewComplete() (string, []string, string) {
 		body = append(body, warnStyle.Render(fmt.Sprintf("%d completed, %d pending restart", succeeded-pending, pending)))
 	} else if pending > 0 {
 		body = append(body, warnStyle.Render(fmt.Sprintf("%d completed, %d failed, %d pending restart", succeeded-pending, failed, pending)))
-	} else if failed == 0 {
+	} else if failed == 0 && skipped == 0 {
 		body = append(body, successStyle.Render(fmt.Sprintf("All %d packages succeeded.", succeeded)))
+	} else if failed == 0 {
+		body = append(body, warnStyle.Render(fmt.Sprintf("%d succeeded, %d skipped", succeeded, skipped)))
 	} else {
-		body = append(body, warnStyle.Render(fmt.Sprintf("%d succeeded, %d failed", succeeded, failed)))
+		summary := fmt.Sprintf("%d succeeded, %d failed", succeeded, failed)
+		if skipped > 0 {
+			summary += fmt.Sprintf(", %d skipped", skipped)
+		}
+		body = append(body, warnStyle.Render(summary))
 	}
 	body = append(body, "")
 
@@ -411,6 +428,8 @@ func (m execModal) viewComplete() (string, []string, string) {
 		}
 		if bi.status == batchPendingRestart {
 			line += "  " + warnStyle.Render("finish upgrade, then start wintui again")
+		} else if bi.status == batchSkipped {
+			line += "  " + bi.statusText()
 		} else if bi.err != nil {
 			line += "  " + errorStyle.Render(bi.err.Error())
 		} else {
@@ -420,6 +439,11 @@ func (m execModal) viewComplete() (string, []string, string) {
 
 		if bi.status == batchFailed && bi.blockedByProc {
 			body = append(body, "    "+warnStyle.Render("Close the running application and press ctrl+e to retry."))
+		}
+		if bi.status == batchFailed && bi.err != nil && !isElevated() && likelyBenefitsFromElevation(bi.err, bi.output) {
+			if reason := elevationRetryBlockReason(bi); reason != "" {
+				body = append(body, "    "+warnStyle.Render("Not elevated: "+reason+"."))
+			}
 		}
 
 		// Show key log lines for this package (compact).
@@ -455,17 +479,30 @@ func (m execModal) viewComplete() (string, []string, string) {
 	return title, body, actions
 }
 
-// hasElevationCandidates returns true if any failed items could benefit from elevation.
+// hasElevationCandidates returns true if any failed items could benefit from
+// elevation and their rules allow it.
 func (m execModal) hasElevationCandidates() bool {
 	for _, bi := range m.items {
-		if bi.status != batchFailed || bi.err == nil {
-			continue
-		}
-		if likelyBenefitsFromElevation(bi.err, bi.output) {
+		if isElevationCandidate(bi) {
 			return true
 		}
 	}
 	return false
+}
+
+// isElevationCandidate reports whether bi failed in a way elevation may fix,
+// and its rules allow an elevated retry.
+func isElevationCandidate(bi batchItem) bool {
+	return bi.status == batchFailed && bi.err != nil &&
+		likelyBenefitsFromElevation(bi.err, bi.output) && elevationRetryBlockReason(bi) == ""
+}
+
+// elevationRetryBlockReason reports why bi must not be retried elevated — a
+// user-scope or elevate=false rule, a portable install, or a helper that runs
+// as another account — or "" when it may be.
+func elevationRetryBlockReason(bi batchItem) string {
+	pkg := bi.item.pkg
+	return forcedElevationBlockReason(currentSettings(), bi.action, pkg.ID, pkg.Source)
 }
 
 // hasBlockedByProcess returns true if any failed items were blocked because a
@@ -487,7 +524,7 @@ func (m execModal) elevationCandidateItems() []batchItem {
 		if bi.status != batchFailed || bi.err == nil {
 			continue
 		}
-		if likelyBenefitsFromElevation(bi.err, bi.output) || bi.blockedByProc {
+		if isElevationCandidate(bi) || bi.blockedByProc {
 			items = append(items, batchItem{
 				action:      bi.action,
 				item:        bi.item,

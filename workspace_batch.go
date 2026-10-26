@@ -436,7 +436,10 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 	var outChan <-chan string
 	var errChan <-chan error
 
-	if s.modal.forceElevated {
+	// A Ctrl+E retry forces elevation, except for items whose rules forbid it
+	// (only blocked-by-process items get here with such rules): those retry
+	// on their normal route.
+	if s.modal.forceElevated && elevationRetryBlockReason(*current) == "" {
 		// Route through elevated helper for Ctrl+E retry.
 		var initErr error
 		switch current.action {
