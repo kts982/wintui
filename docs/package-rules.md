@@ -32,7 +32,7 @@ Package IDs are case-insensitive on every surface. See [CLI reference → rules]
 | `ignore_version` | any version string | Legacy hold for a single version (e.g., skip the current latest) |
 | `scope` | `global`, `user`, `machine` | Override the install scope for this package |
 | `architecture` | `global`, `x64`, `x86`, `arm64` | Force a specific installer architecture |
-| `elevate` | `global`, `always`, `never` | Override the auto-elevate behavior for this package |
+| `elevate` | `global`, `always`, `never` | Override the auto-elevate behavior for this package (`always` also overrides the user-scope safety for install and upgrade) |
 
 `global` means "fall back to the Settings tab value" — the rule is not set.
 `ask` is the default update policy.
@@ -84,7 +84,8 @@ To force `ignore = all` on a package that currently has an available update, use
 - **Source-qualified keys.** Rules are stored as `<source>:<id>`, so the same package ID in `winget` and `msstore` gets independent rules. Legacy plain-ID keys from earlier versions are still read.
 - **Case-insensitive keys.** winget IDs are case-insensitive, and so is the lookup: a typed `git.git` finds a stored `Git.Git` rule. A write keeps the casing of the key it finds (new rules take winget's own casing from the package cache) and leaves exactly one key per package, removing legacy bare-ID and case-variant aliases. Hand-edited duplicates that only differ in case are collapsed on load when their values agree; conflicting ones are listed by `wintui doctor`, refused by `rules set`, and removed together by `wintui rules clear <id>`.
 - **Two writers.** Rule edits from the CLI and the TUI are written as deltas over the file on disk, never as a whole snapshot, so a TUI open in another window does not lose a rule the CLI just set. The TUI picks up external changes on refresh (`r`) and when the Settings tab is opened.
-- **Overrides apply to install and upgrade.** `scope`, `architecture`, and `elevate` overrides are merged into the winget command line for both install and upgrade operations on that package.
+- **Overrides apply to install and upgrade.** `scope`, `architecture`, and `elevate` overrides are merged into the winget command line for both install and upgrade operations on that package. Uninstall follows the `scope` and `elevate` rules for elevation.
+- **User-scope packages are not elevated.** A package with `scope: user` (from its rule or the global setting), or a portable install, never starts elevation, and an already elevated WinTUI skips it — see [Elevation](elevation.md#user-scope-packages).
 - **Atomic persistence.** Saves write to disk first; runtime state is only updated after the write succeeds, so a failed save never silently changes behavior.
 
 ## Example

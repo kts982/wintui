@@ -94,8 +94,8 @@ representation. `wintui rules show <id>` is the semantic view.
 
 | Exit code | Meaning |
 |---|---|
-| `0` | All selected upgrades succeeded, no matching upgrades were available, or only the running WinTUI binary was skipped |
-| `1` | One or more package upgrades failed, or `--id` named a held package |
+| `0` | All selected upgrades succeeded, no matching upgrades were available, or packages were only skipped (the running WinTUI binary, or a user-scope package in an elevated terminal) |
+| `1` | One or more package upgrades failed, or `--id` named a held package or a user-scope package it skipped in an elevated terminal |
 
 ### `doctor`
 
@@ -120,6 +120,11 @@ whose per-package update policy is Auto. `--id` upgrades one or more named
 packages — the flag is repeatable (`--id A --id B`), packages without an
 available update are reported with no error, and naming a held package is
 an error (so the user notices their hold instead of silently skipping).
+
+Run from an elevated terminal, the upgrade skips user-scope packages (a
+`scope: user` rule or setting, or a portable install) with a "run WinTUI
+non-elevated" message instead of running winget as administrator for them;
+see [Elevation](elevation.md#user-scope-packages).
 
 `--all`, `--auto`, and `--id` are mutually exclusive.
 
@@ -294,7 +299,10 @@ next time the rule is edited (by the CLI or the TUI).
 `rules show` evaluates a version hold against the available version in the
 read-only package cache when it is warm (`active` / `inactive`) and says so
 honestly when it cannot (`cannot evaluate` — open the TUI or run
-`wintui check` to refresh the cache). It never calls winget.
+`wintui check` to refresh the cache). It never calls winget. The effective
+`elevate` is `false` for a user-scope package, with the reason, and an
+`--elevate always` rule on one is labelled as overriding the user-scope
+safety ([Elevation](elevation.md#user-scope-packages)).
 
 Invalid values are errors and write nothing; a typo in `--elevate` never
 means "never". New rules take winget's ID casing from the cache; an existing
@@ -405,7 +413,9 @@ can mis-scope these on upgrade and strip them from PATH ([winget-cli #4044 /
 #5099](https://github.com/microsoft/winget-cli/issues/4044)), so the command
 suddenly "disappears". `fix --portable` pins each one with a per-package
 `scope: user` + `elevate: false` override, so WinTUI always passes
-`--scope user` for them and the PATH entry survives future upgrades:
+`--scope user` for them and the PATH entry survives future upgrades. WinTUI
+never elevates a pinned package, and an elevated WinTUI skips it rather than
+run winget as administrator for it:
 
 ```powershell
 wintui fix --portable --dry-run   # preview which packages would be pinned
