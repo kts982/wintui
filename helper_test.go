@@ -236,3 +236,21 @@ func TestHelperPipeSDDLListenAndDial(t *testing.T) {
 		t.Fatalf("Accept: %v", err)
 	}
 }
+
+func TestHandleHelperConnectionReportsIdentity(t *testing.T) {
+	responses := driveHelperRequest(t, helperRequest{Action: "identity", Token: "tok"})
+	if len(responses) != 2 || responses[0].Type != "result" || responses[1].Type != "done" {
+		t.Fatalf("responses = %#v, want result + done", responses)
+	}
+	var id helperIdentity
+	if err := json.Unmarshal([]byte(responses[0].Data), &id); err != nil {
+		t.Fatalf("unmarshal identity %q: %v", responses[0].Data, err)
+	}
+	want, err := currentUserSID()
+	if err != nil {
+		t.Fatalf("currentUserSID: %v", err)
+	}
+	if id.SID != want {
+		t.Fatalf("identity SID = %q, want %q", id.SID, want)
+	}
+}

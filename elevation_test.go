@@ -48,6 +48,32 @@ type fakePipeAddr string
 func (a fakePipeAddr) Network() string { return "pipe" }
 func (a fakePipeAddr) String() string  { return string(a) }
 
+// answerIdentity plays the helper's side of the connect handshake, reporting
+// sid. It returns false (after answering with an error) if the first request
+// is not the identity request.
+func answerIdentity(reader *bufio.Reader, conn net.Conn, sid string) bool {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return false
+	}
+	var req helperRequest
+	if err := json.Unmarshal([]byte(line), &req); err != nil || req.Action != "identity" {
+		_ = sendHelperResponse(conn, "error", "expected the identity handshake first, got: "+line)
+		return false
+	}
+	b, _ := json.Marshal(helperIdentity{SID: sid})
+	_ = sendHelperResponse(conn, "result", string(b))
+	_ = sendHelperResponse(conn, "done", "")
+	return true
+}
+
+// selfSIDForTest is the SID the TUI side compares against, so a fake helper
+// reporting it looks like a same-account elevation.
+func selfSIDForTest() string {
+	sid, _ := currentUserSID()
+	return sid
+}
+
 func TestEnsureHelperTimeout(t *testing.T) {
 	origStart := startElevatedHelperFunc
 	origTimeout := helperAcceptTimeout
@@ -161,6 +187,9 @@ func TestCleanupTargetElevatedSuccess(t *testing.T) {
 	go func() {
 		defer clientConn.Close()
 		reader := bufio.NewReader(clientConn)
+		if !answerIdentity(reader, clientConn, selfSIDForTest()) {
+			return
+		}
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			return
@@ -221,6 +250,9 @@ func TestCleanupTargetElevatedHelperError(t *testing.T) {
 	go func() {
 		defer clientConn.Close()
 		reader := bufio.NewReader(clientConn)
+		if !answerIdentity(reader, clientConn, selfSIDForTest()) {
+			return
+		}
 		_, _ = reader.ReadString('\n')
 		sendHelperResponse(clientConn, "error", "unknown cleanup target id: \"bogus\"")
 	}()
@@ -254,6 +286,9 @@ func TestCleanupTargetElevatedDoneWithoutResult(t *testing.T) {
 	go func() {
 		defer clientConn.Close()
 		reader := bufio.NewReader(clientConn)
+		if !answerIdentity(reader, clientConn, selfSIDForTest()) {
+			return
+		}
 		_, _ = reader.ReadString('\n')
 		sendHelperResponse(clientConn, "done", "")
 	}()
@@ -285,6 +320,9 @@ func TestRunCommandElevated(t *testing.T) {
 	go func() {
 		defer clientConn.Close()
 		reader := bufio.NewReader(clientConn)
+		if !answerIdentity(reader, clientConn, selfSIDForTest()) {
+			return
+		}
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			return
@@ -351,6 +389,9 @@ func TestRunCommandElevatedSerializesConcurrentRequests(t *testing.T) {
 	go func() {
 		defer clientConn.Close()
 		reader := bufio.NewReader(clientConn)
+		if !answerIdentity(reader, clientConn, selfSIDForTest()) {
+			return
+		}
 		for range 2 {
 			line, err := reader.ReadString('\n')
 			if err != nil {
@@ -415,6 +456,9 @@ func TestRunCommandElevatedCancelPropagates(t *testing.T) {
 	go func() {
 		defer clientConn.Close()
 		reader := bufio.NewReader(clientConn)
+		if !answerIdentity(reader, clientConn, selfSIDForTest()) {
+			return
+		}
 		if _, err := reader.ReadString('\n'); err != nil {
 			return
 		}
@@ -446,5 +490,108 @@ func TestRunCommandElevatedCancelPropagates(t *testing.T) {
 	case <-helperSawClose:
 	case <-time.After(2 * time.Second):
 		t.Fatal("helper never observed the closed pipe after cancel")
+	}
+}
+
+// connectFakeHelper wires m to a fake helper that answers the identity
+// handshake with sid and then serves nothing else.
+func connectFakeHelper(t *testing.T, m *elevationManager, sid string) error {
+	t.Helper()
+	origStart := startElevatedHelperFunc
+	origTimeout := helperAcceptTimeout
+	t.Cleanup(func() {
+		startElevatedHelperFunc = origStart
+		helperAcceptTimeout = origTimeout
+	})
+
+	listener := newFakePipeListener()
+	startElevatedHelperFunc = func(_ context.Context, _, _ string) (net.Listener, error) {
+		return listener, nil
+	}
+	helperAcceptTimeout = time.Second
+
+	serverConn, clientConn := net.Pipe()
+	listener.acceptCh <- serverConn
+	t.Cleanup(func() { clientConn.Close() })
+	go func() {
+		answerIdentity(bufio.NewReader(clientConn), clientConn, sid)
+	}()
+	return m.ensureHelper()
+}
+
+func pinPredictedSeparateAccount(t *testing.T, separate bool) {
+	t.Helper()
+	orig := predictedSeparateElevationAccount
+	t.Cleanup(func() { predictedSeparateElevationAccount = orig })
+	predictedSeparateElevationAccount = func() bool { return separate }
+}
+
+func TestSeparateAccountBeforeConnectUsesPrediction(t *testing.T) {
+	for _, predicted := range []bool{false, true} {
+		pinPredictedSeparateAccount(t, predicted)
+		m := &elevationManager{}
+		if got := m.separateAccount(); got != predicted {
+			t.Errorf("separateAccount() with no helper = %v, want the prediction %v", got, predicted)
+		}
+	}
+}
+
+func TestEnsureHelperRecordsHelperAccount(t *testing.T) {
+	tests := []struct {
+		name      string
+		sid       string
+		predicted bool
+		want      bool
+	}{
+		// The reported account overrides a wrong prediction both ways.
+		{"helper runs as the user", selfSIDForTest(), true, false},
+		{"helper runs as another account", "S-1-5-21-9-9-9-1002", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pinPredictedSeparateAccount(t, tt.predicted)
+			m := &elevationManager{}
+			if err := connectFakeHelper(t, m, tt.sid); err != nil {
+				t.Fatalf("ensureHelper() = %v", err)
+			}
+			if got := m.separateAccount(); got != tt.want {
+				t.Fatalf("separateAccount() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnsureHelperRejectsHelperWithoutIdentity(t *testing.T) {
+	origStart := startElevatedHelperFunc
+	origTimeout := helperAcceptTimeout
+	t.Cleanup(func() {
+		startElevatedHelperFunc = origStart
+		helperAcceptTimeout = origTimeout
+	})
+
+	listener := newFakePipeListener()
+	startElevatedHelperFunc = func(_ context.Context, _, _ string) (net.Listener, error) {
+		return listener, nil
+	}
+	helperAcceptTimeout = time.Second
+
+	serverConn, clientConn := net.Pipe()
+	listener.acceptCh <- serverConn
+	defer clientConn.Close()
+	go func() {
+		reader := bufio.NewReader(clientConn)
+		if _, err := reader.ReadString('\n'); err != nil {
+			return
+		}
+		_ = sendHelperResponse(clientConn, "done", "")
+	}()
+
+	m := &elevationManager{}
+	err := m.ensureHelper()
+	if err == nil || !strings.Contains(err.Error(), "identity check failed") {
+		t.Fatalf("ensureHelper() = %v, want an identity check failure", err)
+	}
+	if m.conn != nil || m.ln != nil {
+		t.Fatal("a helper that fails the identity check must not stay connected")
 	}
 }

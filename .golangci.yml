@@ -47,7 +47,8 @@ linters:
           - errcheck
           - gosec
       # Raw Win32 interop (ShellExecuteW for UAC elevation,
-      # GetDiskFreeSpaceExW for the Health tab) — long-established,
-      # review-audited surface (see docs/elevation.md).
-      - path: '(elevate_windows|healthcheck)\.go'
+      # GetDiskFreeSpaceExW for the Health tab, GetTokenInformation for the
+      # elevation-account check) — review-audited surface (see
+      # docs/elevation.md).
+      - path: '(elevate_windows|elevation_account_windows|healthcheck)\.go'
         text: 'G103'

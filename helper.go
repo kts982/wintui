@@ -47,7 +47,8 @@ type helperRequest struct {
 //	done   - terminal success; data is empty for streaming actions
 //	error  - terminal failure; data is the error message
 //	result - structured payload that an action wants to return verbatim
-//	         (currently used by cleanup_delete to ship a result struct).
+//	         (cleanup_delete ships a result struct, identity the helper's
+//	         account).
 //	         Always followed by a "done" or "error".
 type helperResponse struct {
 	Type string `json:"type"`
@@ -112,6 +113,8 @@ func handleHelperConnection(conn net.Conn, token string) error {
 		switch {
 		case token == "" || req.Token != token:
 			execErr = fmt.Errorf("request rejected: missing or invalid session token")
+		case req.Action == "identity":
+			execErr = executeIdentityForHelper(conn)
 		case req.Action == "cleanup_delete":
 			execErr = executeCleanupDeleteForHelper(conn, req)
 		case req.Action == "winget":
@@ -129,6 +132,27 @@ func handleHelperConnection(conn net.Conn, token string) error {
 			_ = sendHelperResponse(conn, "done", "")
 		}
 	}
+}
+
+// helperIdentity is the account the elevated helper runs as. The TUI asks for
+// it right after connecting, so it knows whether elevation crossed into
+// another account (Administrator protection, over-the-shoulder UAC).
+type helperIdentity struct {
+	SID  string `json:"sid"`
+	Name string `json:"name,omitempty"`
+}
+
+func executeIdentityForHelper(conn net.Conn) error {
+	u, err := user.Current()
+	if err != nil {
+		return fmt.Errorf("identity: %w", err)
+	}
+	b, err := json.Marshal(helperIdentity{SID: u.Uid, Name: u.Username})
+	if err != nil {
+		return fmt.Errorf("encode identity: %w", err)
+	}
+	_ = sendHelperResponse(conn, "result", string(b))
+	return nil
 }
 
 // applyHelperMinAge applies the age floor the TUI resolved for this request.

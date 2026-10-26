@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,12 +29,16 @@ type elevationManager struct {
 	// token is the per-session secret generated when the helper was
 	// launched; every request must carry it (the helper rejects the rest).
 	token string
+	// helperSID is the account the last connected helper reported in the
+	// identity handshake; empty until a helper has connected.
+	helperSID string
 }
 
 var globalElevator = &elevationManager{}
 var (
 	startElevatedHelperFunc = startElevatedHelper
 	helperAcceptTimeout     = 60 * time.Second
+	helperIdentityTimeout   = 10 * time.Second
 )
 
 func (m *elevationManager) ensureHelper() error {
@@ -62,32 +67,110 @@ func (m *elevationManager) ensureHelper() error {
 
 	// Wait for helper to connect
 	// Set a timeout so we don't hang forever if UAC is cancelled
-	errChan := make(chan error, 1)
+	type accepted struct {
+		conn net.Conn
+		err  error
+	}
+	acceptCh := make(chan accepted, 1)
 	go func() {
 		conn, err := ln.Accept()
-		if err != nil {
-			errChan <- err
-			return
-		}
-		m.mu.Lock()
-		m.conn = conn
-		m.reader = bufio.NewReader(conn)
-		m.mu.Unlock()
-		errChan <- nil
+		acceptCh <- accepted{conn, err}
 	}()
 
+	var conn net.Conn
 	select {
-	case err := <-errChan:
-		return err
-	case <-time.After(helperAcceptTimeout):
-		m.mu.Lock()
-		if m.ln != nil {
-			m.ln.Close()
-			m.ln = nil
+	case a := <-acceptCh:
+		if a.err != nil {
+			return a.err
 		}
-		m.mu.Unlock()
+		conn = a.conn
+	case <-time.After(helperAcceptTimeout):
+		m.closeListener(ln)
 		return fmt.Errorf("timeout waiting for elevated helper (UAC cancelled?)")
 	}
+
+	// Learn which account the helper runs as before any request can use the
+	// connection: the routing guard needs it to keep per-user actions out of
+	// another account's profile.
+	reader := bufio.NewReader(conn)
+	id, err := helperIdentityHandshake(conn, reader, token)
+	if err != nil {
+		conn.Close()
+		m.closeListener(ln)
+		return fmt.Errorf("elevated helper identity check failed: %w", err)
+	}
+
+	m.mu.Lock()
+	m.conn = conn
+	m.reader = reader
+	m.helperSID = id.SID
+	m.mu.Unlock()
+	return nil
+}
+
+// closeListener closes ln and forgets it if it is still the current listener.
+func (m *elevationManager) closeListener(ln net.Listener) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ln == ln && m.ln != nil {
+		m.ln.Close()
+		m.ln = nil
+	}
+}
+
+// helperIdentityHandshake asks a freshly connected helper which account it
+// runs as. It is the first exchange on the connection, bounded by
+// helperIdentityTimeout so a wedged helper cannot hang the caller.
+func helperIdentityHandshake(conn net.Conn, reader *bufio.Reader, token string) (helperIdentity, error) {
+	_ = conn.SetDeadline(time.Now().Add(helperIdentityTimeout))
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
+
+	b, err := json.Marshal(helperRequest{Action: "identity", Token: token})
+	if err != nil {
+		return helperIdentity{}, err
+	}
+	if _, err := conn.Write(append(b, '\n')); err != nil {
+		return helperIdentity{}, err
+	}
+
+	var id helperIdentity
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return helperIdentity{}, err
+		}
+		var resp helperResponse
+		if err := json.Unmarshal([]byte(line), &resp); err != nil {
+			continue
+		}
+		switch resp.Type {
+		case "result":
+			if err := json.Unmarshal([]byte(resp.Data), &id); err != nil {
+				return helperIdentity{}, fmt.Errorf("parse identity: %w", err)
+			}
+		case "done":
+			if id.SID == "" {
+				return helperIdentity{}, fmt.Errorf("helper reported no identity")
+			}
+			return id, nil
+		case "error":
+			return helperIdentity{}, fmt.Errorf("%s", resp.Data)
+		}
+	}
+}
+
+// separateAccount reports whether elevation runs as an account other than
+// the user's. Once a helper has connected, the account it reported is the
+// answer; before that, the linked-token prediction is.
+func (m *elevationManager) separateAccount() bool {
+	m.mu.Lock()
+	helperSID := m.helperSID
+	m.mu.Unlock()
+	if helperSID == "" {
+		return predictedSeparateElevationAccount()
+	}
+	self, err := currentUserSID()
+	return err != nil || !strings.EqualFold(helperSID, self)
 }
 
 // shutdown closes the helper connection and listener, causing the
