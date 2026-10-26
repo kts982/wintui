@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -1058,21 +1059,48 @@ func runActionSmartStreamCtxFor(ctx context.Context, eff Settings, args ...strin
 	return proxyOut, proxyErr
 }
 
+// elevateRuleSkippedNote explains why a per-package elevate=true rule did not
+// elevate: the helper would run as another account.
+const elevateRuleSkippedNote = "Not elevating despite elevate=true: elevation here runs as a different account; set scope=machine on this rule to elevate."
+
 func runActionStreamForPackage(ctx context.Context, pkgID, source string, args ...string) (<-chan string, <-chan error) {
 	settings := currentSettings()
+	eff := settings.effectiveSettings(pkgID, source)
 	elev := settings.packageElevateOverride(pkgID, source)
 	if elev != nil {
 		if *elev && !isElevated() {
-			out, errCh, initErr := globalElevator.runCommandElevated(ctx, args...)
+			// elevate=true means "me, with admin rights". When elevation runs
+			// as another account that only holds for machine scope; anything
+			// else would land in that account's profile, so the action runs
+			// as the user and says why.
+			allowed := func(separate bool) bool { return upfrontHelperAllowed(eff, separate) }
+			out, errCh, initErr := globalElevator.runCommandElevatedIf(ctx, allowed, args...)
 			if initErr == nil {
 				return out, errCh
 			}
+			if errors.Is(initErr, errHelperOtherAccount) {
+				out, errCh := runActionSmartStreamCtxFor(ctx, eff, args...)
+				return prependLine(elevateRuleSkippedNote, out, errCh)
+			}
 		}
 		if !*elev {
-			return runWingetStreamCtx(ctx, false, args...)
+			return actionWingetStream(ctx, false, args...)
 		}
 	}
-	return runActionSmartStreamCtxFor(ctx, settings.effectiveSettings(pkgID, source), args...)
+	return runActionSmartStreamCtxFor(ctx, eff, args...)
+}
+
+// prependLine returns the stream with line emitted before its own lines.
+func prependLine(line string, out <-chan string, errCh <-chan error) (<-chan string, <-chan error) {
+	proxy := make(chan string)
+	go func() {
+		defer close(proxy)
+		proxy <- line
+		for l := range out {
+			proxy <- l
+		}
+	}()
+	return proxy, errCh
 }
 
 func installPackageStreamCtx(ctx context.Context, pkg Package, version string) ([]string, <-chan string, <-chan error) {

@@ -151,6 +151,51 @@ func TestSmartRouteRequiresAdminRetry(t *testing.T) {
 	}
 }
 
+// TestPackageElevateRuleUnderSeparateAccount covers an explicit elevate=true
+// rule: it always tries the helper when elevation runs as the user, but under
+// another account only with machine scope, and otherwise runs as the user and
+// says why.
+func TestPackageElevateRuleUnderSeparateAccount(t *testing.T) {
+	tests := []struct {
+		name        string
+		separate    bool
+		globalScope InstallScope
+		ruleScope   InstallScope
+		wantHelper  int
+		wantNote    bool
+	}{
+		{"same account elevates", false, ScopeDefault, ScopeDefault, 1, false},
+		{"same account elevates even a user-scope rule", false, ScopeDefault, ScopeUser, 1, false},
+		{"separate account: unknown scope runs as the user", true, ScopeDefault, ScopeDefault, 0, true},
+		{"separate account: global user scope runs as the user", true, ScopeUser, ScopeDefault, 0, true},
+		{"separate account: rule scope=machine elevates", true, ScopeDefault, ScopeMachine, 1, false},
+		{"separate account: global scope=machine elevates", true, ScopeMachine, ScopeDefault, 1, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newRouteHarness(t, tt.separate, nil)
+			original := appSettings
+			t.Cleanup(func() { appSettings = original })
+			elevate := true
+			appSettings = DefaultSettings()
+			appSettings.Scope = tt.globalScope
+			appSettings.setOverride("Test.App", "winget", PackageOverride{Scope: tt.ruleScope, Elevate: &elevate})
+
+			lines, err := drainRoute(runActionStreamForPackage(context.Background(), "Test.App", "winget", "install", "--id", "Test.App"))
+			if err != nil {
+				t.Fatalf("route err = %v", err)
+			}
+			if starts, _ := h.counts(); starts != tt.wantHelper {
+				t.Fatalf("helper starts = %d, want %d", starts, tt.wantHelper)
+			}
+			gotNote := len(lines) > 0 && lines[0] == elevateRuleSkippedNote
+			if gotNote != tt.wantNote {
+				t.Fatalf("skipped-rule note = %v, want %v (lines %q)", gotNote, tt.wantNote, lines)
+			}
+		})
+	}
+}
+
 // TestSmartRouteRefusesHelperThatReportsAnotherAccount covers a wrong
 // prediction: the helper connects, reports a different account, and the
 // unknown-scope action must still run non-elevated instead of in the helper.
