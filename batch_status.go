@@ -93,6 +93,9 @@ func (b batchItem) liveStatus() string {
 	if !b.startedAt.IsZero() {
 		elapsed = " " + helpStyle.Render(formatElapsed(time.Since(b.startedAt)))
 	}
+	if globalElevator.waitingForHelper() {
+		return lipgloss.NewStyle().Foreground(accent).Render("waiting for elevation…") + elapsed
+	}
 	if line := strings.TrimSpace(b.latestLine); line != "" {
 		return helpStyle.Render(truncate(line, 60)) + elapsed
 	}

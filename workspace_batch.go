@@ -400,6 +400,9 @@ func (s workspaceScreen) startBatch() (screen, tea.Cmd) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.ctx = ctx
 	s.cancel = cancel
+	// A new batch may prompt again after an earlier failed elevation; within
+	// the batch, a failure costs one prompt, not one per item.
+	globalElevator.resetStartFailure()
 
 	s.state = workspaceExecuting
 	s.modal.phase = execPhaseRunning
@@ -433,47 +436,96 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 	current.startedAt = time.Now()
 	current.latestLine = ""
 
-	var outChan <-chan string
-	var errChan <-chan error
-
 	// A Ctrl+E retry forces elevation, except for items whose rules forbid it
 	// (only blocked-by-process items get here with such rules): those retry
 	// on their normal route.
-	if s.modal.forceElevated && elevationRetryBlockReason(*current) == "" {
-		// Route through elevated helper for Ctrl+E retry.
-		var initErr error
-		switch current.action {
-		case retryOpUpgrade:
-			version := s.selectedVersions[item.key()]
-			_, outChan, errChan, initErr = upgradePackageElevatedStreamCtx(s.ctx, item.pkg, version)
-		case retryOpInstall:
-			version := s.selectedVersions[item.key()]
-			_, outChan, errChan, initErr = installPackageElevatedStreamCtx(s.ctx, item.pkg, version)
-		default: // uninstall
-			_, outChan, errChan, initErr = uninstallPackageElevatedStreamCtx(s.ctx, item.pkg, current.allVersions)
-		}
-		if initErr != nil {
-			current.status = batchFailed
-			current.err = fmt.Errorf("elevation failed: %v", initErr)
-			s.modal.idx++
-			return s.processNextBatchItem()
-		}
-	} else {
-		switch current.action {
-		case retryOpUpgrade:
-			version := s.selectedVersions[item.key()]
-			_, outChan, errChan = upgradePackageStreamCtx(s.ctx, item.pkg, version)
-		case retryOpInstall:
-			version := s.selectedVersions[item.key()]
-			_, outChan, errChan = installPackageStreamCtx(s.ctx, item.pkg, version)
-		default: // uninstall
-			_, outChan, errChan = uninstallPackageStreamCtx(s.ctx, item.pkg, current.allVersions)
+	start := batchItemStart{
+		ctx:         s.ctx,
+		idx:         s.modal.idx,
+		action:      current.action,
+		pkg:         item.pkg,
+		version:     s.selectedVersions[item.key()],
+		allVersions: current.allVersions,
+		forced:      s.modal.forceElevated && elevationRetryBlockReason(*current) == "",
+	}
+	return s, tea.Batch(s.modal.spinner.Tick, func() tea.Msg { return start.run() })
+}
+
+// batchItemStart is everything needed to start one batch item's winget run.
+type batchItemStart struct {
+	ctx         context.Context
+	idx         int
+	action      retryOp
+	pkg         Package
+	version     string
+	allVersions bool
+	forced      bool // Ctrl+E: route through the elevated helper
+}
+
+// batchItemStartedMsg carries a started item's streams back to Update.
+type batchItemStartedMsg struct {
+	ctx     context.Context // the batch's context, to drop a stale start
+	idx     int
+	out     <-chan string
+	errCh   <-chan error
+	initErr error // the forced elevated route could not start
+}
+
+// run starts the item. It runs as a tea.Cmd, off the Update goroutine:
+// resolving a truncated ID runs winget, and an elevated start waits for the
+// prompt and then for the helper to connect, so the TUI must keep redrawing
+// and Esc must stay live meanwhile.
+func (b batchItemStart) run() batchItemStartedMsg {
+	msg := batchItemStartedMsg{ctx: b.ctx, idx: b.idx}
+	switch {
+	case b.forced && b.action == retryOpUpgrade:
+		_, msg.out, msg.errCh, msg.initErr = upgradePackageElevatedStreamCtx(b.ctx, b.pkg, b.version)
+	case b.forced && b.action == retryOpInstall:
+		_, msg.out, msg.errCh, msg.initErr = installPackageElevatedStreamCtx(b.ctx, b.pkg, b.version)
+	case b.forced: // uninstall
+		_, msg.out, msg.errCh, msg.initErr = uninstallPackageElevatedStreamCtx(b.ctx, b.pkg, b.allVersions)
+	case b.action == retryOpUpgrade:
+		_, msg.out, msg.errCh = upgradePackageStreamCtx(b.ctx, b.pkg, b.version)
+	case b.action == retryOpInstall:
+		_, msg.out, msg.errCh = installPackageStreamCtx(b.ctx, b.pkg, b.version)
+	default: // uninstall
+		_, msg.out, msg.errCh = uninstallPackageStreamCtx(b.ctx, b.pkg, b.allVersions)
+	}
+	return msg
+}
+
+// handleBatchItemStarted wires a started item's streams into the batch, or
+// records a forced elevation that could not start.
+func (s workspaceScreen) handleBatchItemStarted(msg batchItemStartedMsg) (screen, tea.Cmd) {
+	if s.modal == nil || s.modal.phase != execPhaseRunning || msg.ctx != s.ctx || msg.idx != s.modal.idx {
+		// The batch was cancelled or replaced while the item started; its
+		// context is cancelled, so the run ends on its own — drain it.
+		go func() { _ = drainStream(msg.out, msg.errCh) }()
+		return s, nil
+	}
+	if msg.initErr != nil {
+		current := &s.modal.items[s.modal.idx]
+		current.status = batchFailed
+		current.err = fmt.Errorf("elevation failed: %v", msg.initErr)
+		s.modal.idx++
+		return s.processNextBatchItem()
+	}
+	s.streamOut = msg.out
+	s.streamErr = msg.errCh
+	return s, awaitStream(nil, s.streamOut, s.streamErr)
+}
+
+// drainStream reads a stream to its end and returns its error, so its
+// producer goroutines can exit when nobody else consumes it.
+func drainStream(out <-chan string, errCh <-chan error) error {
+	if out != nil {
+		for range out {
 		}
 	}
-	s.streamOut = outChan
-	s.streamErr = errChan
-
-	return s, tea.Batch(s.modal.spinner.Tick, awaitStream(nil, s.streamOut, s.streamErr))
+	if errCh == nil {
+		return nil
+	}
+	return <-errCh
 }
 
 func (s workspaceScreen) finishBatch() (screen, tea.Cmd) {

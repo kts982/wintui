@@ -89,8 +89,8 @@ func TestEnsureHelperTimeout(t *testing.T) {
 	helperAcceptTimeout = 10 * time.Millisecond
 
 	m := &elevationManager{}
-	err := m.ensureHelper()
-	if err == nil || !strings.Contains(err.Error(), "timeout waiting for elevated helper") {
+	err := m.ensureHelper(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "did not connect within") {
 		t.Fatalf("ensureHelper() error = %v, want timeout", err)
 	}
 }
@@ -516,7 +516,7 @@ func connectFakeHelper(t *testing.T, m *elevationManager, sid string) error {
 	go func() {
 		answerIdentity(bufio.NewReader(clientConn), clientConn, sid)
 	}()
-	return m.ensureHelper()
+	return m.ensureHelper(context.Background())
 }
 
 func pinPredictedSeparateAccount(t *testing.T, separate bool) {
@@ -587,7 +587,7 @@ func TestEnsureHelperRejectsHelperWithoutIdentity(t *testing.T) {
 	}()
 
 	m := &elevationManager{}
-	err := m.ensureHelper()
+	err := m.ensureHelper(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "identity check failed") {
 		t.Fatalf("ensureHelper() = %v, want an identity check failure", err)
 	}

@@ -492,6 +492,8 @@ func (s cleanupScreen) startExecute() (screen, tea.Cmd) {
 		return s, nil
 	}
 	s.state = cleanupExecuting
+	// Like a package batch: one prompt per run, retried on the next run.
+	globalElevator.resetStartFailure()
 	return s.dispatchNextDelete()
 }
 

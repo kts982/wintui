@@ -9,9 +9,11 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sys/windows"
 )
 
 type elevationManager struct {
@@ -33,6 +35,12 @@ type elevationManager struct {
 	// helperSID is the account the last connected helper reported in the
 	// identity handshake; empty until a helper has connected.
 	helperSID string
+	// startErr is the last failed helper start. ensureHelper returns it
+	// without prompting again until resetStartFailure, so a batch costs at
+	// most one prompt and one wait instead of one per item.
+	startErr error
+	// starting is set while ensureHelper prompts and waits for the helper.
+	starting atomic.Bool
 }
 
 var globalElevator = &elevationManager{}
@@ -42,20 +50,59 @@ var (
 	helperIdentityTimeout   = 10 * time.Second
 )
 
-func (m *elevationManager) ensureHelper() error {
+// errElevationCancelled is a declined elevation prompt.
+var errElevationCancelled = errors.New("elevation was cancelled")
+
+// ensureHelper connects the elevated helper, starting it (one elevation
+// prompt) if needed. A failed start is remembered: later calls return it
+// without a prompt until resetStartFailure. Cancelling ctx stops the wait for
+// the helper to connect; that is not remembered.
+func (m *elevationManager) ensureHelper(ctx context.Context) error {
 	m.initMu.Lock()
 	defer m.initMu.Unlock()
 
 	m.mu.Lock()
-	if m.conn != nil {
-		m.mu.Unlock()
+	connected, startErr := m.conn != nil, m.startErr
+	m.mu.Unlock()
+	if connected {
 		return nil
 	}
-	m.mu.Unlock()
+	if startErr != nil {
+		return startErr
+	}
 
+	m.starting.Store(true)
+	defer m.starting.Store(false)
+	err := m.startHelper(ctx)
+	if err != nil && ctx.Err() == nil {
+		m.mu.Lock()
+		m.startErr = err
+		m.mu.Unlock()
+	}
+	return err
+}
+
+// resetStartFailure forgets a failed helper start, so the next elevation
+// prompts again. A new batch calls it.
+func (m *elevationManager) resetStartFailure() {
+	m.mu.Lock()
+	m.startErr = nil
+	m.mu.Unlock()
+}
+
+// waitingForHelper reports whether an elevation prompt or the wait for the
+// helper to connect is in progress.
+func (m *elevationManager) waitingForHelper() bool {
+	return m.starting.Load()
+}
+
+func (m *elevationManager) startHelper(ctx context.Context) error {
 	pipeID := "wintui-" + uuid.New().String()
 	token := uuid.New().String()
-	ln, err := startElevatedHelperFunc(context.Background(), pipeID, token)
+	ln, err := startElevatedHelperFunc(ctx, pipeID, token)
+	if errors.Is(err, windows.ERROR_CANCELLED) {
+		return errElevationCancelled
+	}
 	if err != nil {
 		return err
 	}
@@ -78,6 +125,8 @@ func (m *elevationManager) ensureHelper() error {
 		acceptCh <- accepted{conn, err}
 	}()
 
+	// The prompt is over by now (the elevated launch blocks during it), so a
+	// timeout means the helper started but never connected.
 	var conn net.Conn
 	select {
 	case a := <-acceptCh:
@@ -87,7 +136,10 @@ func (m *elevationManager) ensureHelper() error {
 		conn = a.conn
 	case <-time.After(helperAcceptTimeout):
 		m.closeListener(ln)
-		return fmt.Errorf("timeout waiting for elevated helper (UAC cancelled?)")
+		return fmt.Errorf("the elevated helper did not connect within %s", helperAcceptTimeout)
+	case <-ctx.Done():
+		m.closeListener(ln)
+		return ctx.Err()
 	}
 
 	// Learn which account the helper runs as before any request can use the
@@ -195,7 +247,7 @@ func (m *elevationManager) shutdown() {
 // and validates the path on its side. reqMu serializes the whole exchange
 // against any outstanding runCommandElevated on the shared connection.
 func (m *elevationManager) cleanupTargetElevated(targetID string) (cleanupTargetResult, error) {
-	if err := m.ensureHelper(); err != nil {
+	if err := m.ensureHelper(context.Background()); err != nil {
 		return cleanupTargetResult{}, err
 	}
 
@@ -283,17 +335,17 @@ var errHelperOtherAccount = errors.New("elevation runs as a different account th
 // refused action never prompts, and again once the helper has reported its
 // account. A nil allowed admits every action.
 func (m *elevationManager) runCommandElevatedIf(ctx context.Context, allowed func(separate bool) bool, args ...string) (<-chan string, <-chan error, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if allowed != nil && !allowed(m.separateAccount()) {
 		return nil, nil, errHelperOtherAccount
 	}
-	if err := m.ensureHelper(); err != nil {
+	if err := m.ensureHelper(ctx); err != nil {
 		return nil, nil, err
 	}
 	if allowed != nil && !allowed(m.separateAccount()) {
 		return nil, nil, errHelperOtherAccount
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 
 	outChan := make(chan string)
