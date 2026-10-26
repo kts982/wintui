@@ -300,12 +300,8 @@ func startElevatedHelper(ctx context.Context, pipeID, token string) (net.Listene
 		return nil, fmt.Errorf("failed to get current user: %w", err)
 	}
 
-	// SDDL: Allow the current user's SID Generic All (GA) access.
-	// This ensures only the user who spawned the TUI can connect to the pipe.
-	sddl := fmt.Sprintf("D:P(A;;GA;;;%s)", u.Uid)
-
 	config := &winio.PipeConfig{
-		SecurityDescriptor: sddl,
+		SecurityDescriptor: helperPipeSDDL(u.Uid),
 	}
 	ln, err := winio.ListenPipe(pipePath, config)
 	if err != nil {
@@ -323,6 +319,20 @@ func startElevatedHelper(ctx context.Context, pipeID, token string) (net.Listene
 	}
 
 	return ln, nil
+}
+
+// helperPipeSDDL is the protected DACL on the TUI's helper pipe. The user ACE
+// is required even though the TUI created the pipe: go-winio opens every real
+// server instance after its placeholder with a fresh access check. The
+// Administrators ACE admits the elevated helper when it runs as a different
+// account than the TUI — the hidden ADMIN_<user> account under Windows
+// Administrator protection, or the admin's own account after an
+// over-the-shoulder UAC prompt — which the user ACE alone refuses with
+// ERROR_ACCESS_DENIED. It grants nothing to unelevated processes, where
+// Administrators is a deny-only group; the per-session token still guards
+// every request.
+func helperPipeSDDL(userSID string) string {
+	return fmt.Sprintf("D:P(A;;GA;;;%s)(A;;GA;;;BA)", userSID)
 }
 
 func relaunchElevatedWithArgs(exe string, args []string) error {

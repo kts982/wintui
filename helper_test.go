@@ -5,8 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os/user"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Microsoft/go-winio"
+	"github.com/google/uuid"
 )
 
 // driveHelperRequest sends one request through a real handleHelperConnection
@@ -181,5 +186,53 @@ func TestValidateHelperWingetArgsAllowsRealCallSites(t *testing.T) {
 		if err := validateHelperWingetArgs(args); err != nil {
 			t.Errorf("validateHelperWingetArgs(%#v) = %v, want nil", args, err)
 		}
+	}
+}
+
+func TestHelperPipeSDDLAdmitsUserAndAdministrators(t *testing.T) {
+	got := helperPipeSDDL("S-1-5-21-1-2-3-1001")
+	want := "D:P(A;;GA;;;S-1-5-21-1-2-3-1001)(A;;GA;;;BA)"
+	if got != want {
+		t.Fatalf("helperPipeSDDL() = %q, want %q", got, want)
+	}
+}
+
+// TestHelperPipeSDDLListenAndDial runs the real go-winio listener with the
+// helper DACL: the descriptor must parse, the unelevated listener must still
+// be able to open its own server instances, and a same-user client connects.
+func TestHelperPipeSDDLListenAndDial(t *testing.T) {
+	u, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current: %v", err)
+	}
+	path := `\\.\pipe\wintui-test-` + uuid.New().String()
+	ln, err := winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: helperPipeSDDL(u.Uid)})
+	if err != nil {
+		t.Fatalf("ListenPipe: %v", err)
+	}
+	defer ln.Close()
+
+	accepted := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err == nil {
+			_, err = conn.Write([]byte("ok\n"))
+			conn.Close()
+		}
+		accepted <- err
+	}()
+
+	timeout := 5 * time.Second
+	conn, err := winio.DialPipe(path, &timeout)
+	if err != nil {
+		t.Fatalf("DialPipe: %v", err)
+	}
+	defer conn.Close()
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil || line != "ok\n" {
+		t.Fatalf("read = %q, %v; want \"ok\n\"", line, err)
+	}
+	if err := <-accepted; err != nil {
+		t.Fatalf("Accept: %v", err)
 	}
 }
