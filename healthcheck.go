@@ -176,10 +176,16 @@ func checkPrivileges() healthCheck {
 	if currentSettings().AutoElevate {
 		autoElev = "on"
 	}
+	details := fmt.Sprintf("%s · Auto Elevate %s", role, autoElev)
+	// Unelevated only: the prediction reads the linked token, which an
+	// elevated process may not have.
+	if !isElevated() && globalElevator.separateAccount() {
+		details += " · elevation runs as a different account (per-user packages stay unelevated)"
+	}
 	return healthCheck{
 		Check:   "Privileges",
 		Status:  "PASS",
-		Details: fmt.Sprintf("%s · Auto Elevate %s", role, autoElev),
+		Details: details,
 	}
 }
 

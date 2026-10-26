@@ -347,3 +347,17 @@ func TestUpgradeAllRefusalIsNotAFailure(t *testing.T) {
 		t.Fatalf("cliExitCode = %d after refusing the named package, want 1", cliExitCode)
 	}
 }
+
+func TestDoctorPrivilegesShowsASeparateElevationAccount(t *testing.T) {
+	forceNotElevated(t)
+	origElevator := globalElevator
+	t.Cleanup(func() { globalElevator = origElevator })
+	for _, separate := range []bool{false, true} {
+		globalElevator = &elevationManager{}
+		pinPredictedSeparateAccount(t, separate)
+		got := strings.Contains(checkPrivileges().Details, "different account")
+		if got != separate {
+			t.Fatalf("separate=%v: Privileges row = %q", separate, checkPrivileges().Details)
+		}
+	}
+}
