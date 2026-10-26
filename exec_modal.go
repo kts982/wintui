@@ -440,10 +440,8 @@ func (m execModal) viewComplete() (string, []string, string) {
 		if bi.status == batchFailed && bi.blockedByProc {
 			body = append(body, "    "+warnStyle.Render("Close the running application and press ctrl+e to retry."))
 		}
-		if bi.status == batchFailed && bi.err != nil && !isElevated() && likelyBenefitsFromElevation(bi.err, bi.output) {
-			if reason := elevationRetryBlockReason(bi); reason != "" {
-				body = append(body, "    "+warnStyle.Render("Not elevated: "+reason+"."))
-			}
+		if bi.status == batchFailed && bi.noRetryReason != "" && !isElevated() {
+			body = append(body, "    "+warnStyle.Render("Not elevated: "+bi.noRetryReason+"."))
 		}
 
 		// Show key log lines for this package (compact).
@@ -494,7 +492,19 @@ func (m execModal) hasElevationCandidates() bool {
 // and its rules allow an elevated retry.
 func isElevationCandidate(bi batchItem) bool {
 	return bi.status == batchFailed && bi.err != nil &&
-		likelyBenefitsFromElevation(bi.err, bi.output) && elevationRetryBlockReason(bi) == ""
+		likelyBenefitsFromElevation(bi.err, bi.output) && bi.noRetryReason == ""
+}
+
+// markFailed records a failed run: the error, whether a running process
+// blocked it and, for a failure elevation may fix, whether the package's
+// rules allow an elevated retry — read here once, not on every render.
+func (b *batchItem) markFailed(err error) {
+	b.status = batchFailed
+	b.err = err
+	b.blockedByProc = isProcessInUseError(err, b.output)
+	if likelyBenefitsFromElevation(err, b.output) {
+		b.noRetryReason = elevationRetryBlockReason(*b)
+	}
 }
 
 // elevationRetryBlockReason reports why bi must not be retried elevated — a

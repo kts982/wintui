@@ -5,6 +5,7 @@ import (
 	"io"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -346,10 +347,11 @@ func effectiveRuleView(s Settings, id, source string, available string, known bo
 	global := s.effectiveSettings(id, source)
 	scopeDef, _ := settingDefByKey("scope")
 	archDef, _ := settingDefByKey("architecture")
+	// A user-scope package never auto-elevates, whatever auto_elevate says.
 	eff = ruleEffective{
 		Scope:        scopeDef.cliName(string(global.Scope)),
 		Architecture: archDef.cliName(string(global.Architecture)),
-		Elevate:      global.AutoElevate,
+		Elevate:      global.AutoElevate && noElevationReason(s, retryOpInstall, id, source) == "",
 		Hold:         ruleHold{Kind: ruleHoldNone},
 		Policy:       "ask",
 	}
@@ -505,10 +507,7 @@ func printRuleView(out io.Writer, s Settings, id, source string, asJSON bool, he
 	if spec == nil {
 		spec = &inherit
 	}
-	elevate := "false"
-	if eff.Elevate {
-		elevate = "true"
-	}
+	elevate, elevateNote := ruleElevationView(s, id, source, eff.Elevate)
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "FIELD\tRULE\tEFFECTIVE")
 	fmt.Fprintf(tw, "policy\t%s\t%s\n", spec.Policy, eff.Policy)
@@ -517,6 +516,9 @@ func printRuleView(out io.Writer, s Settings, id, source string, asJSON bool, he
 	fmt.Fprintf(tw, "architecture\t%s\t%s\n", spec.Architecture, eff.Architecture)
 	fmt.Fprintf(tw, "elevate\t%s\t%s\n", spec.Elevate, elevate)
 	_ = tw.Flush()
+	if elevateNote != "" {
+		fmt.Fprintln(out, "\n"+elevateNote)
+	}
 	switch {
 	case !known:
 		fmt.Fprintln(out, "\nAvailable version: unknown (package cache is cold — open the TUI or run 'wintui check' to refresh).")
@@ -529,6 +531,27 @@ func printRuleView(out io.Writer, s Settings, id, source string, asJSON bool, he
 		fmt.Fprintf(out, "Warning: conflicting duplicate rules: %s\n", strings.Join(conflicts, " / "))
 	}
 	return nil
+}
+
+// ruleElevationView labels the effective elevate value with the user-scope
+// safety: the reason a user-scope package never elevates, or — for an
+// explicit elevate=always on one — that the rule overrides it, plus a note.
+func ruleElevationView(s Settings, id, source string, elevate bool) (label, note string) {
+	label = strconv.FormatBool(elevate)
+	// The uninstall view ignores elevate=always, so this is the user-scope
+	// reason the rule would otherwise be subject to.
+	reason := userScopeReason(s, retryOpUninstall, id, source)
+	if reason == "" {
+		return label, ""
+	}
+	if elev := s.packageElevateOverride(id, source); elev == nil || !*elev {
+		return label + " (" + reason + ")", ""
+	}
+	note = "Note: elevate=always overrides the user-scope safety (" + reason + ") for install and upgrade; uninstall never elevates."
+	if globalElevator.separateAccount() {
+		note += " Elevation on this PC runs as a different account, so the rule elevates only with scope=machine."
+	}
+	return label + " (explicit; overrides the user-scope safety)", note
 }
 
 func effectiveHoldLabel(h ruleHold, known bool) string {

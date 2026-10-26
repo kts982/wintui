@@ -586,6 +586,9 @@ func (p detailPanel) detailLines(totalWidth int) []string {
 			label := "never"
 			if *o.Elevate {
 				label = "always"
+				if o.Scope == ScopeUser || (o.Scope == "" && appSettings.Scope == ScopeUser) {
+					label += " (overrides user scope)"
+				}
 			}
 			appendDetailField(&lines, "Elevate", overrideStyle.Render(label))
 		}

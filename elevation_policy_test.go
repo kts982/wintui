@@ -248,13 +248,13 @@ func TestCtrlEExcludesUserScopeItems(t *testing.T) {
 	withPolicySettings(t, s)
 
 	failed := func(id string) batchItem {
-		return batchItem{
+		bi := batchItem{
 			action: retryOpUpgrade,
 			item:   workspaceItem{pkg: Package{Name: id, ID: id, Source: "winget"}},
-			status: batchFailed,
-			err:    errors.New("package requires administrator privileges (0x8a150056)"),
 			output: "0x8a150056",
 		}
+		bi.markFailed(errors.New("package requires administrator privileges (0x8a150056)"))
+		return bi
 	}
 
 	m := newExecModal(retryOpUpgrade, []batchItem{failed("User.Pkg"), failed("NoElev.Pkg")})

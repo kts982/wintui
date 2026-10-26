@@ -252,6 +252,38 @@ func TestRulesShowEffectiveAndHoldEvaluation(t *testing.T) {
 	}
 }
 
+// TestRulesShowLabelsTheUserScopeSafety: a user-scope package never
+// auto-elevates, and elevate=always on one says it overrides that (Q1=A).
+func TestRulesShowLabelsTheUserScopeSafety(t *testing.T) {
+	setupRulesTest(t)
+	pinPredictedSeparateAccount(t, false)
+	if err := runRulesSet(&bytes.Buffer{}, "Git.Git", "", rulesSetOptions{Scope: strPtr("user")}, false); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runRulesShow(&out, "Git.Git", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if sq := squashSpaces(out.String()); !strings.Contains(sq, "elevate inherit false (user-scope rule)") {
+		t.Errorf("a user-scope rule must show effective elevate false with the reason:\n%s", out.String())
+	}
+
+	out.Reset()
+	if err := runRulesSet(&out, "Git.Git", "", rulesSetOptions{Elevate: strPtr("always")}, false); err != nil {
+		t.Fatal(err)
+	}
+	sq := squashSpaces(out.String())
+	if !strings.Contains(sq, "elevate always true (explicit; overrides the user-scope safety)") {
+		t.Errorf("elevate=always on a user-scope rule must be labelled:\n%s", out.String())
+	}
+	if !strings.Contains(sq, "Note: elevate=always overrides the user-scope safety (user-scope rule) for install and upgrade; uninstall never elevates.") {
+		t.Errorf("rules set must print the override note:\n%s", out.String())
+	}
+	if strings.Contains(sq, "different account") {
+		t.Errorf("the separate-account sentence must only appear when elevation runs as another account:\n%s", out.String())
+	}
+}
+
 // TestRulesShowJSONGolden pins the element contract byte-for-byte.
 func TestRulesShowJSONGolden(t *testing.T) {
 	setupRulesTest(t)

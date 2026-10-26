@@ -34,6 +34,7 @@ type batchItem struct {
 	blockedByProc bool      // failed because a related process is running
 	startedAt     time.Time // when this item entered the running state
 	latestLine    string    // most recent streamed output line (for live status)
+	noRetryReason string    // why an elevated retry is not allowed; read once when the item fails
 }
 
 // statusIcon returns a styled icon for the batch item's current state.
