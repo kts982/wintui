@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
+	"os"
 	"os/user"
 	"strings"
 	"testing"
@@ -13,6 +15,40 @@ import (
 	"github.com/Microsoft/go-winio"
 	"github.com/google/uuid"
 )
+
+// TestHelperStartupWritesNothingToTheProfile: the helper must not create
+// WinTUI state dirs before its authenticated connect. The 2026-10-26 VM pass
+// found empty %APPDATA%\wintui and %LOCALAPPDATA%\wintui\self-update in the
+// hidden ADMIN_<user> profile, created by the root startup hook.
+func TestHelperStartupWritesNothingToTheProfile(t *testing.T) {
+	if !invokedAsHelper([]string{"helper", "--pipe", "p"}) || invokedAsHelper([]string{"check"}) || invokedAsHelper(nil) {
+		t.Fatal("invokedAsHelper must match exactly the helper subcommand")
+	}
+
+	appData, localAppData := t.TempDir(), t.TempDir()
+	t.Setenv("APPDATA", appData)
+	t.Setenv("LOCALAPPDATA", localAppData)
+	rootCmd.SetArgs([]string{"helper"}) // no --pipe: RunE stops before dialing
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	t.Cleanup(func() {
+		rootCmd.SetArgs(nil)
+		rootCmd.SetOut(nil)
+		rootCmd.SetErr(nil)
+	})
+	if err := rootCmd.Execute(); err == nil || !strings.Contains(err.Error(), "pipe name required") {
+		t.Fatalf("helper without --pipe: err = %v, want \"pipe name required\"", err)
+	}
+	for _, dir := range []string{appData, localAppData} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("helper startup created %v in %s", entries, dir)
+		}
+	}
+}
 
 // driveHelperRequest sends one request through a real handleHelperConnection
 // (expected token "tok") and returns every response up to the terminal

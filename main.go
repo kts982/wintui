@@ -175,8 +175,12 @@ func main() {
 	// the user's chosen palette. cobra short-circuits --help, --version, and
 	// unknown-command errors BEFORE PersistentPreRun runs, so without this the
 	// colorscheme would always fall back to the default theme. PersistentPreRun
-	// still reloads settings (idempotently) for actual subcommands.
-	setAppSettings(LoadSettings())
+	// still reloads settings (idempotently) for actual subcommands. The
+	// elevated helper skips both: it must not touch the profile before its
+	// authenticated connect (see helperCmd).
+	if !invokedAsHelper(os.Args[1:]) {
+		setAppSettings(LoadSettings())
+	}
 
 	// fang wraps cobra with styled help / usage / errors / version, themed from
 	// the active palette (fangOptions). It silences cobra's own error print and

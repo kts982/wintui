@@ -59,6 +59,13 @@ var helperCmd = &cobra.Command{
 	Use:    "helper",
 	Short:  "Internal elevated helper",
 	Hidden: true,
+	// Replaces the root's startup hook: the helper must not touch its
+	// account's profile before an authenticated connect, and that hook would
+	// create %APPDATA%\wintui (settings load) and
+	// %LOCALAPPDATA%\wintui\self-update (stale-state sweep). Under
+	// Administrator protection that profile is the hidden ADMIN_<user> one.
+	// Nothing the helper runs reads settings.
+	PersistentPreRun: func(*cobra.Command, []string) {},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if pipeName == "" {
 			return fmt.Errorf("pipe name required")
@@ -85,6 +92,12 @@ var helperCmd = &cobra.Command{
 
 		return handleHelperConnection(conn, helperToken)
 	},
+}
+
+// invokedAsHelper reports whether args (os.Args without the program name)
+// start the elevated helper, so main can skip its own settings load.
+func invokedAsHelper(args []string) bool {
+	return len(args) > 0 && args[0] == helperCmd.Name()
 }
 
 func init() {
