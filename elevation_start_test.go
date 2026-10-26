@@ -177,3 +177,41 @@ func TestHelperNotFoundUnderAnotherAccountIsExplained(t *testing.T) {
 		})
 	}
 }
+
+// TestHelperDyingMidRunIsRememberedForTheBatch: a helper that connects and
+// then drops the connection must not cost a new prompt for every remaining
+// item; a cancel, by contrast, may restart it.
+func TestHelperDyingMidRunIsRememberedForTheBatch(t *testing.T) {
+	pinPredictedSeparateAccount(t, false)
+	origTimeout := helperAcceptTimeout
+	t.Cleanup(func() { helperAcceptTimeout = origTimeout })
+	helperAcceptTimeout = time.Second
+
+	listener := newFakePipeListener()
+	calls := stubHelperStart(t, func() (net.Listener, error) { return listener, nil })
+	serverConn, clientConn := net.Pipe()
+	listener.acceptCh <- serverConn
+	go func() {
+		reader := bufio.NewReader(clientConn)
+		if answerIdentity(reader, clientConn, selfSIDForTest()) {
+			_, _ = reader.ReadString('\n')
+		}
+		clientConn.Close() // the helper dies on its first request
+	}()
+
+	m := &elevationManager{}
+	out, errCh, err := m.runCommandElevated(context.Background(), "upgrade", "--id", "A.B")
+	if err != nil {
+		t.Fatalf("runCommandElevated: %v", err)
+	}
+	if _, runErr := drainRoute(out, errCh); runErr == nil {
+		t.Fatal("run err = nil, want the lost connection")
+	}
+	err = m.ensureHelper(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "stopped responding") {
+		t.Fatalf("ensureHelper after the helper died = %v, want the remembered failure", err)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("helper launches = %d, want 1", n)
+	}
+}

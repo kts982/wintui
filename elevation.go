@@ -273,8 +273,9 @@ func (m *elevationManager) cleanupTargetElevated(targetID string) (cleanupTarget
 		return cleanupTargetResult{}, err
 	}
 	if _, err := conn.Write(append(b, '\n')); err != nil {
-		m.markConnLost()
-		return cleanupTargetResult{}, fmt.Errorf("send cleanup request: %w", err)
+		err = fmt.Errorf("send cleanup request: %w", err)
+		m.markConnLost(err)
+		return cleanupTargetResult{}, err
 	}
 
 	var wire cleanupTargetResultWire
@@ -283,8 +284,9 @@ func (m *elevationManager) cleanupTargetElevated(targetID string) (cleanupTarget
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			m.markConnLost()
-			return cleanupTargetResult{}, fmt.Errorf("helper connection lost: %w", err)
+			err = fmt.Errorf("helper connection lost: %w", err)
+			m.markConnLost(err)
+			return cleanupTargetResult{}, err
 		}
 		var resp helperResponse
 		if err := json.Unmarshal([]byte(line), &resp); err != nil {
@@ -307,13 +309,20 @@ func (m *elevationManager) cleanupTargetElevated(targetID string) (cleanupTarget
 	}
 }
 
-func (m *elevationManager) markConnLost() {
+// markConnLost drops the helper connection. A non-nil cause — the helper
+// failed, not the user cancelling — also counts as a failed start for the
+// rest of the batch: re-prompting for every remaining item is what the
+// failure memo exists to prevent.
+func (m *elevationManager) markConnLost(cause error) {
 	m.mu.Lock()
 	if m.conn != nil {
 		m.conn.Close()
 	}
 	m.conn = nil
 	m.reader = nil
+	if cause != nil {
+		m.startErr = fmt.Errorf("the elevated helper stopped responding (%w)", cause)
+	}
 	m.mu.Unlock()
 }
 
@@ -373,11 +382,12 @@ func (m *elevationManager) runCommandElevatedIf(ctx context.Context, allowed fun
 		defer stopCancelWatch()
 
 		fail := func(err error) {
-			m.markConnLost() // reset so the next action can restart the helper
 			if ctx.Err() != nil {
+				m.markConnLost(nil) // the next action may restart the helper
 				errChan <- fmt.Errorf("cancelled")
 				return
 			}
+			m.markConnLost(err)
 			errChan <- err
 		}
 

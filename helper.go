@@ -83,12 +83,18 @@ var helperCmd = &cobra.Command{
 		// winget output is streamed back to the TUI over the named pipe.
 		hideWingetChildWindow = true
 
+		helperFaultLog("helper started elevated; dialing the pipe")
+		if helperFault("no-connect") {
+			return fmt.Errorf("fault injected: no-connect")
+		}
 		timeout := 10 * time.Second
 		conn, err := winio.DialPipe(`\\.\pipe\`+pipeName, &timeout)
 		if err != nil {
+			helperFaultLog("dial failed: %v", err)
 			return err
 		}
 		defer conn.Close()
+		helperFaultLog("connected")
 
 		return handleHelperConnection(conn, helperToken)
 	},
@@ -126,10 +132,14 @@ func handleHelperConnection(conn net.Conn, token string) error {
 		switch {
 		case token == "" || req.Token != token:
 			execErr = fmt.Errorf("request rejected: missing or invalid session token")
+		case req.Action == "identity" && helperFault("identity-fail"):
+			execErr = fmt.Errorf("fault injected: identity-fail")
 		case req.Action == "identity":
 			execErr = executeIdentityForHelper(conn)
 		case req.Action == "cleanup_delete":
 			execErr = executeCleanupDeleteForHelper(conn, req)
+		case req.Action == "winget" && helperFault("drop-after-connect"):
+			return conn.Close()
 		case req.Action == "winget":
 			execErr = executeWingetForHelper(conn, req)
 		default:
@@ -347,7 +357,7 @@ func startElevatedHelper(ctx context.Context, pipeID, token string) (net.Listene
 
 	// Launch ourselves elevated
 	exe, _ := os.Executable()
-	args := []string{"helper", "--pipe", pipeID, "--token", token}
+	args := append([]string{"helper", "--pipe", pipeID, "--token", token}, helperFaultArgs()...)
 
 	err = relaunchElevatedWithArgs(exe, args)
 	if err != nil {
