@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -269,8 +270,27 @@ func (m *elevationManager) markConnLost() {
 // helper cancel its in-flight winget and exit (the next elevated action
 // restarts it with a fresh UAC prompt — the price of a real cancel).
 func (m *elevationManager) runCommandElevated(ctx context.Context, args ...string) (<-chan string, <-chan error, error) {
+	return m.runCommandElevatedIf(ctx, nil, args...)
+}
+
+// errHelperOtherAccount refuses a helper route because elevation runs as
+// another account than the user's, and the action must stay with the user.
+var errHelperOtherAccount = errors.New("elevation runs as a different account than yours")
+
+// runCommandElevatedIf is runCommandElevated for actions that may only use
+// the helper when allowed(separate) holds, where separate reports whether
+// elevation runs as another account. It is checked before the prompt, so a
+// refused action never prompts, and again once the helper has reported its
+// account. A nil allowed admits every action.
+func (m *elevationManager) runCommandElevatedIf(ctx context.Context, allowed func(separate bool) bool, args ...string) (<-chan string, <-chan error, error) {
+	if allowed != nil && !allowed(m.separateAccount()) {
+		return nil, nil, errHelperOtherAccount
+	}
 	if err := m.ensureHelper(); err != nil {
 		return nil, nil, err
+	}
+	if allowed != nil && !allowed(m.separateAccount()) {
+		return nil, nil, errHelperOtherAccount
 	}
 	if ctx == nil {
 		ctx = context.Background()

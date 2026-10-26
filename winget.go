@@ -977,22 +977,49 @@ func runWingetStreamCtx(ctx context.Context, nonInteractive bool, args ...string
 }
 
 func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string, <-chan error) {
-	settings := currentSettings()
+	return runActionSmartStreamCtxFor(ctx, currentSettings(), args...)
+}
 
+// upfrontHelperAllowed reports whether a silent action may go straight to the
+// elevated helper. When elevation runs as another account (Administrator
+// protection, over-the-shoulder UAC) only explicit machine scope may: that
+// account cannot see the user's per-user installs, and whatever per-user
+// state it installs lands in its own profile, invisible to the user.
+func upfrontHelperAllowed(eff Settings, separate bool) bool {
+	return !separate || eff.Scope == ScopeMachine
+}
+
+// retryHelperAllowed reports whether an action that failed with a confirmed
+// requires-admin error may retry through the helper. Such failures are
+// machine-scope by nature (their ARP entries live in HKLM, visible to both
+// accounts), so only explicit user scope stays off another account's helper.
+func retryHelperAllowed(eff Settings, separate bool) bool {
+	return !separate || eff.Scope != ScopeUser
+}
+
+// actionWingetStream is the non-elevated runner behind the smart action
+// route: the seam tests replace to assert routing without spawning winget.
+var actionWingetStream = runWingetStreamCtx
+
+// runActionSmartStreamCtxFor is runActionSmartStreamCtx with eff — the
+// package's effective settings — deciding the elevation routes.
+func runActionSmartStreamCtxFor(ctx context.Context, eff Settings, args ...string) (<-chan string, <-chan error) {
 	// When silent mode + auto-elevate are both on and we're not already
 	// elevated, run everything through the elevated helper upfront.
 	// This avoids UAC popups from installers that elevate themselves
 	// (e.g. MSI packages with ElevationRequirement: elevatesSelf).
-	if settings.InstallMode == ModeSilent && settings.AutoElevate && !isElevated() {
-		out, errCh, initErr := globalElevator.runCommandElevated(ctx, args...)
+	if eff.InstallMode == ModeSilent && eff.AutoElevate && !isElevated() {
+		allowed := func(separate bool) bool { return upfrontHelperAllowed(eff, separate) }
+		out, errCh, initErr := globalElevator.runCommandElevatedIf(ctx, allowed, args...)
 		if initErr == nil {
 			return out, errCh
 		}
-		// Helper failed to start — fall through to normal path.
+		// Helper failed to start, or elevation runs as another account
+		// this action must not use — fall through to normal path.
 	}
 
 	// Try running normally (non-elevated)
-	outChan, errChan := runWingetStreamCtx(ctx, false, args...)
+	outChan, errChan := actionWingetStream(ctx, false, args...)
 
 	// Create a proxy channel so we can switch to elevated if needed
 	proxyOut := make(chan string)
@@ -1009,9 +1036,11 @@ func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string
 		}
 
 		err := <-errChan
-		if err != nil && requiresElevation(err, strings.Join(lines, "\n")) && !isElevated() && settings.AutoElevate {
+		allowed := func(separate bool) bool { return retryHelperAllowed(eff, separate) }
+		if err != nil && requiresElevation(err, strings.Join(lines, "\n")) && !isElevated() && eff.AutoElevate &&
+			allowed(globalElevator.separateAccount()) {
 			proxyOut <- "Elevation required. Requesting..."
-			eOut, eErr, initErr := globalElevator.runCommandElevated(ctx, args...)
+			eOut, eErr, initErr := globalElevator.runCommandElevatedIf(ctx, allowed, args...)
 			if initErr != nil {
 				proxyOut <- fmt.Sprintf("Automatic elevation failed: %v", initErr)
 				proxyErr <- err
@@ -1030,7 +1059,8 @@ func runActionSmartStreamCtx(ctx context.Context, args ...string) (<-chan string
 }
 
 func runActionStreamForPackage(ctx context.Context, pkgID, source string, args ...string) (<-chan string, <-chan error) {
-	elev := currentSettings().packageElevateOverride(pkgID, source)
+	settings := currentSettings()
+	elev := settings.packageElevateOverride(pkgID, source)
 	if elev != nil {
 		if *elev && !isElevated() {
 			out, errCh, initErr := globalElevator.runCommandElevated(ctx, args...)
@@ -1042,7 +1072,7 @@ func runActionStreamForPackage(ctx context.Context, pkgID, source string, args .
 			return runWingetStreamCtx(ctx, false, args...)
 		}
 	}
-	return runActionSmartStreamCtx(ctx, args...)
+	return runActionSmartStreamCtxFor(ctx, settings.effectiveSettings(pkgID, source), args...)
 }
 
 func installPackageStreamCtx(ctx context.Context, pkg Package, version string) ([]string, <-chan string, <-chan error) {
