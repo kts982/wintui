@@ -35,6 +35,9 @@ type batchItem struct {
 	startedAt     time.Time // when this item entered the running state
 	latestLine    string    // most recent streamed output line (for live status)
 	noRetryReason string    // why an elevated retry is not allowed; read once when the item fails
+	// elevationNotes collects what the elevation routes decided for this
+	// item's run (e.g. that it ran without elevation), for its history.
+	elevationNotes *elevationNotes
 }
 
 // statusIcon returns a styled icon for the batch item's current state.

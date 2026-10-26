@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -249,5 +250,74 @@ func TestSmartRouteRefusesHelperThatReportsAnotherAccount(t *testing.T) {
 	globalElevator.shutdown()
 	if <-sawWinget {
 		t.Fatal("the helper received the winget request despite running as another account")
+	}
+}
+
+// TestSmartRouteSaysWhenItRanWithoutElevation: the VM pass saw the upfront
+// route fall back silently (history said plain "ok"). The fallback is now
+// the first output line and lands in the action's elevation notes.
+func TestSmartRouteSaysWhenItRanWithoutElevation(t *testing.T) {
+	tests := []struct {
+		name     string
+		separate bool
+		want     string
+	}{
+		{"helper start failed", false, "Running without elevation: no helper in tests"},
+		{"helper runs as another account", true, "Running without elevation: elevation on this PC runs as a different account, used only for scope=machine packages."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newRouteHarness(t, tt.separate, nil)
+			ctx, notes := withElevationNotes(context.Background())
+			eff := Settings{InstallMode: ModeSilent, AutoElevate: true}
+			lines, err := drainRoute(runActionSmartStreamCtxFor(ctx, eff, "install", "--id", "Test.App"))
+			if err != nil {
+				t.Fatalf("route err = %v", err)
+			}
+			if len(lines) == 0 || lines[0] != tt.want {
+				t.Fatalf("first line = %q, want %q", lines, tt.want)
+			}
+			if got := notes.String(); got != tt.want {
+				t.Fatalf("elevation notes = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("no note after a cancel", func(t *testing.T) {
+		newRouteHarness(t, false, nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		ctx, notes := withElevationNotes(ctx)
+		lines, _ := drainRoute(runActionSmartStreamCtxFor(ctx, Settings{InstallMode: ModeSilent, AutoElevate: true}, "install", "--id", "Test.App"))
+		if len(lines) != 0 || notes.String() != "" {
+			t.Fatalf("lines = %q, notes = %q; want neither after a cancel", lines, notes.String())
+		}
+	})
+}
+
+// TestElevationNotesReachHistory: both write points record the notes.
+func TestElevationNotesReachHistory(t *testing.T) {
+	origStream, origExit, origRecord := streamUpgradeFn, cliExitCode, historyRecordFn
+	t.Cleanup(func() { streamUpgradeFn, cliExitCode, historyRecordFn = origStream, origExit, origRecord })
+	streamUpgradeFn = func(ctx context.Context, _ Package, _ io.Writer) error {
+		noteElevation(ctx, "Running without elevation: elevation was cancelled")
+		return nil
+	}
+	var recorded historyRecord
+	historyRecordFn = func(rec historyRecord) (string, error) { recorded = rec; return "", nil }
+
+	raw := []Package{{Name: "A", ID: "A.Pkg", Source: "winget", Version: "1", Available: "2"}}
+	if err := upgradeAll(context.Background(), raw, DefaultSettings(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorded.Items) != 1 || recorded.Items[0].Notes != "Running without elevation: elevation was cancelled" {
+		t.Fatalf("CLI history items = %+v, want the elevation note", recorded.Items)
+	}
+
+	ctx, notes := withElevationNotes(context.Background())
+	noteElevation(ctx, "Running without elevation: elevation was cancelled")
+	rec := buildTUIHistoryRecord([]batchItem{{action: retryOpUpgrade, item: workspaceItem{pkg: Package{ID: "A.Pkg"}}, status: batchDone, elevationNotes: notes}}, historyTriggerTUI, nil)
+	if rec.Items[0].Notes != "Running without elevation: elevation was cancelled" {
+		t.Fatalf("TUI history item = %+v, want the elevation note", rec.Items[0])
 	}
 }

@@ -412,11 +412,23 @@ func (m *elevationManager) runCommandElevatedIf(ctx context.Context, allowed fun
 				errChan <- nil
 				return
 			case "error":
-				errChan <- fmt.Errorf("%s", resp.Data)
+				errChan <- m.helperWingetError(resp.Data)
 				return
 			}
 		}
 	}()
 
 	return outChan, errChan, nil
+}
+
+// helperWingetError is the error for a failed winget run in the helper. A
+// helper running as another account cannot see the user's per-user installs,
+// so winget's "no installed package found" there gets that explanation (the
+// 2026-10-26 VM pass: an elevated uninstall of a user-scope package exits
+// 0x8A150014 under Administrator protection, not 0x8A15007D).
+func (m *elevationManager) helperWingetError(msg string) error {
+	if m.separateAccount() && containsCodeToken(strings.ToLower(msg), "0x8a150014") {
+		return fmt.Errorf("%s (elevation on this PC runs as a different account, which cannot see packages installed only for you; run it without elevation)", msg)
+	}
+	return fmt.Errorf("%s", msg)
 }

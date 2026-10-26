@@ -556,7 +556,8 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 			histItems = append(histItems, item)
 			continue
 		}
-		err := streamUpgradeFn(ctx, pkg, out)
+		pkgCtx, notes := withElevationNotes(ctx)
+		err := streamUpgradeFn(pkgCtx, pkg, out)
 		if r, ok := asElevationRefusal(err); ok {
 			// Like a hold: the named package was not upgraded, by policy.
 			fmt.Fprintln(out, "  "+cliDanger("✗ "+r.Error()))
@@ -567,11 +568,14 @@ func upgradeIDs(ctx context.Context, ids []string, raw []Package, settings Setti
 			failures = append(failures, pkg.ID)
 			item := cliUpgradeItem(pkg, historyStatusError)
 			item.Error = err.Error()
+			item.Notes = notes.String()
 			histItems = append(histItems, item)
 		} else {
 			fmt.Fprintln(out, "  "+cliSuccess("✓ upgraded"))
 			upgraded++
-			histItems = append(histItems, cliUpgradeItem(pkg, historyStatusOK))
+			item := cliUpgradeItem(pkg, historyStatusOK)
+			item.Notes = notes.String()
+			histItems = append(histItems, item)
 		}
 	}
 
@@ -668,7 +672,8 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 			histItems = append(histItems, item)
 			continue
 		}
-		err := streamUpgradeFn(ctx, pkg, out)
+		pkgCtx, notes := withElevationNotes(ctx)
+		err := streamUpgradeFn(pkgCtx, pkg, out)
 		if r, ok := asElevationRefusal(err); ok {
 			// A policy refusal, not a failure: a scheduled run stays exit 0.
 			fmt.Fprintln(out, "  • "+r.Error())
@@ -679,10 +684,13 @@ func upgradePlanned(ctx context.Context, pkgs []Package, held int, mode string, 
 			failures = append(failures, pkg.ID)
 			item := cliUpgradeItem(pkg, historyStatusError)
 			item.Error = err.Error()
+			item.Notes = notes.String()
 			histItems = append(histItems, item)
 		} else {
 			fmt.Fprintln(out, "  "+cliSuccess("✓ upgraded"))
-			histItems = append(histItems, cliUpgradeItem(pkg, historyStatusOK))
+			item := cliUpgradeItem(pkg, historyStatusOK)
+			item.Notes = notes.String()
+			histItems = append(histItems, item)
 		}
 	}
 

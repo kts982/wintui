@@ -357,6 +357,8 @@ func buildTUIHistoryRecord(items []batchItem, trigger string, selectedVersions m
 		}
 		if r, ok := asElevationRefusal(bi.err); ok && bi.status == batchSkipped {
 			it.Notes = r.note
+		} else {
+			it.Notes = bi.elevationNotes.String()
 		}
 		hi = append(hi, it)
 	}

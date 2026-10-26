@@ -1014,6 +1014,7 @@ func runActionSmartStreamCtxFor(ctx context.Context, eff Settings, args ...strin
 	// elevated, run everything through the elevated helper upfront.
 	// This avoids UAC popups from installers that elevate themselves
 	// (e.g. MSI packages with ElevationRequirement: elevatesSelf).
+	var note string
 	if eff.InstallMode == ModeSilent && eff.AutoElevate && !isElevated() {
 		allowed := func(separate bool) bool { return upfrontHelperAllowed(eff, separate) }
 		out, errCh, initErr := globalElevator.runCommandElevatedIf(ctx, allowed, args...)
@@ -1021,9 +1022,28 @@ func runActionSmartStreamCtxFor(ctx context.Context, eff Settings, args ...strin
 			return out, errCh
 		}
 		// Helper failed to start, or elevation runs as another account
-		// this action must not use — fall through to normal path.
+		// this action must not use — run without elevation, and say so.
+		note = fallbackNote(ctx, initErr)
 	}
+	return runWithElevationRetry(ctx, eff, note, args...)
+}
 
+// fallbackNote is the line saying an action runs without elevation because
+// the upfront helper route was refused or failed — "" after a cancel.
+func fallbackNote(ctx context.Context, initErr error) string {
+	if ctx.Err() != nil {
+		return ""
+	}
+	if errors.Is(initErr, errHelperOtherAccount) {
+		return noteElevation(ctx, "Running without elevation: elevation on this PC runs as a different account, used only for scope=machine packages.")
+	}
+	return noteElevation(ctx, "Running without elevation: "+initErr.Error())
+}
+
+// runWithElevationRetry runs a winget action without elevation and, when it
+// fails for lack of admin rights and eff allows it, retries it through the
+// helper. A non-empty note is the first output line.
+func runWithElevationRetry(ctx context.Context, eff Settings, note string, args ...string) (<-chan string, <-chan error) {
 	// Try running normally (non-elevated)
 	outChan, errChan := actionWingetStream(ctx, false, args...)
 
@@ -1035,6 +1055,9 @@ func runActionSmartStreamCtxFor(ctx context.Context, eff Settings, args ...strin
 		defer close(proxyOut)
 		defer close(proxyErr)
 
+		if note != "" {
+			proxyOut <- note
+		}
 		var lines []string
 		for line := range outChan {
 			lines = append(lines, line)
@@ -1048,7 +1071,7 @@ func runActionSmartStreamCtxFor(ctx context.Context, eff Settings, args ...strin
 			proxyOut <- "Elevation required. Requesting..."
 			eOut, eErr, initErr := globalElevator.runCommandElevatedIf(ctx, allowed, args...)
 			if initErr != nil {
-				proxyOut <- fmt.Sprintf("Automatic elevation failed: %v", initErr)
+				proxyOut <- noteElevation(ctx, fmt.Sprintf("Automatic elevation failed: %v", initErr))
 				proxyErr <- err
 				return
 			}
@@ -1092,10 +1115,13 @@ func runActionStreamForPackage(ctx context.Context, action retryOp, pkgID, sourc
 		if initErr == nil {
 			return out, errCh
 		}
+		var note string
 		if errors.Is(initErr, errHelperOtherAccount) {
-			out, errCh := runActionSmartStreamCtxFor(ctx, eff, args...)
-			return prependLine(elevateRuleSkippedNote, out, errCh)
+			note = noteElevation(ctx, elevateRuleSkippedNote)
+		} else {
+			note = fallbackNote(ctx, initErr)
 		}
+		return runWithElevationRetry(ctx, eff, note, args...)
 	}
 	return runActionSmartStreamCtxFor(ctx, eff, args...)
 }
@@ -1115,19 +1141,6 @@ func runForcedElevated(ctx context.Context, action retryOp, pkgID, source string
 		return closedStringChan(), errChanWith(refuseForcedElevation(otherAccountReason)), nil
 	}
 	return out, errCh, initErr
-}
-
-// prependLine returns the stream with line emitted before its own lines.
-func prependLine(line string, out <-chan string, errCh <-chan error) (<-chan string, <-chan error) {
-	proxy := make(chan string)
-	go func() {
-		defer close(proxy)
-		proxy <- line
-		for l := range out {
-			proxy <- l
-		}
-	}()
-	return proxy, errCh
 }
 
 func installPackageStreamCtx(ctx context.Context, pkg Package, version string) ([]string, <-chan string, <-chan error) {

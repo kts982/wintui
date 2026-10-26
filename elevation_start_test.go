@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -105,19 +107,73 @@ func TestBatchItemStartDropsStaleStarts(t *testing.T) {
 	out := make(chan string)
 	close(out)
 	errCh := errChanWith(nil)
-	next, cmd := ws.handleBatchItemStarted(batchItemStartedMsg{ctx: context.Background(), idx: 0, out: out, errCh: errCh})
+	next, cmd := ws.handleBatchItemStarted(batchItemStartedMsg{batch: context.Background(), idx: 0, out: out, errCh: errCh})
 	if got := next.(workspaceScreen); got.streamOut != nil || cmd != nil {
 		t.Fatal("a start from another batch context was wired into the current batch")
 	}
 
-	next, cmd = ws.handleBatchItemStarted(batchItemStartedMsg{ctx: ws.ctx, idx: 0, out: out, errCh: errCh})
+	next, cmd = ws.handleBatchItemStarted(batchItemStartedMsg{batch: ws.ctx, idx: 0, out: out, errCh: errCh})
 	if got := next.(workspaceScreen); got.streamOut == nil || cmd == nil {
 		t.Fatal("the current batch's start was not wired in")
 	}
 
-	next, _ = ws.handleBatchItemStarted(batchItemStartedMsg{ctx: ws.ctx, idx: 0, initErr: errElevationCancelled})
+	next, _ = ws.handleBatchItemStarted(batchItemStartedMsg{batch: ws.ctx, idx: 0, initErr: errElevationCancelled})
 	got := next.(workspaceScreen)
 	if it := got.modal.items[0]; it.status != batchFailed || it.err == nil || it.err.Error() != "elevation failed: elevation was cancelled" {
 		t.Fatalf("item after a failed forced start = %+v", it)
+	}
+}
+
+// TestHelperNotFoundUnderAnotherAccountIsExplained: a helper running as
+// another account answers a per-user package with "no installed package
+// found"; the error must say why.
+func TestHelperNotFoundUnderAnotherAccountIsExplained(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		sid  string
+		want bool
+	}{
+		{"same account", "", false},
+		{"another account", "S-1-5-21-9-9-9-1002", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pinPredictedSeparateAccount(t, false)
+			origStart, origTimeout := startElevatedHelperFunc, helperAcceptTimeout
+			t.Cleanup(func() { startElevatedHelperFunc, helperAcceptTimeout = origStart, origTimeout })
+			listener := newFakePipeListener()
+			startElevatedHelperFunc = func(context.Context, string, string) (net.Listener, error) { return listener, nil }
+			helperAcceptTimeout = time.Second
+			serverConn, clientConn := net.Pipe()
+			listener.acceptCh <- serverConn
+			t.Cleanup(func() { clientConn.Close() })
+
+			sid := tt.sid
+			if sid == "" {
+				sid = selfSIDForTest()
+			}
+			go func() {
+				reader := bufio.NewReader(clientConn)
+				if !answerIdentity(reader, clientConn, sid) {
+					return
+				}
+				if _, err := reader.ReadString('\n'); err != nil {
+					return
+				}
+				_ = sendHelperResponse(clientConn, "error", "no installed package found matching input criteria (0x8a150014)")
+			}()
+
+			m := &elevationManager{}
+			out, errCh, err := m.runCommandElevated(context.Background(), "uninstall", "--id", "jqlang.jq")
+			if err != nil {
+				t.Fatalf("runCommandElevated: %v", err)
+			}
+			_, runErr := drainRoute(out, errCh)
+			if runErr == nil {
+				t.Fatal("run err = nil, want the not-found failure")
+			}
+			if got := strings.Contains(runErr.Error(), "different account"); got != tt.want {
+				t.Fatalf("explained = %v, want %v (err %q)", got, tt.want, runErr)
+			}
+		})
 	}
 }

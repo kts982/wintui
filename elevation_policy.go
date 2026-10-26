@@ -1,9 +1,49 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 )
+
+// elevationNotes collects what the elevation routes decided for one action
+// that the user should know about — chiefly that it ran without elevation —
+// for the action's history record. It rides on the action's context and is
+// safe for concurrent use; a nil *elevationNotes reads as empty.
+type elevationNotes struct {
+	mu    sync.Mutex
+	notes []string
+}
+
+type elevationNotesKey struct{}
+
+// withElevationNotes returns ctx carrying a fresh elevationNotes.
+func withElevationNotes(ctx context.Context) (context.Context, *elevationNotes) {
+	n := &elevationNotes{}
+	return context.WithValue(ctx, elevationNotesKey{}, n), n
+}
+
+func (n *elevationNotes) String() string {
+	if n == nil {
+		return ""
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return strings.Join(n.notes, "; ")
+}
+
+// noteElevation records note on ctx's elevationNotes, if it has one, and
+// returns it for the action's output.
+func noteElevation(ctx context.Context, note string) string {
+	if n, ok := ctx.Value(elevationNotesKey{}).(*elevationNotes); ok {
+		n.mu.Lock()
+		n.notes = append(n.notes, note)
+		n.mu.Unlock()
+	}
+	return note
+}
 
 // portableInstalled reports whether pkgID has winget's portable package
 // directory in the current profile — evidence the package is user-scope even

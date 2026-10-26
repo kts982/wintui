@@ -439,8 +439,11 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 	// A Ctrl+E retry forces elevation, except for items whose rules forbid it
 	// (only blocked-by-process items get here with such rules): those retry
 	// on their normal route.
+	itemCtx, notes := withElevationNotes(s.ctx)
+	current.elevationNotes = notes
 	start := batchItemStart{
-		ctx:         s.ctx,
+		ctx:         itemCtx,
+		batch:       s.ctx,
 		idx:         s.modal.idx,
 		action:      current.action,
 		pkg:         item.pkg,
@@ -453,7 +456,8 @@ func (s workspaceScreen) processNextBatchItem() (screen, tea.Cmd) {
 
 // batchItemStart is everything needed to start one batch item's winget run.
 type batchItemStart struct {
-	ctx         context.Context
+	ctx         context.Context // the item's: the batch's, carrying its elevationNotes
+	batch       context.Context
 	idx         int
 	action      retryOp
 	pkg         Package
@@ -464,7 +468,7 @@ type batchItemStart struct {
 
 // batchItemStartedMsg carries a started item's streams back to Update.
 type batchItemStartedMsg struct {
-	ctx     context.Context // the batch's context, to drop a stale start
+	batch   context.Context // the batch's context, to drop a stale start
 	idx     int
 	out     <-chan string
 	errCh   <-chan error
@@ -476,7 +480,7 @@ type batchItemStartedMsg struct {
 // prompt and then for the helper to connect, so the TUI must keep redrawing
 // and Esc must stay live meanwhile.
 func (b batchItemStart) run() batchItemStartedMsg {
-	msg := batchItemStartedMsg{ctx: b.ctx, idx: b.idx}
+	msg := batchItemStartedMsg{batch: b.batch, idx: b.idx}
 	switch {
 	case b.forced && b.action == retryOpUpgrade:
 		_, msg.out, msg.errCh, msg.initErr = upgradePackageElevatedStreamCtx(b.ctx, b.pkg, b.version)
@@ -497,7 +501,7 @@ func (b batchItemStart) run() batchItemStartedMsg {
 // handleBatchItemStarted wires a started item's streams into the batch, or
 // records a forced elevation that could not start.
 func (s workspaceScreen) handleBatchItemStarted(msg batchItemStartedMsg) (screen, tea.Cmd) {
-	if s.modal == nil || s.modal.phase != execPhaseRunning || msg.ctx != s.ctx || msg.idx != s.modal.idx {
+	if s.modal == nil || s.modal.phase != execPhaseRunning || msg.batch != s.ctx || msg.idx != s.modal.idx {
 		// The batch was cancelled or replaced while the item started; its
 		// context is cancelled, so the run ends on its own — drain it.
 		go func() { _ = drainStream(msg.out, msg.errCh) }()
