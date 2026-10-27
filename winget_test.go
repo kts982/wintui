@@ -380,9 +380,59 @@ func TestStreamWingetOutputLinesSkipsNoiseButKeepsUsefulStatus(t *testing.T) {
 func TestFriendlyWingetErrorMapsKnownUpgradeCode(t *testing.T) {
 	err := friendlyWingetError(assertErr("exit status 0x8a15002b"), "", "")
 	got := err.Error()
-	want := "install technology differs from installed version (package manages its own updates) (0x8a15002b)"
+	want := "no applicable update found (0x8a15002b)"
 	if got != want {
 		t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
+	}
+}
+
+// TestFriendlyWingetErrorReadsTheDecimalExitStatus: Go reports winget's
+// HRESULT exit code as an unsigned decimal, which the hex table never matched
+// (the rc1 VM build showed "exit status 2316632089"). The exit codes are the
+// stream corpus's (.dev/stream-corpus meta.json exitCode, as uint32).
+func TestFriendlyWingetErrorReadsTheDecimalExitStatus(t *testing.T) {
+	tests := []struct {
+		name, exit, stdout, want string
+	}{
+		{"requires admin", "exit status 2316632089", "", "this action requires administrator privileges (0x8a150019)"},
+		// Notepad++ upgrade: the installer said 1602, winget mapped it.
+		{"winget's code beats the installer's", "exit status 2316632332", "Installer failed with exit code: 1602",
+			"the installer was cancelled (for example, its own UAC prompt was declined) (0x8a15010c)"},
+		// Pandoc upgrade: 0x8A150030 plus an installer 1603 in the output.
+		{"installer code stays in the output", "exit status 2316632112", "Installer failed with exit code: 1603",
+			"the package's uninstall command failed (0x8a150030)"},
+		{"unknown HRESULT shown in hex", "exit status 2316632200", "", "exit status 0x8a150088"},
+		{"small exit code untouched", "exit status 1", "", "exit status 1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := friendlyWingetError(assertErr(tt.exit), "", tt.stdout).Error(); got != tt.want {
+				t.Fatalf("friendlyWingetError() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestElevationClassifiersFollowWingetsCodes: 0x8A150019 is winget's
+// "command requires admin"; 0x8A150056 is the opposite ("the installer
+// cannot be run from an administrator context") and must never trigger an
+// elevated retry — not by code, and not through its friendly text.
+func TestElevationClassifiersFollowWingetsCodes(t *testing.T) {
+	requiresAdmin := friendlyWingetError(assertErr("exit status 2316632089"), "", "")
+	if !requiresElevation(requiresAdmin, "") {
+		t.Errorf("requiresElevation(%q) = false", requiresAdmin)
+	}
+	prohibits := friendlyWingetError(assertErr("exit status 2316632150"), "", "The installer cannot be run from an administrator context.")
+	if !strings.Contains(prohibits.Error(), "0x8a150056") {
+		t.Fatalf("0x8A150056 maps to %q", prohibits)
+	}
+	if requiresElevation(prohibits, "The installer cannot be run from an administrator context.") ||
+		likelyBenefitsFromElevation(prohibits, "") {
+		t.Errorf("%q is treated as an elevation candidate", prohibits)
+	}
+	inUse := friendlyWingetError(assertErr("exit status 2316632321"), "", "")
+	if !isProcessInUseError(inUse, "") {
+		t.Errorf("isProcessInUseError(%q) = false", inUse)
 	}
 }
 
@@ -398,14 +448,14 @@ func TestFriendlyWingetErrorMapsInstallerExitCode(t *testing.T) {
 func TestFriendlyWingetErrorMapsSelfUpgradeCodes(t *testing.T) {
 	err := friendlyWingetError(assertErr("exit status 1"), "", "0x8a150052")
 	got := err.Error()
-	want := "portable package could not replace files (close the running app before upgrading) (0x8a150052)"
+	want := "portable package install failed (a running copy can block it; close the app and retry) (0x8a150052)"
 	if got != want {
 		t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
 	}
 
 	err = friendlyWingetError(assertErr("exit status 1"), "", "0x8a150003")
 	got = err.Error()
-	want = "installer command failed (0x8a150003)"
+	want = "the winget command failed (0x8a150003)"
 	if got != want {
 		t.Fatalf("friendlyWingetError() = %q, want %q", got, want)
 	}
@@ -614,8 +664,11 @@ func TestActionCommandArgs(t *testing.T) {
 }
 func TestAutoElevateHints(t *testing.T) {
 	err := errors.New("winget error")
-	if !requiresElevation(err, "0x8a150056") {
-		t.Errorf("expected 0x8a150056 to require elevation")
+	if !requiresElevation(err, "0x8a150019") {
+		t.Errorf("expected 0x8a150019 to require elevation")
+	}
+	if requiresElevation(err, "0x8a150056") {
+		t.Errorf("expected 0x8a150056 (installer prohibits elevation) to NOT require elevation")
 	}
 	if requiresElevation(err, "1603") {
 		t.Errorf("expected 1603 to NOT strictly require elevation")

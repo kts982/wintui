@@ -166,7 +166,7 @@ func TestExecModalElevationCandidatesFiltersCorrectly(t *testing.T) {
 	items := []batchItem{
 		{item: workspaceItem{pkg: Package{ID: "Pkg.One", Source: "winget"}}, status: batchFailed, err: assertErr("installer failed with a fatal error (1603)"), output: "exit code: 1603"},
 		{item: workspaceItem{pkg: Package{ID: "Pkg.Two", Source: "winget"}}, status: batchDone},
-		{item: workspaceItem{pkg: Package{ID: "Pkg.Three", Source: "winget"}}, status: batchFailed, err: assertErr("package requires administrator privileges (0x8a150056)"), output: "0x8a150056"},
+		{item: workspaceItem{pkg: Package{ID: "Pkg.Three", Source: "winget"}}, status: batchFailed, err: assertErr("this action requires administrator privileges (0x8a150019)"), output: "0x8a150019"},
 	}
 	m := newExecModal(retryOpUpgrade, items)
 	// Simulate completion.

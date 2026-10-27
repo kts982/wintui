@@ -723,8 +723,8 @@ func TestCtrlEForcesElevationWhenElevationCandidatesPresent(t *testing.T) {
 			action: retryOpUpgrade,
 			item:   workspaceItem{pkg: Package{ID: "Admin.Tool", Source: "winget"}},
 			status: batchFailed,
-			err:    assertErr("package requires administrator privileges (0x8a150056)"),
-			output: "0x8a150056",
+			err:    assertErr("this action requires administrator privileges (0x8a150019)"),
+			output: "0x8a150019",
 		},
 	}
 	m := newExecModal(retryOpUpgrade, items)
@@ -753,8 +753,8 @@ func TestCtrlERetriesMixedBatchForcesElevationAndIncludesBoth(t *testing.T) {
 			action: retryOpUpgrade,
 			item:   workspaceItem{pkg: Package{ID: "Admin.Tool", Source: "winget"}},
 			status: batchFailed,
-			err:    assertErr("package requires administrator privileges (0x8a150056)"),
-			output: "0x8a150056",
+			err:    assertErr("this action requires administrator privileges (0x8a150019)"),
+			output: "0x8a150019",
 		},
 		{
 			action:        retryOpUninstall,

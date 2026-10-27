@@ -251,9 +251,9 @@ func TestCtrlEExcludesUserScopeItems(t *testing.T) {
 		bi := batchItem{
 			action: retryOpUpgrade,
 			item:   workspaceItem{pkg: Package{Name: id, ID: id, Source: "winget"}},
-			output: "0x8a150056",
+			output: "0x8a150019",
 		}
-		bi.markFailed(errors.New("package requires administrator privileges (0x8a150056)"))
+		bi.markFailed(errors.New("this action requires administrator privileges (0x8a150019)"))
 		return bi
 	}
 

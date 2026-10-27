@@ -106,6 +106,13 @@ helper reports its account when it connects. When it is a different account:
   action runs as you and says so.
 - winget's "no installed package found" (`0x8A150014`) from the helper adds
   that the elevated account cannot see packages installed only for you.
+- A per-user package that already landed in the other account's profile
+  (for example, a portable package installed from an elevated terminal)
+  cannot be removed with winget at all: that account only ever runs with a
+  full administrator token, and winget refuses to uninstall user-scope
+  packages from one (`0x8A15007D`). Remove its folder under that profile's
+  `%LOCALAPPDATA%\Microsoft\WinGet\Packages`, its `WinGet\Links` entry, and
+  its PATH and Apps & features entries by hand.
 - `wintui doctor` adds "elevation runs as a different account" to the
   Privileges row.
 
@@ -125,9 +132,16 @@ helper reports its account when it connects. When it is a different account:
 
 These are treated as administrator-required failures and auto-retried when Auto Elevate is on (except for user-scope packages):
 
-- `0x8a150056` — package requires administrator privileges
-- `0x80073d28` — installer requires administrator privileges
+- `0x8a150019` — winget: the command requires administrator privileges (for
+  example, a `scope: machine` install from a non-elevated terminal)
+- `0x80073d28` — MSIX: a packaged service requires administrator privileges
 - Messages containing `administrator privileges`, `requires elevation`, `run as admin`
+
+WinTUI matches winget's own exit code first (Go reports it in decimal, so
+`exit status 2316632089` is `0x8a150019`), then any code in winget's output,
+such as the installer's exit code. `0x8a150056` is the opposite case — the
+installer cannot run from an administrator context — and is never retried
+elevated.
 
 ### Soft elevation candidates
 
@@ -159,7 +173,7 @@ package to allow it.
 
 ### Retry for process-in-use failures
 
-When an install/upgrade/uninstall fails because a related application is still running (winget errors like `0x80073d02`, `0x8a150052`, `0x8a150066`, or messages containing "is in use"), the result modal shows:
+When an install/upgrade/uninstall fails because a related application is still running (winget errors like `0x8a150101`, `0x8a150103`, `0x80073d02`, `0x8a150052`, `0x8a150066`, or messages containing "is in use"), the result modal shows:
 
 ```
 Close the running application and press ctrl+e to retry.

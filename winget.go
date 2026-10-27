@@ -300,22 +300,36 @@ func showPackageVersionsCtx(ctx context.Context, pkg Package) ([]string, error) 
 // wingetErrorCodes maps known winget exit/installer codes to friendly
 // descriptions. An ordered slice, not a map: when output mentions several
 // known codes the FIRST entry here wins, so the mapping is deterministic.
-// Specific winget hex codes come before the generic MSI decimal codes.
+// Specific winget hex codes come before the generic MSI decimal codes. The
+// winget codes follow winget-cli's doc/windows/package-manager/winget/
+// returnCodes.md; winget's own exit code is matched before any code its
+// output mentions (see friendlyWingetError).
 var wingetErrorCodes = []struct{ code, desc string }{
-	{"0x8a150002", "package not found or no applicable installer"},
-	{"0x8a150003", "installer command failed"},
-	{"0x8a15000e", "upgrade not applicable (already up to date)"},
-	{"0x8a150011", "package not found"},
-	{"0x8a150014", "no installed package found matching input criteria"},
-	{"0x8a150015", "no applicable update found"},
-	{"0x8a150019", "package version already installed"},
-	{"0x8a15002b", "install technology differs from installed version (package manages its own updates)"},
-	{"0x8a15002c", "some packages failed to upgrade"},
-	{"0x8a150006", "installer failed (the installer process was terminated)"},
-	{"0x8a150052", "portable package could not replace files (close the running app before upgrading)"},
-	{"0x8a150056", "package requires administrator privileges to install"},
-	{"0x8a150066", "one or more versions failed to uninstall (close the app and retry)"},
+	{"0x8a150019", "this action requires administrator privileges"},
+	// Worded so requiresElevation's text patterns ("run as admin") miss it:
+	// this one means elevation must NOT be retried.
+	{"0x8a150056", "the installer refuses to run elevated (run it without elevation)"},
 	{"0x8a15007d", "installed for user scope, so winget will not uninstall it as administrator (run WinTUI non-elevated)"},
+	{"0x8a150014", "no installed package found matching input criteria"},
+	{"0x8a150010", "no installer applies to this system"},
+	{"0x8a15008e", "the upgrade uses a different install technology than the installed version (the package manages its own updates)"},
+	{"0x8a15002b", "no applicable update found"},
+	{"0x8a150101", "the application is running (close it and retry)"},
+	{"0x8a150103", "a file is in use (close the application and retry)"},
+	{"0x8a150102", "another installation is in progress (try again later)"},
+	{"0x8a15010c", "the installer was cancelled (for example, its own UAC prompt was declined)"},
+	{"0x8a15010d", "another version of this application is already installed"},
+	{"0x8a150061", "the package is already installed"},
+	{"0x8a150052", "portable package install failed (a running copy can block it; close the app and retry)"},
+	{"0x8a150066", "one or more versions failed to uninstall (close the app and retry)"},
+	{"0x8a150030", "the package's uninstall command failed"},
+	{"0x8a150011", "the installer's hash does not match the manifest"},
+	{"0x8a150002", "invalid command-line arguments"},
+	{"0x8a150006", "the installer could not be started"},
+	{"0x8a15000e", "the MSIX file is a bundle, not a package"},
+	{"0x8a150015", "no winget sources are configured"},
+	{"0x8a150003", "the winget command failed"},
+	{"0x8a15002c", "some packages failed to upgrade"},
 	{"0x80073d28", "installer requires administrator privileges (try running as admin)"},
 	{"0x80073cf3", "package install failed (conflicting package)"},
 	{"0x80073d02", "installation blocked by a running process"},
@@ -329,12 +343,21 @@ var wingetErrorCodes = []struct{ code, desc string }{
 }
 
 // friendlyWingetError translates raw winget exit codes into human-readable messages.
+// winget's own exit code (its mapped result) is matched first; only when the
+// table does not know it do codes mentioned in its output count, such as the
+// installer's exit code.
 func friendlyWingetError(err error, stderr, stdout string) error {
 	msg := err.Error()
 
-	code, desc := matchKnownWingetErrorCode(strings.Join([]string{msg, stderr, stdout}, "\n"))
+	hex, dec := exitStatusCode(msg)
+	code, desc := matchKnownWingetErrorCode(hex + "\n" + dec)
+	if code == "" {
+		code, desc = matchKnownWingetErrorCode(strings.Join([]string{msg, stderr, stdout}, "\n"))
+	}
 	if code != "" {
 		msg = fmt.Sprintf("%s (%s)", desc, code)
+	} else if hex != "" {
+		msg = "exit status " + hex
 	}
 
 	// Check stdout for admin-related errors when the top-level code is generic.
@@ -347,6 +370,25 @@ func friendlyWingetError(err error, stderr, stdout string) error {
 		return fmt.Errorf("%s: %s", msg, stderr)
 	}
 	return fmt.Errorf("%s", msg)
+}
+
+// exitStatusCode parses Go's "exit status N" for a failed winget run. winget
+// exits with an HRESULT, which Go reports as an unsigned decimal
+// (0x8A150019 is "exit status 2316632089"), so hex is its 0x form when N is
+// one ("" otherwise) and dec is N as written.
+func exitStatusCode(msg string) (hex, dec string) {
+	rest, ok := strings.CutPrefix(msg, "exit status ")
+	if !ok {
+		return "", ""
+	}
+	n, err := strconv.ParseUint(rest, 10, 32)
+	if err != nil {
+		return "", ""
+	}
+	if n >= 0x80000000 {
+		hex = fmt.Sprintf("0x%08x", n)
+	}
+	return hex, rest
 }
 
 func matchKnownWingetErrorCode(text string) (string, string) {
@@ -391,7 +433,9 @@ func isProcessInUseError(err error, output string) bool {
 	lower := strings.ToLower(err.Error() + "\n" + output)
 	patterns := []string{
 		"0x80073d02",             // installation blocked by a running process
-		"0x8a150052",             // portable package could not replace files
+		"0x8a150101",             // the application is running
+		"0x8a150103",             // a file is in use
+		"0x8a150052",             // portable install failed (a running copy blocks it)
 		"0x8a150066",             // one or more versions failed to uninstall
 		"process was terminated", // 0x8a150006
 		"is in use",
@@ -420,8 +464,8 @@ func requiresElevation(err error, output string) bool {
 		"run as admin",
 		"requires elevation",
 		"must be run as administrator",
-		"0x8a150056",
-		"0x80073d28",
+		"0x8a150019", // winget: command requires admin (0x8a150056 is the opposite)
+		"0x80073d28", // MSIX: packaged service requires admin privileges
 	}
 	for _, pattern := range patterns {
 		if strings.Contains(lower, pattern) {
