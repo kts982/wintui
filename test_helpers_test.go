@@ -2,22 +2,28 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 )
 
-// TestMain backs up the user's real settings and cache files before any tests
-// run, and restores them afterwards. This prevents tests that call
-// updateSettings / SaveSettings or cache.saveToDiskLocked from overwriting real user data.
+// TestMain points %APPDATA% at a temporary directory before any test runs, so
+// settings.json, cache.json and history.json resolve there (os.UserConfigDir)
+// and no test reads or writes the user's real files — not even for the length
+// of a run that crashes or is interrupted. %LOCALAPPDATA% stays real: winget's
+// path validation depends on it.
 func TestMain(m *testing.M) {
-	settingsPath := configPath()
-	cachePath := diskCachePath()
-
-	settingsBackup, settingsErr := os.ReadFile(settingsPath)
-	cacheBackup, cacheErr := os.ReadFile(cachePath)
+	appData, err := os.MkdirTemp("", "wintui-test-appdata-")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("APPDATA", appData); err != nil {
+		panic(err)
+	}
 
 	// Action-history write-points (finishBatch, the CLI upgrade loops) go through
 	// historyRecordFn. Default it to a no-op so no test writes the real
@@ -31,15 +37,24 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	if settingsErr == nil {
-		os.WriteFile(settingsPath, settingsBackup, 0644)
-	}
-	if cacheErr == nil {
-		os.WriteFile(cachePath, cacheBackup, 0644)
-	} else if os.IsNotExist(cacheErr) {
-		os.Remove(cachePath)
-	}
+	_ = os.RemoveAll(appData)
 	os.Exit(code)
+}
+
+func TestProfileFilesResolveToTheScratchAppData(t *testing.T) {
+	appData := os.Getenv("APPDATA")
+	if !strings.HasPrefix(filepath.Base(appData), "wintui-test-appdata-") {
+		t.Fatalf("APPDATA = %q, want TestMain's scratch dir", appData)
+	}
+	for name, path := range map[string]string{
+		"settings": configPath(),
+		"cache":    diskCachePath(),
+		"history":  historyPath(),
+	} {
+		if !strings.HasPrefix(path, appData+string(filepath.Separator)) {
+			t.Errorf("%s path = %q, want it under %q", name, path, appData)
+		}
+	}
 }
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
