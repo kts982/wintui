@@ -53,6 +53,9 @@ type fixPortableJSON struct {
 	DryRun        bool     `json:"dry_run"`
 	Fixed         []string `json:"fixed"`
 	AlreadyPinned []string `json:"already_pinned"`
+	// KeptElevate lists portables left alone because an explicit
+	// elevate=always rule outranks the pin.
+	KeptElevate []string `json:"kept_elevate_always,omitempty"`
 }
 
 func runFixPortable(opts fixPortableOptions, settings Settings, out io.Writer) error {
@@ -62,7 +65,7 @@ func runFixPortable(opts fixPortableOptions, settings Settings, out io.Writer) e
 	}
 	dirNames := fixPortablePackageDirsFn()
 
-	var fixed, already []Package
+	var fixed, already, kept []Package
 	for _, pkg := range installed {
 		if !isPortableInstalled(pkg.ID, dirNames) {
 			continue
@@ -70,6 +73,12 @@ func runFixPortable(opts fixPortableOptions, settings Settings, out io.Writer) e
 		_, existing, _ := settings.lookupOverride(pkg.ID, pkg.Source)
 		if portableAlreadyPinned(existing) {
 			already = append(already, pkg)
+			continue
+		}
+		if portableElevateKept(existing) {
+			// An explicit elevate=always rule is the user's most specific
+			// choice; don't overwrite it with elevate=false.
+			kept = append(kept, pkg)
 			continue
 		}
 		fixed = append(fixed, pkg)
@@ -89,14 +98,18 @@ func runFixPortable(opts fixPortableOptions, settings Settings, out io.Writer) e
 	if opts.JSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
-		return enc.Encode(fixPortableJSON{DryRun: opts.DryRun, Fixed: packageIDList(fixed), AlreadyPinned: packageIDList(already)})
+		payload := fixPortableJSON{DryRun: opts.DryRun, Fixed: packageIDList(fixed), AlreadyPinned: packageIDList(already)}
+		if len(kept) > 0 {
+			payload.KeptElevate = packageIDList(kept)
+		}
+		return enc.Encode(payload)
 	}
-	renderFixPortable(opts.DryRun, fixed, already, out)
+	renderFixPortable(opts.DryRun, fixed, already, kept, out)
 	return nil
 }
 
-func renderFixPortable(dryRun bool, fixed, already []Package, out io.Writer) {
-	if len(fixed) == 0 && len(already) == 0 {
+func renderFixPortable(dryRun bool, fixed, already, kept []Package, out io.Writer) {
+	if len(fixed) == 0 && len(already) == 0 && len(kept) == 0 {
 		fmt.Fprintln(out, "No portable winget packages found — nothing to pin.")
 		return
 	}
@@ -112,6 +125,13 @@ func renderFixPortable(dryRun bool, fixed, already []Package, out io.Writer) {
 	}
 	if len(already) > 0 {
 		fmt.Fprintf(out, "%d already pinned.\n", len(already))
+	}
+	if len(kept) > 0 {
+		fmt.Fprintf(out, "Left %d alone: an explicit elevate=always rule outranks the pin:\n", len(kept))
+		for _, p := range kept {
+			fmt.Fprintf(out, "  • %s (%s)\n", packageNameOrID(p), p.ID)
+		}
+		fmt.Fprintln(out, "  To pin one, run 'wintui rules set <id> --elevate inherit' first.")
 	}
 	switch {
 	case dryRun && len(fixed) > 0:
@@ -180,6 +200,12 @@ func portableAlreadyPinned(o PackageOverride) bool {
 	return o.Scope == ScopeUser && o.Elevate != nil && !*o.Elevate
 }
 
+// portableElevateKept reports an explicit elevate=always rule, which fix
+// --portable leaves alone (and the upgrade advisory doesn't nag about).
+func portableElevateKept(o PackageOverride) bool {
+	return o.Elevate != nil && *o.Elevate
+}
+
 // ── Upgrade advisory ───────────────────────────────────────────────
 
 // printPortableUpgradeAdvisory nudges the user toward `wintui fix --portable`
@@ -240,8 +266,8 @@ func portableUnpinned(pkgs []Package, settings Settings) []Package {
 		if !isPortableInstalled(pkg.ID, dirNames) {
 			continue
 		}
-		if _, o, _ := settings.lookupOverride(pkg.ID, pkg.Source); portableAlreadyPinned(o) {
-			continue // already pinned (scope=user, elevate=false)
+		if _, o, _ := settings.lookupOverride(pkg.ID, pkg.Source); portableAlreadyPinned(o) || portableElevateKept(o) {
+			continue // already pinned (scope=user, elevate=false), or an explicit elevate=always
 		}
 		risky = append(risky, pkg)
 	}

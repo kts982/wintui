@@ -422,10 +422,14 @@ wintui fix --portable --dry-run   # preview which packages would be pinned
 wintui fix --portable             # apply (idempotent; merges with existing rules)
 ```
 
-It's safe to re-run — already-pinned packages are skipped. Detection is a single
-directory listing, with no `winget show` calls. When `wintui upgrade
---all/--auto/--id` is about to upgrade a portable package that isn't pinned yet,
-it prints a one-line nudge toward `fix --portable`.
+It's safe to re-run — already-pinned packages are skipped. A package with an
+explicit `elevate: always` rule is left alone and listed (in `--json`, under
+`kept_elevate_always`): that rule is your most specific choice and outranks the
+pin. Run `wintui rules set <id> --elevate inherit` first to pin it. Detection
+is a single directory listing, with no `winget show` calls. When `wintui
+upgrade --all/--auto/--id` is about to upgrade a portable package that isn't
+pinned yet (and has no `elevate: always` rule), it prints a one-line nudge
+toward `fix --portable`.
 
 ## Examples
 

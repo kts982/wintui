@@ -314,3 +314,50 @@ func TestPortableUpgradeAdvisory(t *testing.T) {
 		t.Errorf("expected no advisory when all portables are pinned, got %q", buf.String())
 	}
 }
+
+// TestRunFixPortableKeepsAnExplicitElevateRule: an explicit elevate=always rule
+// outranks the user-scope safety (v2.12.1), so fix --portable must not
+// silently overwrite it with elevate=false (the rc2 VM run: delta), and the
+// upgrade advisory must not keep recommending a fix that won't act on it.
+func TestRunFixPortableKeepsAnExplicitElevateRule(t *testing.T) {
+	installed := []Package{
+		{ID: "dandavison.delta", Name: "delta", Source: "winget"},
+		{ID: "Tool.CLI", Name: "CLI", Source: "winget"},
+	}
+	dirs := []string{"dandavison.delta_src", "Tool.CLI_src"}
+	applied := fixPortableHarness(t, installed, dirs)
+
+	tr := true
+	settings := DefaultSettings()
+	settings.Packages = map[string]PackageOverride{
+		packageRuleKey("dandavison.delta", "winget"): {Elevate: &tr},
+	}
+
+	var buf bytes.Buffer
+	if err := runFixPortable(fixPortableOptions{}, settings, &buf); err != nil {
+		t.Fatalf("runFixPortable: %v", err)
+	}
+	if len(*applied) != 1 || (*applied)[0].id != "Tool.CLI" {
+		t.Fatalf("applied = %+v, want only Tool.CLI", *applied)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Left 1 alone") || !strings.Contains(out, "dandavison.delta") {
+		t.Errorf("output should name the kept package:\n%s", out)
+	}
+
+	buf.Reset()
+	if err := runFixPortable(fixPortableOptions{JSON: true, DryRun: true}, settings, &buf); err != nil {
+		t.Fatalf("runFixPortable --json: %v", err)
+	}
+	var payload fixPortableJSON
+	if err := json.Unmarshal(buf.Bytes(), &payload); err != nil {
+		t.Fatalf("json: %v\n%s", err, buf.String())
+	}
+	if len(payload.KeptElevate) != 1 || payload.KeptElevate[0] != "dandavison.delta" {
+		t.Errorf("kept_elevate_always = %v, want [dandavison.delta]", payload.KeptElevate)
+	}
+
+	if risky := portableUnpinned(installed, settings); len(risky) != 1 || risky[0].ID != "Tool.CLI" {
+		t.Errorf("advisory set = %v, want only [Tool.CLI]", risky)
+	}
+}
