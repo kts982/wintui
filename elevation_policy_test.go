@@ -297,9 +297,20 @@ func TestBatchRefusalIsRecordedAsSkipped(t *testing.T) {
 	}
 	m := newExecModal(retryOpUpgrade, items)
 	m.phase = execPhaseComplete
-	_, body, _ := m.viewComplete()
+	title, body, _ := m.viewComplete()
 	if text := stripANSI(strings.Join(body, "\n")); !strings.Contains(text, "1 succeeded, 1 skipped") {
 		t.Fatalf("summary does not count the refusal as skipped:\n%s", text)
+	}
+	if title != "Upgrade Complete" {
+		t.Fatalf("title = %q, want %q", title, "Upgrade Complete")
+	}
+
+	// Nothing ran: the rc2 VM run's elevated bat uninstall read "Uninstall
+	// Complete / 0 succeeded, 1 skipped".
+	only := newExecModal(retryOpUninstall, items[1:])
+	only.phase = execPhaseComplete
+	if title, _, _ := only.viewComplete(); title != "Uninstall Skipped" {
+		t.Fatalf("all-skipped title = %q, want %q", title, "Uninstall Skipped")
 	}
 }
 

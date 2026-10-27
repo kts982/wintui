@@ -396,6 +396,9 @@ func (m execModal) viewComplete() (string, []string, string) {
 	var title string
 	if m.cancelled {
 		title = fmt.Sprintf("%s Cancelled", m.actionTitle())
+	} else if skipped > 0 && skipped == len(m.items) {
+		// Nothing ran (every item refused by its elevation rules).
+		title = fmt.Sprintf("%s Skipped", m.actionTitle())
 	} else if failed == 0 {
 		title = fmt.Sprintf("%s Complete", m.actionTitle())
 	} else {
