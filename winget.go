@@ -1073,13 +1073,13 @@ func runActionSmartStreamCtxFor(ctx context.Context, eff Settings, args ...strin
 }
 
 // fallbackNote is the line saying an action runs without elevation because
-// the upfront helper route was refused or failed — "" after a cancel.
+// the upfront helper failed — "" after a cancel, and "" when the route was
+// refused because elevation runs as another account: that is routing, not a
+// failure (the action still retries elevated on a requires-admin error, and
+// doctor says how this PC elevates), and a line on every action is noise.
 func fallbackNote(ctx context.Context, initErr error) string {
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || errors.Is(initErr, errHelperOtherAccount) {
 		return ""
-	}
-	if errors.Is(initErr, errHelperOtherAccount) {
-		return noteElevation(ctx, "Running without elevation: elevation on this PC runs as a different account, used only for scope=machine packages.")
 	}
 	return noteElevation(ctx, "Running without elevation: "+initErr.Error())
 }

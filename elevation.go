@@ -136,7 +136,7 @@ func (m *elevationManager) startHelper(ctx context.Context) error {
 		conn = a.conn
 	case <-time.After(helperAcceptTimeout):
 		m.closeListener(ln)
-		return fmt.Errorf("the elevated helper did not connect within %s", helperAcceptTimeout)
+		return fmt.Errorf("the elevated helper did not connect within %d seconds", int(helperAcceptTimeout.Seconds()))
 	case <-ctx.Done():
 		m.closeListener(ln)
 		return ctx.Err()

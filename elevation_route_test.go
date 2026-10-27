@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -255,15 +256,17 @@ func TestSmartRouteRefusesHelperThatReportsAnotherAccount(t *testing.T) {
 
 // TestSmartRouteSaysWhenItRanWithoutElevation: the VM pass saw the upfront
 // route fall back silently (history said plain "ok"). The fallback is now
-// the first output line and lands in the action's elevation notes.
+// the first output line and lands in the action's elevation notes. Routing
+// away from a helper that runs as another account is not a fallback and
+// says nothing (the rc1 VM build showed that line on every action).
 func TestSmartRouteSaysWhenItRanWithoutElevation(t *testing.T) {
 	tests := []struct {
 		name     string
 		separate bool
-		want     string
+		want     string // "" = no note
 	}{
 		{"helper start failed", false, "Running without elevation: no helper in tests"},
-		{"helper runs as another account", true, "Running without elevation: elevation on this PC runs as a different account, used only for scope=machine packages."},
+		{"helper runs as another account", true, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -274,7 +277,11 @@ func TestSmartRouteSaysWhenItRanWithoutElevation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("route err = %v", err)
 			}
-			if len(lines) == 0 || lines[0] != tt.want {
+			if tt.want == "" {
+				if len(lines) > 0 && strings.HasPrefix(lines[0], "Running without elevation") {
+					t.Fatalf("first line = %q, want no note", lines[0])
+				}
+			} else if len(lines) == 0 || lines[0] != tt.want {
 				t.Fatalf("first line = %q, want %q", lines, tt.want)
 			}
 			if got := notes.String(); got != tt.want {
