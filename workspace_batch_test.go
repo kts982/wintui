@@ -80,15 +80,42 @@ func TestModalEscCancellationMarksPendingAsSkipped(t *testing.T) {
 		t.Fatalf("modal.phase = %d, want execPhaseComplete (%d)", got.modal.phase, execPhaseComplete)
 	}
 
-	third := got.modal.items[2]
-	if third.status != batchFailed {
-		t.Fatalf("third item status = %d, want batchFailed (%d)", third.status, batchFailed)
+	// The in-flight item (running, or waiting for elevation) and the queued
+	// one both end skipped, as history records them. The rc2 VM run showed
+	// the in-flight item left running — drawn as "done" with a spinner — and
+	// the queued one counted as failed.
+	if got.modal.items[0].status != batchDone {
+		t.Fatalf("first item status = %d, want batchDone", got.modal.items[0].status)
 	}
-	if third.err == nil {
-		t.Fatal("third item err = nil, want error containing 'cancelled'")
+	for _, i := range []int{1, 2} {
+		bi := got.modal.items[i]
+		if bi.status != batchSkipped {
+			t.Fatalf("item %d status = %d, want batchSkipped (%d)", i, bi.status, batchSkipped)
+		}
+		if bi.err == nil || !strings.Contains(bi.err.Error(), "cancelled") {
+			t.Fatalf("item %d err = %v, want it to contain 'cancelled'", i, bi.err)
+		}
 	}
-	if !strings.Contains(third.err.Error(), "cancelled") {
-		t.Fatalf("third item err = %q, want it to contain 'cancelled'", third.err.Error())
+
+	title, body, _ := got.modal.viewComplete()
+	if title != "Upgrade Cancelled" {
+		t.Errorf("title = %q, want %q", title, "Upgrade Cancelled")
+	}
+	text := stripANSI(strings.Join(body, "\n"))
+	if !strings.Contains(text, "1 succeeded, 2 skipped") {
+		t.Errorf("summary missing \"1 succeeded, 2 skipped\":\n%s", text)
+	}
+	found := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, " B ") {
+			found = true
+			if strings.Contains(line, "done") || !strings.Contains(line, "cancelled") {
+				t.Errorf("in-flight item line = %q, want it cancelled, not done", line)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no result line for the in-flight item B:\n%s", text)
 	}
 }
 

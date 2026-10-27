@@ -33,6 +33,7 @@ type execModal struct {
 	scroll           int  // body scroll offset when content exceeds modal height
 	countdown        int  // countdown seconds before an automatic batch starts
 	selfAutoDeferred bool // WinTUI self-package was excluded from this auto batch
+	cancelled        bool // the batch was cancelled with esc while running
 }
 
 func newExecModal(action retryOp, items []batchItem) execModal {
@@ -393,7 +394,9 @@ func (m execModal) viewComplete() (string, []string, string) {
 	succeeded := completed - failed - skipped
 
 	var title string
-	if failed == 0 {
+	if m.cancelled {
+		title = fmt.Sprintf("%s Cancelled", m.actionTitle())
+	} else if failed == 0 {
 		title = fmt.Sprintf("%s Complete", m.actionTitle())
 	} else {
 		title = fmt.Sprintf("%s Results", m.actionTitle())

@@ -345,13 +345,17 @@ func (s workspaceScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 					if len(s.modal.items) > 0 {
 						_, _ = historyRecordFn(buildTUIHistoryRecord(s.modal.items, historyTriggerTUI, s.selectedVersions))
 					}
-					// Mark remaining queued items as skipped and finish.
+					// Mark the queued items and the one in flight (running, or
+					// waiting for elevation) skipped, as the history record has
+					// them, and finish.
 					for i := range s.modal.items {
-						if s.modal.items[i].status == batchQueued {
-							s.modal.items[i].status = batchFailed
+						switch s.modal.items[i].status {
+						case batchQueued, batchRunning:
+							s.modal.items[i].status = batchSkipped
 							s.modal.items[i].err = fmt.Errorf("cancelled")
 						}
 					}
+					s.modal.cancelled = true
 					s.modal.phase = execPhaseComplete
 					return s, nil
 				}

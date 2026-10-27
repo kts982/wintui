@@ -34,7 +34,7 @@ func TestFinishBatchRecordsHistory(t *testing.T) {
 // finishBatch never runs for a cancelled batch, so without the cancel-path
 // record the already-succeeded items would leave no history. Completed items
 // keep their real status; queued items record as "skipped" (recorded before the
-// queued->failed marking).
+// cancel marking).
 func TestCancelBatchRecordsHistory(t *testing.T) {
 	recs := captureHistory(t)
 	ws := workspaceScreen{
@@ -66,7 +66,7 @@ func TestCancelBatchRecordsHistory(t *testing.T) {
 		t.Errorf("Done.Pkg status = %q, want ok (it completed before the cancel)", byID["Done.Pkg"].Status)
 	}
 	if byID["Queued.Pkg"].Status != historyStatusSkipped {
-		t.Errorf("Queued.Pkg status = %q, want skipped (recorded before queued->failed marking)", byID["Queued.Pkg"].Status)
+		t.Errorf("Queued.Pkg status = %q, want skipped", byID["Queued.Pkg"].Status)
 	}
 }
 
