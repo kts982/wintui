@@ -1081,8 +1081,12 @@ func fallbackNote(ctx context.Context, initErr error) string {
 	if ctx.Err() != nil || errors.Is(initErr, errHelperOtherAccount) {
 		return ""
 	}
-	return noteElevation(ctx, "Running without elevation: "+initErr.Error())
+	return noteElevation(ctx, runningUnelevatedPrefix+initErr.Error())
 }
+
+// runningUnelevatedPrefix starts fallbackNote's line; the results modal keys
+// on it to always show the note.
+const runningUnelevatedPrefix = "Running without elevation: "
 
 // runWithElevationRetry runs a winget action without elevation and, when it
 // fails for lack of admin rights and eff allows it, retries it through the

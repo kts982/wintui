@@ -361,3 +361,24 @@ func TestDoctorPrivilegesShowsASeparateElevationAccount(t *testing.T) {
 		}
 	}
 }
+
+// TestResultModalShowsElevationNotes: the results modal's key lines showed
+// "Running without elevation: …" only when the reason happened to contain
+// "failed" (the rc2 VM run: shown for an identity failure, hidden for
+// "elevation was cancelled"), and never the elevate=true note.
+func TestResultModalShowsElevationNotes(t *testing.T) {
+	output := strings.Join([]string{
+		"Running without elevation: elevation was cancelled",
+		"Found hexyl [sharkdp.hexyl] Version 0.17.0",
+		"This command requires administrator privileges to execute.",
+		"Elevation required. Requesting...",
+		"Automatic elevation failed: elevation was cancelled",
+	}, "\n")
+	got := extractKeyLogLines(output)
+	if len(got) == 0 || got[0] != "Running without elevation: elevation was cancelled" {
+		t.Fatalf("key lines = %q, want the fallback note first", got)
+	}
+	if got := extractKeyLogLines(elevateRuleSkippedNote + "\nFound delta"); len(got) != 1 || got[0] != elevateRuleSkippedNote {
+		t.Fatalf("key lines = %q, want the elevate=true note", got)
+	}
+}

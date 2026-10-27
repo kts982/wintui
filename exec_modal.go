@@ -577,6 +577,11 @@ func extractKeyLogLines(output string) []string {
 			keepNext = true
 			continue
 		}
+		// WinTUI's own elevation notes, whatever their wording.
+		if strings.HasPrefix(trimmed, runningUnelevatedPrefix) || trimmed == elevateRuleSkippedNote {
+			result = append(result, trimmed)
+			continue
+		}
 		if strings.Contains(lower, "successfully") ||
 			strings.Contains(lower, "failed") ||
 			strings.Contains(lower, "error") ||
