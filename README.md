@@ -83,7 +83,7 @@ gh release download --repo kts982/wintui --pattern '*windows_amd64.exe'
 - Full help panel on `?` with grouped keybindings
 - Fuzzy filter (`/`) on the installed package list
 - Per-tab screen state preserved across tab switches
-- Built-in elevated helper — silent + auto-elevate runs everything elevated upfront, avoiding UAC popups from installers
+- Built-in elevated helper — silent + auto-elevate runs installs, upgrades and uninstalls elevated upfront with one UAC prompt per batch, avoiding UAC popups from installers; user-scope packages are never elevated
 - `Ctrl+E` elevated retry on the result modal when auto-elevate is off
 - Responsive layout — detail panel hides on narrow terminals, compact header on small screens
 
@@ -268,7 +268,7 @@ Configurable from the Settings tab or from the CLI with `wintui config` (same ke
 | Cleanup Auto Scan | safe / all / off — what the Cleanup tab measures when opened |
 | Cleanup Min Age | off / 1d / 3d / 7d — the Core Temp cleanup targets only remove entries older than this (1d by default; 7d was the pre-v2.12 rule) |
 
-**Action Mode: Silent + Auto Elevate** runs all install/upgrade/uninstall operations through the elevated helper upfront, avoiding UAC popups from installers that elevate themselves.
+**Action Mode: Silent + Auto Elevate** runs install/upgrade/uninstall operations through the elevated helper upfront, avoiding UAC popups from installers that elevate themselves. User-scope packages (a `scope: user` rule or setting, or a portable winget package) are the exception: WinTUI never elevates them, because elevated winget can drop a portable package from PATH and refuses to uninstall a user-scope package as administrator. On a PC where elevation runs as a different account (Windows Administrator protection, or a standard user typing an administrator's credentials), only machine-scope packages are elevated. See [Elevation and retry behavior](docs/elevation.md).
 
 **Auto Elevate** (without silent mode) retries automatically on hard permission errors. When a batch finishes with failures, the result modal offers `Ctrl+E` to retry only the failed elevation-candidate packages.
 
