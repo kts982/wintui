@@ -117,3 +117,24 @@ hold are planned.
 - go-runewidth 0.0.31, x/sys 0.49.0, x/text 0.43.0; CI actions refreshed.
 - The Win32 / syscall symbol set is identical to v2.12.0 on the same
   toolchain.
+
+## Verification
+
+VirusTotal scans of the published artifacts for v2.12.1 (run 2026-11-01):
+
+| Asset | SHA256 | Detections | Report |
+|---|---|---|---|
+| `wintui_2.12.1_windows_amd64.exe` (7.9 MB) | `d1e3985756bf…` | 2/71 | [VT report](https://www.virustotal.com/gui/file/d1e3985756bfba184eb914db23a49b73fe65997f9f56eae04e7bf9ccca688f75) |
+| `wintui_2.12.1_windows_amd64.zip` (2.9 MB) | `4dbbd4036fc9…` | 1/68 | [VT report](https://www.virustotal.com/gui/file/4dbbd4036fc905764d0bffd725afaed3a061e72bc0332e9fe7210b6c6982a123) |
+| `wintui_2.12.1_windows_arm64.exe` (7.3 MB) | `b30714212fff…` | 0/69 | [VT report](https://www.virustotal.com/gui/file/b30714212fff229362a181678c3de5764e70c2270eede4d58948295f16b4d354) |
+| `wintui_2.12.1_windows_arm64.zip` (2.6 MB) | `97e73a5946c4…` | 0/67 | [VT report](https://www.virustotal.com/gui/file/97e73a5946c4dba1a4b498b401ff2bf510ea6f763ac42121fa61cdb20df8dd9d) |
+
+Detections at scan time were single-vendor low-signal ML/reputation noise (Bkav, Trapmine). Microsoft Defender returned clean across all artifacts, on VirusTotal and in a local scan of both published executables (signatures 1.463.70.0).
+
+Full SHA256 hashes:
+
+- `wintui_2.12.1_windows_amd64.exe`: `d1e3985756bfba184eb914db23a49b73fe65997f9f56eae04e7bf9ccca688f75`
+- `wintui_2.12.1_windows_amd64.zip`: `4dbbd4036fc905764d0bffd725afaed3a061e72bc0332e9fe7210b6c6982a123`
+- `wintui_2.12.1_windows_arm64.exe`: `b30714212fff229362a181678c3de5764e70c2270eede4d58948295f16b4d354`
+- `wintui_2.12.1_windows_arm64.zip`: `97e73a5946c4dba1a4b498b401ff2bf510ea6f763ac42121fa61cdb20df8dd9d`
+
