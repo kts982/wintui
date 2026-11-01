@@ -1,13 +1,13 @@
 module github.com/kts982/wintui
 
-go 1.26.9
+go 1.26.10
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.1.0
+	charm.land/bubbletea/v2 v2.1.1
 	charm.land/fang/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
-	github.com/Microsoft/go-winio v0.6.3
+	github.com/Microsoft/go-winio v0.6.4
 	github.com/charmbracelet/harmonica v0.2.0
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/google/uuid v1.6.0
