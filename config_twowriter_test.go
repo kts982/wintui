@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +31,21 @@ func seedSettingsFile(t *testing.T, s Settings) Settings {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// saveSettingsUnderScan is SaveSettings, re-run up to three times when the
+// rename exhausted its retry budget on ACCESS_DENIED. Scan-on-write in
+// %TEMP% (Defender on a local C: drive) can hold a burst of fresh temp files
+// past the ~410 ms budget: 2026-11-01, 9–13 of 30 runs failed in %TEMP% and
+// none on a D: dev drive. The budget itself is pinned by
+// TestPermanentFSErrorsFailFast; this test is about complete files.
+func saveSettingsUnderScan(t *testing.T, s Settings) error {
+	err := SaveSettings(s)
+	for n := 0; n < 3 && errors.Is(err, fs.ErrPermission); n++ {
+		t.Logf("save retried after scan-on-write contention: %v", err)
+		err = SaveSettings(s)
+	}
+	return err
 }
 
 // TestSaveSettingsConcurrentWritersNeverPublishPartial is acceptance test #1
@@ -72,7 +89,7 @@ func TestSaveSettingsConcurrentWritersNeverPublishPartial(t *testing.T) {
 		go func(s Settings) {
 			defer wg.Done()
 			for r := 0; r < rounds; r++ {
-				if err := SaveSettings(s); err != nil {
+				if err := saveSettingsUnderScan(t, s); err != nil {
 					errs <- err
 					return
 				}
